@@ -16,12 +16,24 @@ export interface Organization {
     longitude: number;
     radiusMeters: number;
   };
-  policySettings?: {
-    serviceDays: string[];
-    arrivalCutoff: string;
-    lateTolerance: number;
-    syncCutoff: string;
-  };
+  policySettings?: PolicySettings;
+}
+
+export interface PolicySettings {
+  serviceDays?: (number | string)[];
+  arrivalCutoff?: string; // e.g. "08:00" (Window Open Time)
+  lateTolerance?: string; // e.g. "09:00" (Window Close Time)
+  syncCutoff?: string;    // e.g. "12:00"
+}
+
+export interface TodayPunchRecord {
+  memberId: string;
+  punchedAt: string;       // Exact ISO timestamp captured instantly
+  displayTime: string;     // e.g. "08:24:15 AM"
+  serviceDate: string;     // YYYY-MM-DD
+  status: 'SYNCING' | 'SYNCED' | 'OFFLINE_CACHED';
+  verificationMethod: 'WIFI_BSSID' | 'GEO_FALLBACK';
+  bssidDetected?: string;
 }
 
 export interface CachedAnchors {
@@ -64,6 +76,7 @@ export interface AttendanceRecordInput {
   punchedAt: string;
   syncedAt: string;
   verificationMethod: 'WIFI_BSSID' | 'GEO_FALLBACK';
+  status?: 'ON_TIME' | 'LATE';
   deviceId: string;
   bssidDetected?: string;
   coordinatesDetected?: {

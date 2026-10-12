@@ -1,21 +1,33 @@
 {
   "expo": {
-    "name": "MOBILE-APP",
+    "name": "Presenti",
     "slug": "MOBILE-APP",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "mobileapp",
+    "scheme": "presenti",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon",
-      "bundleIdentifier": "com.attendance.mobile"
+      "icon": "./assets/images/icon.png",
+      "bundleIdentifier": "com.attendance.mobile",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Presenti requires your location to verify physical presence on premises for attendance.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Presenti requires your location to verify physical presence on premises for attendance."
+      }
     },
     "android": {
       "package": "com.attendance.mobile",
       "googleServicesFile": "./google-services.json",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_WIFI_STATE",
+        "CHANGE_WIFI_STATE",
+        "ACCESS_NETWORK_STATE",
+        "NEARBY_WIFI_DEVICES"
+      ],
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
+        "backgroundColor": "#162447",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
@@ -31,12 +43,21 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
+          "backgroundColor": "#162447",
           "image": "./assets/images/splash-icon.png",
-          "imageWidth": 76
+          "imageWidth": 140,
+          "resizeMode": "contain"
         }
       ],
-      "@react-native-google-signin/google-signin"
+      "@react-native-google-signin/google-signin",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow Presenti to verify physical presence on premises for attendance.",
+          "locationWhenInUsePermission": "Allow Presenti to verify physical presence on premises for attendance."
+        }
+      ],
+      "react-native-wifi-reborn"
     ],
     "experiments": {
       "typedRoutes": true,

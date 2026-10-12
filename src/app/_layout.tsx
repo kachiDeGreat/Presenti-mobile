@@ -3,6 +3,9 @@ import * as SplashScreen from 'expo-splash-screen';
 import React, { useEffect } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from '../context/AuthContext';
+import { ToastProvider } from '../context/ToastContext';
+import { LoadingIndicator } from '../components/LoadingIndicator';
+import { requestAllAppPermissions } from '../services/permissionService';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -12,8 +15,16 @@ function RootNavigator() {
   useEffect(() => {
     if (!isLoading) {
       SplashScreen.hideAsync().catch(() => {});
+      // Prompt for required permissions (Location) on first launch
+      requestAllAppPermissions().catch((err) => {
+        console.warn('Initial permissions request error:', err);
+      });
     }
   }, [isLoading]);
+
+  if (isLoading) {
+    return <LoadingIndicator fullScreen message="Initializing workforce session..." />;
+  }
 
   return (
     <Stack
@@ -33,9 +44,11 @@ function RootNavigator() {
 export default function RootLayout() {
   return (
     <SafeAreaProvider>
-      <AuthProvider>
-        <RootNavigator />
-      </AuthProvider>
+      <ToastProvider>
+        <AuthProvider>
+          <RootNavigator />
+        </AuthProvider>
+      </ToastProvider>
     </SafeAreaProvider>
   );
 }

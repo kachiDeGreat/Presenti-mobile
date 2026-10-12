@@ -2,10 +2,20 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 import * as FirebaseAuth from 'firebase/auth';
-import { auth, googleProvider } from '../config/firebase';
+import {
+  collectionGroup,
+  query,
+  where,
+  getDocs,
+  getDoc,
+  limit,
+} from 'firebase/firestore';
+import { auth, db, googleProvider } from '../config/firebase';
 import { getDeviceFingerprint } from '../services/deviceService';
 import {
   fetchOrganizationByCode,
+  fetchFreshOrganizationById,
+  subscribeToOrganization,
   cacheOrganizationAnchors,
   getCachedAnchors,
   getCachedOrganization,
@@ -15,6 +25,12 @@ import {
 } from '../services/organizationService';
 import type { Organization, CachedAnchors, ChurchMember, MobileUser } from '../types';
 
+export interface AuthResult {
+  user: MobileUser;
+  organization: Organization | null;
+  member: ChurchMember | null;
+}
+
 interface AuthContextType {
   user: MobileUser | null;
   organization: Organization | null;
@@ -23,12 +39,13 @@ interface AuthContextType {
   deviceId: string;
   isLoading: boolean;
   knownAccounts: MobileUser[];
-  signInWithGoogle: (customUser?: Partial<MobileUser>) => Promise<void>;
-  signInWithGoogleCredential: (idToken: string) => Promise<void>;
-  addOrSelectGoogleAccount: (account: MobileUser) => Promise<void>;
+  signInWithGoogle: (customUser?: Partial<MobileUser>) => Promise<AuthResult>;
+  signInWithGoogleCredential: (idToken: string) => Promise<AuthResult>;
+  addOrSelectGoogleAccount: (account: MobileUser) => Promise<AuthResult>;
   pairOrganization: (code: string) => Promise<Organization>;
   completeRegistration: (fullName: string, phone: string, department: string) => Promise<ChurchMember>;
   signOut: () => Promise<void>;
+  refreshOrganization: () => Promise<Organization | null>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -76,6 +93,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         let loadedOrg = storedOrg;
         if (loadedOrg) {
           setOrganization(loadedOrg);
+          fetchFreshOrganizationById(loadedOrg.id)
+            .then((fresh) => {
+              if (fresh) {
+                setOrganization(fresh);
+              }
+            })
+            .catch(() => {});
         }
 
         if (storedMember) {
@@ -84,6 +108,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         if (storedAnchors) {
           setCachedAnchors(storedAnchors);
+        } else if (loadedOrg) {
+          const freshAnchors: CachedAnchors = {
+            churchId: loadedOrg.id,
+            churchName: loadedOrg.churchName,
+            branchName: loadedOrg.branchName,
+            churchCode: loadedOrg.churchCode,
+            ssidHint: loadedOrg.beaconConfig?.ssidHint || '',
+            targetBssid: loadedOrg.beaconConfig?.targetBssid || '',
+            latitude: loadedOrg.geoFallback?.latitude ?? 0,
+            longitude: loadedOrg.geoFallback?.longitude ?? 0,
+            radiusMeters: loadedOrg.geoFallback?.radiusMeters ?? 10,
+            cachedAt: new Date().toISOString(),
+          };
+          setCachedAnchors(freshAnchors);
+          AsyncStorage.setItem(STORAGE_KEY_ANCHORS, JSON.stringify(freshAnchors)).catch(() => {});
         }
 
         let parsedAccounts: MobileUser[] = [];
@@ -123,10 +162,67 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     initSession();
   }, []);
 
+  // Real-time synchronization: subscribe to organization policy, beacons, and geofence updates
+  useEffect(() => {
+    if (!organization?.id) return;
+
+    const unsubscribe = subscribeToOrganization(
+      organization.id,
+      (freshOrg) => {
+        setOrganization(freshOrg);
+        const freshAnchors: CachedAnchors = {
+          churchId: freshOrg.id,
+          churchName: freshOrg.churchName,
+          branchName: freshOrg.branchName,
+          churchCode: freshOrg.churchCode,
+          ssidHint: freshOrg.beaconConfig?.ssidHint || '',
+          targetBssid: freshOrg.beaconConfig?.targetBssid || '',
+          latitude: freshOrg.geoFallback?.latitude ?? 0,
+          longitude: freshOrg.geoFallback?.longitude ?? 0,
+          radiusMeters: freshOrg.geoFallback?.radiusMeters ?? 10,
+          cachedAt: new Date().toISOString(),
+        };
+        setCachedAnchors(freshAnchors);
+      },
+      (err) => {
+        console.warn('Real-time organization sync error:', err);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [organization?.id]);
+
+  const refreshOrganization = useCallback(async (): Promise<Organization | null> => {
+    if (!organization?.id) return null;
+    try {
+      const fresh = await fetchFreshOrganizationById(organization.id);
+      if (fresh) {
+        setOrganization(fresh);
+        const freshAnchors: CachedAnchors = {
+          churchId: fresh.id,
+          churchName: fresh.churchName,
+          branchName: fresh.branchName,
+          churchCode: fresh.churchCode,
+          ssidHint: fresh.beaconConfig?.ssidHint || '',
+          targetBssid: fresh.beaconConfig?.targetBssid || '',
+          latitude: fresh.geoFallback?.latitude ?? 0,
+          longitude: fresh.geoFallback?.longitude ?? 0,
+          radiusMeters: fresh.geoFallback?.radiusMeters ?? 10,
+          cachedAt: new Date().toISOString(),
+        };
+        setCachedAnchors(freshAnchors);
+      }
+      return fresh;
+    } catch (err) {
+      console.warn('Manual refreshOrganization failed:', err);
+      return null;
+    }
+  }, [organization?.id]);
+
   const handleUserAuthenticated = useCallback(
-    async (authUser: MobileUser) => {
+    async (authUser: MobileUser): Promise<AuthResult> => {
       // 1. Persist user session
-      await AsyncStorage.setItem(STORAGE_KEY_USER, JSON.stringify(authUser));
+      AsyncStorage.setItem(STORAGE_KEY_USER, JSON.stringify(authUser)).catch(() => {});
       setUser(authUser);
 
       // 2. Persist to known accounts list on this device
@@ -137,28 +233,95 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return updated;
       });
 
-      // 3. If an organization is already active, perform background device binding resolution
-      const activeOrg = organization || (await getCachedOrganization());
-      if (activeOrg && deviceId) {
+      // 3. Resolve active device ID
+      const activeDeviceId = deviceId || (await getDeviceFingerprint());
+      if (activeDeviceId && !deviceId) {
+        setDeviceId(activeDeviceId);
+      }
+
+      // 4. Resolve active organization (from state, local cache, or Firestore)
+      let activeOrg = organization || (await getCachedOrganization());
+      let existingMember: ChurchMember | null = await getCachedMember();
+
+      // If cached member does not match the newly logged in user, don't use stale member
+      if (
+        existingMember &&
+        existingMember.email &&
+        authUser.email &&
+        existingMember.email.toLowerCase() !== authUser.email.toLowerCase()
+      ) {
+        existingMember = null;
+      }
+
+      // If activeOrg is missing, search across churches in Firestore by member email (capped at 3s)
+      if (!activeOrg && authUser.email) {
         try {
-          const existing = await findExistingMember(activeOrg.id, authUser.email, deviceId);
-          if (existing) {
-            setMember(existing);
-          } else {
-            setMember(null);
+          const membersGroup = collectionGroup(db, 'members');
+          const cleanEmail = authUser.email.trim().toLowerCase();
+          const q = query(membersGroup, where('email', '==', cleanEmail), limit(1));
+          const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000));
+          const snap = await Promise.race([getDocs(q), timeoutPromise]);
+
+          if (snap && !snap.empty) {
+            const memberDoc = snap.docs[0];
+            const churchDocRef = memberDoc.ref.parent.parent;
+            if (churchDocRef) {
+              const churchSnap = await getDoc(churchDocRef);
+              if (churchSnap.exists()) {
+                const churchData = { id: churchSnap.id, ...churchSnap.data() } as any;
+                activeOrg = {
+                  id: churchSnap.id,
+                  churchName: churchData.churchName || 'Church',
+                  branchName: churchData.branchName || 'Main Branch',
+                  churchCode: churchData.churchCode || '',
+                  departments: churchData.departments || [],
+                  beaconConfig: churchData.beaconConfig,
+                  geoFallback: churchData.geoFallback,
+                  policySettings: churchData.policySettings,
+                };
+                cacheOrganizationAnchors(activeOrg).catch(() => {});
+              }
+            }
+          }
+        } catch (cgErr) {
+          console.warn('Organization search by email skipped:', cgErr);
+        }
+      }
+
+      // 5. If we have activeOrg, query existing member in this organization
+      if (activeOrg) {
+        setOrganization(activeOrg);
+        try {
+          const found = await findExistingMember(activeOrg.id, authUser.email, activeDeviceId);
+          if (found) {
+            existingMember = found;
           }
         } catch (error) {
-          // If device collision or bound to another person, clear user session so unauthorized user is blocked
+          console.warn('findExistingMember check error:', error);
           await AsyncStorage.removeItem(STORAGE_KEY_USER);
           setUser(null);
           throw error;
         }
       }
+
+      if (existingMember) {
+        setMember(existingMember);
+        await AsyncStorage.setItem(STORAGE_KEY_MEMBER, JSON.stringify(existingMember));
+      } else {
+        setMember(null);
+        await AsyncStorage.removeItem(STORAGE_KEY_MEMBER);
+      }
+
+      return {
+        user: authUser,
+        organization: activeOrg,
+        member: existingMember,
+      };
     },
     [organization, deviceId]
   );
 
-  const signInWithGoogle = async (customUser?: Partial<MobileUser>) => {
+  const signInWithGoogle = async (customUser?: Partial<MobileUser>): Promise<AuthResult> => {
     setIsLoading(true);
     try {
       if (Platform.OS === 'web' && !customUser) {
@@ -169,8 +332,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           displayName: cred.user.displayName || cred.user.email?.split('@')[0] || 'Workforce Member',
           photoURL: cred.user.photoURL || undefined,
         };
-        await handleUserAuthenticated(authUser);
-        return;
+        return await handleUserAuthenticated(authUser);
       }
 
       const authUser: MobileUser = {
@@ -180,7 +342,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         photoURL: customUser?.photoURL,
       };
 
-      await handleUserAuthenticated(authUser);
+      return await handleUserAuthenticated(authUser);
     } catch (error) {
       console.error('Google Sign-In failed:', error);
       throw error;
@@ -189,7 +351,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const signInWithGoogleCredential = async (idToken: string) => {
+  const signInWithGoogleCredential = async (idToken: string): Promise<AuthResult> => {
     setIsLoading(true);
     try {
       const credential = FirebaseAuth.GoogleAuthProvider.credential(idToken);
@@ -200,7 +362,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         displayName: cred.user.displayName || cred.user.email?.split('@')[0] || 'Workforce Member',
         photoURL: cred.user.photoURL || undefined,
       };
-      await handleUserAuthenticated(authUser);
+      return await handleUserAuthenticated(authUser);
     } catch (error) {
       console.error('Firebase Google Credential Sign-In failed:', error);
       throw error;
@@ -209,10 +371,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const addOrSelectGoogleAccount = async (selectedAccount: MobileUser) => {
+  const addOrSelectGoogleAccount = async (selectedAccount: MobileUser): Promise<AuthResult> => {
     setIsLoading(true);
     try {
-      await handleUserAuthenticated(selectedAccount);
+      return await handleUserAuthenticated(selectedAccount);
     } finally {
       setIsLoading(false);
     }
@@ -289,6 +451,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         pairOrganization,
         completeRegistration,
         signOut,
+        refreshOrganization,
       }}
     >
       {children}

@@ -1,5 +1,17 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { collection, query, where, getDocs, doc, setDoc, addDoc, updateDoc } from 'firebase/firestore';
+import {
+  collection,
+  query,
+  where,
+  getDocs,
+  doc,
+  setDoc,
+  addDoc,
+  updateDoc,
+  getDoc,
+  onSnapshot,
+  limit,
+} from 'firebase/firestore';
 import { db } from '../config/firebase';
 import type { Organization, CachedAnchors, ChurchMember, AttendanceRecordInput } from '../types';
 
@@ -47,6 +59,83 @@ export async function fetchOrganizationByCode(rawCode: string): Promise<Organiza
     console.error('Error fetching organization by code:', error);
     throw error;
   }
+}
+
+export async function fetchFreshOrganizationById(orgId: string): Promise<Organization | null> {
+  if (!orgId) return null;
+  try {
+    const docRef = doc(db, 'churches', orgId);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) return null;
+
+    const data = snap.data();
+    const org: Organization = {
+      id: snap.id,
+      churchName: data.churchName || 'Organization',
+      branchName: data.branchName || 'Main Campus',
+      churchCode: data.churchCode || '',
+      departments: Array.isArray(data.departments) && data.departments.length > 0
+        ? data.departments
+        : ['General Workforce'],
+      beaconConfig: {
+        ssidHint: data.beaconConfig?.ssidHint || '',
+        targetBssid: data.beaconConfig?.targetBssid || '',
+      },
+      geoFallback: {
+        latitude: Number(data.geoFallback?.latitude ?? 0),
+        longitude: Number(data.geoFallback?.longitude ?? 0),
+        radiusMeters: Number(data.geoFallback?.radiusMeters ?? 10),
+      },
+      policySettings: data.policySettings,
+    };
+
+    await cacheOrganizationAnchors(org);
+    return org;
+  } catch (error) {
+    console.warn('Error fetching fresh organization by ID:', error);
+    return null;
+  }
+}
+
+export function subscribeToOrganization(
+  orgId: string,
+  onUpdate: (org: Organization) => void,
+  onError?: (err: any) => void
+): () => void {
+  if (!orgId) return () => {};
+  const docRef = doc(db, 'churches', orgId);
+  return onSnapshot(
+    docRef,
+    (snap) => {
+      if (!snap.exists()) return;
+      const data = snap.data();
+      const org: Organization = {
+        id: snap.id,
+        churchName: data.churchName || 'Organization',
+        branchName: data.branchName || 'Main Campus',
+        churchCode: data.churchCode || '',
+        departments: Array.isArray(data.departments) && data.departments.length > 0
+          ? data.departments
+          : ['General Workforce'],
+        beaconConfig: {
+          ssidHint: data.beaconConfig?.ssidHint || '',
+          targetBssid: data.beaconConfig?.targetBssid || '',
+        },
+        geoFallback: {
+          latitude: Number(data.geoFallback?.latitude ?? 0),
+          longitude: Number(data.geoFallback?.longitude ?? 0),
+          radiusMeters: Number(data.geoFallback?.radiusMeters ?? 10),
+        },
+        policySettings: data.policySettings,
+      };
+      cacheOrganizationAnchors(org).catch(() => {});
+      onUpdate(org);
+    },
+    (err) => {
+      console.warn('subscribeToOrganization snapshot listener error:', err);
+      if (onError) onError(err);
+    }
+  );
 }
 
 export async function cacheOrganizationAnchors(org: Organization): Promise<CachedAnchors> {
@@ -158,7 +247,7 @@ export async function registerMember(
       id: memberId,
       fullName: memberData.fullName.trim(),
       phone: memberData.phone.trim(),
-      email: memberData.email?.trim() || undefined,
+      email: memberData.email?.trim().toLowerCase() || undefined,
       photoURL: memberData.photoURL?.trim() || undefined,
       department: memberData.department,
       boundDeviceId: memberData.boundDeviceId,
@@ -181,60 +270,56 @@ export async function findExistingMember(orgId: string, email?: string, deviceId
     const membersRef = collection(db, 'churches', orgId, 'members');
     const cleanEmail = (email || '').trim().toLowerCase();
 
-    // 1. Silent Background Check: Is this device already bound to ANY member?
-    if (deviceId) {
-      const qDevice = query(membersRef, where('boundDeviceId', '==', deviceId));
-      const snapDevice = await getDocs(qDevice);
-      if (!snapDevice.empty) {
-        for (const d of snapDevice.docs) {
-          const bound = d.data();
-          const boundEmail = (bound.email || '').trim().toLowerCase();
-          // If device is already registered to a DIFFERENT user, reject buddy punching / proxy access
-          if (cleanEmail && boundEmail && boundEmail !== cleanEmail) {
-            throw new Error(
-              `This device is already bound to ${bound.fullName || 'another worker'} (${bound.email || 'another account'}). Please contact your organization administrator to unbind this device.`
-            );
-          }
-          // If matches user or no email conflict, return this member
-          if (!cleanEmail || boundEmail === cleanEmail) {
-            const member = { id: d.id, ...bound } as ChurchMember;
-            await AsyncStorage.setItem(STORAGE_KEY_MEMBER, JSON.stringify(member));
-            return member;
-          }
-        }
+    // Parallelize queries with limit(1) to eliminate sequential network round trips
+    const [snapEmail, snapDevice] = await Promise.all([
+      cleanEmail
+        ? getDocs(query(membersRef, where('email', '==', cleanEmail), limit(1)))
+        : Promise.resolve(null),
+      deviceId
+        ? getDocs(query(membersRef, where('boundDeviceId', '==', deviceId), limit(1)))
+        : Promise.resolve(null),
+    ]);
+
+    // 1. Primary check: Email match (highest fidelity account identity)
+    if (snapEmail && !snapEmail.empty) {
+      const d = snapEmail.docs[0];
+      const member = { id: d.id, ...d.data() } as ChurchMember;
+
+      // Verify device binding
+      if (member.boundDeviceId && deviceId && member.boundDeviceId !== deviceId) {
+        throw new Error(
+          `Your account is already bound to another registered device. You can only record attendance from your original device. Please contact your administrator to unbind your previous device.`
+        );
       }
+
+      // If member exists but device is not yet bound, bind it asynchronously in background without blocking navigation
+      if (!member.boundDeviceId && deviceId) {
+        member.boundDeviceId = deviceId;
+        updateDoc(doc(db, 'churches', orgId, 'members', member.id), {
+          boundDeviceId: deviceId,
+        }).catch((updateErr) => console.warn('Could not update device binding on existing member:', updateErr));
+      }
+
+      AsyncStorage.setItem(STORAGE_KEY_MEMBER, JSON.stringify(member)).catch(() => {});
+      return member;
     }
 
-    // 2. Query member by email
-    if (cleanEmail) {
-      const qEmail = query(membersRef, where('email', '==', cleanEmail));
-      const snapEmail = await getDocs(qEmail);
-      if (!snapEmail.empty) {
-        const d = snapEmail.docs[0];
-        const member = { id: d.id, ...d.data() } as ChurchMember;
+    // 2. Secondary check: Bound device match
+    if (snapDevice && !snapDevice.empty) {
+      const d = snapDevice.docs[0];
+      const bound = d.data();
+      const boundEmail = (bound.email || '').trim().toLowerCase();
 
-        // If member is already bound to a DIFFERENT physical device
-        if (member.boundDeviceId && deviceId && member.boundDeviceId !== deviceId) {
-          throw new Error(
-            `Your account is already bound to another registered device. You can only record attendance from your original device. Please contact your administrator to unbind your previous device.`
-          );
-        }
-
-        // If member exists but device is not yet bound, bind it now in the background
-        if (!member.boundDeviceId && deviceId) {
-          try {
-            await updateDoc(doc(db, 'churches', orgId, 'members', member.id), {
-              boundDeviceId: deviceId,
-            });
-            member.boundDeviceId = deviceId;
-          } catch (updateErr) {
-            console.warn('Could not update device binding on existing member:', updateErr);
-          }
-        }
-
-        await AsyncStorage.setItem(STORAGE_KEY_MEMBER, JSON.stringify(member));
-        return member;
+      // If device is already registered to a DIFFERENT user, reject buddy punching / proxy access
+      if (cleanEmail && boundEmail && boundEmail !== cleanEmail) {
+        throw new Error(
+          `This device is already bound to ${bound.fullName || 'another worker'} (${bound.email || 'another account'}). Please contact your organization administrator to unbind this device.`
+        );
       }
+
+      const member = { id: d.id, ...bound } as ChurchMember;
+      AsyncStorage.setItem(STORAGE_KEY_MEMBER, JSON.stringify(member)).catch(() => {});
+      return member;
     }
 
     return null;
@@ -248,13 +333,92 @@ export async function findExistingMember(orgId: string, email?: string, deviceId
   }
 }
 
+/**
+ * Recursively cleans an object/array to remove all undefined values.
+ * Firestore strictly throws an exception if any field or nested property is undefined.
+ */
+function cleanFirestorePayload<T>(data: T): T {
+  if (data === null || data === undefined) {
+    return null as any;
+  }
+  if (Array.isArray(data)) {
+    return data
+      .filter((item) => item !== undefined)
+      .map((item) => cleanFirestorePayload(item)) as any;
+  }
+  if (typeof data === 'object' && !(data instanceof Date)) {
+    const clean: Record<string, any> = {};
+    for (const [key, value] of Object.entries(data as Record<string, any>)) {
+      if (value !== undefined) {
+        if (typeof value === 'object' && value !== null && !(value instanceof Date)) {
+          clean[key] = cleanFirestorePayload(value);
+        } else {
+          clean[key] = value;
+        }
+      }
+    }
+    return clean as any;
+  }
+  return data;
+}
+
 export async function recordAttendance(orgId: string, input: AttendanceRecordInput): Promise<string> {
   try {
+    const cleanPayload = cleanFirestorePayload(input);
     const attCollection = collection(db, 'churches', orgId, 'attendance');
-    const docRef = await addDoc(attCollection, input);
+    const docRef = await addDoc(attCollection, cleanPayload);
     return docRef.id;
   } catch (error) {
     console.error('Error logging attendance record:', error);
     throw error;
+  }
+}
+
+export async function getTodayPunchRecord(
+  memberId: string,
+  serviceDate: string
+): Promise<import('../types').TodayPunchRecord | null> {
+  try {
+    const key = `@sanctuary_punch_${memberId}_${serviceDate}`;
+    const raw = await AsyncStorage.getItem(key);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+export async function saveTodayPunchRecord(
+  record: import('../types').TodayPunchRecord
+): Promise<void> {
+  try {
+    const key = `@sanctuary_punch_${record.memberId}_${record.serviceDate}`;
+    await AsyncStorage.setItem(key, JSON.stringify(record));
+  } catch (e) {
+    console.warn('Could not cache punch locally:', e);
+  }
+}
+
+export async function fetchTodayMemberAttendance(
+  orgId: string,
+  memberId: string,
+  serviceDate: string
+): Promise<any | null> {
+  try {
+    const attRef = collection(db, 'churches', orgId, 'attendance');
+    const q = query(
+      attRef,
+      where('memberId', '==', memberId),
+      where('serviceDate', '==', serviceDate)
+    );
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      const docSnap = snap.docs[0];
+      return { id: docSnap.id, ...docSnap.data() };
+    }
+    return null;
+  } catch (e) {
+    console.warn('Could not check today attendance on cloud:', e);
+    return null;
   }
 }
