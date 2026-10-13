@@ -56,7 +56,7 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#0F2042',
+    backgroundColor: '#FFFFFF',
     padding: 24,
     gap: 20,
   },
@@ -99,7 +99,7 @@ const styles = StyleSheet.create({
   messageText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#1E293B',
+    color: '#0F172A',
     textAlign: 'center',
     lineHeight: 20,
   },

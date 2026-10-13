@@ -388,11 +388,11 @@ export default function DashboardScreen() {
           />
         }
       >
-        {/* Top Hero Card (Dark Navy Executive Style) */}
+        {/* Top Hero Card (Clean White Executive Style) */}
         <View style={styles.heroCard}>
           <View style={styles.heroTopRow}>
             <Image
-              source={require("../image/logo.png")}
+              source={require("../image/logo-dark.png")}
               style={styles.heroBrandLogo}
               resizeMode="contain"
             />
@@ -404,7 +404,7 @@ export default function DashboardScreen() {
           </View>
 
           <View style={styles.orgTagBadge}>
-            <Ionicons name="business" size={12} color="#60A5FA" />
+            <Ionicons name="business" size={12} color="#2563EB" />
             <Text style={styles.orgTagText} numberOfLines={1}>
               {organization.churchName.toUpperCase()}
             </Text>
@@ -429,13 +429,13 @@ export default function DashboardScreen() {
                 {member.fullName}
               </Text>
               <View style={styles.deptBadge}>
-                <Ionicons name="briefcase-outline" size={12} color="#93C5FD" />
+                <Ionicons name="briefcase-outline" size={12} color="#64748B" />
                 <Text style={styles.deptBadgeText}>{member.department}</Text>
               </View>
             </View>
 
             <View style={styles.deviceLockBadge}>
-              <Ionicons name="lock-closed" size={12} color="#10B981" />
+              <Ionicons name="lock-closed" size={11} color="#059669" />
               <Text style={styles.deviceLockText}>Device Bound</Text>
             </View>
           </View>
@@ -734,18 +734,18 @@ const styles = StyleSheet.create({
     flexGrow: 1,
   },
 
-  // Hero Card
+  // Hero Card (Clean White Executive Theme)
   heroCard: {
-    backgroundColor: "#0A192F",
+    backgroundColor: "#FFFFFF",
     borderRadius: 16,
     padding: 18,
-    shadowColor: "#0A192F",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-    elevation: 5,
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 2,
     borderWidth: 1,
-    borderColor: "rgba(59, 130, 246, 0.2)",
+    borderColor: "#E2E8F0",
   },
   heroTopRow: {
     flexDirection: "row",
@@ -754,40 +754,44 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   heroBrandLogo: {
-    height: 24,
-    width: 95,
+    height: 28,
+    width: 105,
   },
   orgTagBadge: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    backgroundColor: "rgba(37, 99, 235, 0.2)",
+    backgroundColor: "#EFF6FF",
+    borderWidth: 1,
+    borderColor: "#DBEAFE",
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
+    alignSelf: "flex-start",
+    marginBottom: 6,
   },
   orgTagText: {
-    color: "#93C5FD",
+    color: "#2563EB",
     fontSize: 10,
     fontWeight: "700",
-    letterSpacing: 0.8,
+    letterSpacing: 0.6,
   },
   codeBadge: {
-    backgroundColor: "rgba(255, 255, 255, 0.1)",
+    backgroundColor: "#F1F5F9",
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
     borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.15)",
+    borderColor: "#E2E8F0",
   },
   codeBadgeText: {
-    color: "#E2E8F0",
+    color: "#334155",
     fontSize: 11,
     fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
     fontWeight: "700",
   },
   branchTitle: {
-    color: "#FFFFFF",
+    color: "#0F172A",
     fontSize: 18,
     fontWeight: "800",
     letterSpacing: -0.3,
@@ -796,8 +800,10 @@ const styles = StyleSheet.create({
   memberCluster: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(255, 255, 255, 0.06)",
+    backgroundColor: "#F8FAFC",
     borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
     padding: 12,
     gap: 12,
   },
@@ -805,21 +811,21 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    borderWidth: 2,
-    borderColor: "#3B82F6",
+    borderWidth: 1.5,
+    borderColor: "#BFDBFE",
   },
   avatarFallback: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: "#1E3A8A",
+    backgroundColor: "#EFF6FF",
     borderWidth: 1.5,
-    borderColor: "#60A5FA",
+    borderColor: "#BFDBFE",
     alignItems: "center",
     justifyContent: "center",
   },
   avatarLetter: {
-    color: "#FFFFFF",
+    color: "#2563EB",
     fontSize: 17,
     fontWeight: "700",
   },
@@ -828,7 +834,7 @@ const styles = StyleSheet.create({
     gap: 3,
   },
   memberName: {
-    color: "#FFFFFF",
+    color: "#0F172A",
     fontSize: 15,
     fontWeight: "700",
   },
@@ -839,7 +845,7 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
   },
   deptBadgeText: {
-    color: "#93C5FD",
+    color: "#64748B",
     fontSize: 12,
     fontWeight: "500",
   },
@@ -847,15 +853,17 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    backgroundColor: "rgba(16, 185, 129, 0.15)",
+    backgroundColor: "#ECFDF5",
+    borderWidth: 1,
+    borderColor: "#A7F3D0",
     paddingHorizontal: 7,
     paddingVertical: 4,
     borderRadius: 6,
   },
   deviceLockText: {
-    color: "#6EE7B7",
+    color: "#059669",
     fontSize: 10,
-    fontWeight: "600",
+    fontWeight: "700",
   },
 
   // Live Digital Clock Card
