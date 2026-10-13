@@ -121,9 +121,15 @@ export default function LoginScreen() {
       }
 
       if (err?.code !== "auth/popup-closed-by-user") {
-        toast.error(
-          err?.message || "Failed to complete Google authentication.",
-        );
+        const msg = err?.message || "Failed to complete Google authentication.";
+        toast.error(msg);
+        if (msg.includes("administrator on the web portal")) {
+          Alert.alert(
+            "Administrator Account",
+            msg,
+            [{ text: "Understood" }]
+          );
+        }
       }
     } finally {
       setIsSubmitting(false);

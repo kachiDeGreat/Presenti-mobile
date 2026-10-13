@@ -184,6 +184,102 @@ export async function getCachedMember(): Promise<ChurchMember | null> {
   }
 }
 
+// Security Check: Verify whether an email or UID is registered as an organization administrator on the web portal
+export async function checkIfUserIsAdmin(email?: string, uid?: string): Promise<boolean> {
+  const cleanEmail = (email || '').trim().toLowerCase();
+  if (!cleanEmail && !uid) return false;
+
+  try {
+    // 1. Direct O(1) read from account_roles registry
+    if (cleanEmail) {
+      const roleRef = doc(db, 'account_roles', cleanEmail);
+      const roleSnap = await getDoc(roleRef);
+      if (roleSnap.exists()) {
+        const data = roleSnap.data();
+        if (data.role === 'ADMIN') return true;
+        if (data.role === 'WORKER') return false;
+      }
+    }
+
+    // 2. Query churches collection by adminEmail
+    if (cleanEmail) {
+      const qEmail = query(
+        collection(db, 'churches'),
+        where('adminEmail', '==', cleanEmail),
+        limit(1)
+      );
+      const snapEmail = await getDocs(qEmail);
+      if (!snapEmail.empty) {
+        // Cache role in account_roles for subsequent instant checks
+        try {
+          await setDoc(
+            doc(db, 'account_roles', cleanEmail),
+            {
+              email: cleanEmail,
+              role: 'ADMIN',
+              churchId: snapEmail.docs[0].id,
+              updatedAt: new Date().toISOString(),
+            },
+            { merge: true }
+          );
+        } catch {}
+        return true;
+      }
+    }
+
+    // 3. Query churches collection by adminUids
+    if (uid) {
+      const qUids = query(
+        collection(db, 'churches'),
+        where('adminUids', 'array-contains', uid),
+        limit(1)
+      );
+      const snapUids = await getDocs(qUids);
+      if (!snapUids.empty) {
+        if (cleanEmail) {
+          try {
+            await setDoc(
+              doc(db, 'account_roles', cleanEmail),
+              {
+                email: cleanEmail,
+                role: 'ADMIN',
+                churchId: snapUids.docs[0].id,
+                updatedAt: new Date().toISOString(),
+              },
+              { merge: true }
+            );
+          } catch {}
+        }
+        return true;
+      }
+
+      // 4. Direct document check churches/{uid}
+      const directSnap = await getDoc(doc(db, 'churches', uid));
+      if (directSnap.exists()) {
+        if (cleanEmail) {
+          try {
+            await setDoc(
+              doc(db, 'account_roles', cleanEmail),
+              {
+                email: cleanEmail,
+                role: 'ADMIN',
+                churchId: uid,
+                updatedAt: new Date().toISOString(),
+              },
+              { merge: true }
+            );
+          } catch {}
+        }
+        return true;
+      }
+    }
+  } catch (err) {
+    console.warn('checkIfUserIsAdmin query skipped or error:', err);
+  }
+
+  return false;
+}
+
 export async function registerMember(
   orgId: string,
   memberData: {
@@ -198,6 +294,16 @@ export async function registerMember(
   try {
     const membersRef = collection(db, 'churches', orgId, 'members');
     const cleanEmail = (memberData.email || '').trim().toLowerCase();
+
+    // 0. Security Guard: Prevent administrators from registering as workforce members
+    if (cleanEmail) {
+      const isAdmin = await checkIfUserIsAdmin(cleanEmail);
+      if (isAdmin) {
+        throw new Error(
+          `This account (${cleanEmail}) is registered as an organization administrator on the web portal. Administrator accounts cannot be registered as workforce members on the mobile app. Please sign in with a designated workforce account.`
+        );
+      }
+    }
 
     // 1. Silent Background Check: Is this physical hardware already bound to someone else?
     if (memberData.boundDeviceId) {
@@ -256,6 +362,25 @@ export async function registerMember(
 
     const memberDocRef = doc(db, 'churches', orgId, 'members', memberId);
     await setDoc(memberDocRef, newMember);
+
+    // Register worker role in account_roles registry
+    if (cleanEmail) {
+      try {
+        await setDoc(
+          doc(db, 'account_roles', cleanEmail),
+          {
+            email: cleanEmail,
+            role: 'WORKER',
+            churchId: orgId,
+            memberId: memberId,
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+      } catch (roleErr) {
+        console.warn('Could not record worker role in account_roles:', roleErr);
+      }
+    }
 
     await AsyncStorage.setItem(STORAGE_KEY_MEMBER, JSON.stringify(newMember));
     return newMember;

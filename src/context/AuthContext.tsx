@@ -22,6 +22,7 @@ import {
   getCachedMember,
   registerMember,
   findExistingMember,
+  checkIfUserIsAdmin,
 } from '../services/organizationService';
 import type { Organization, CachedAnchors, ChurchMember, MobileUser } from '../types';
 
@@ -140,6 +141,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         setKnownAccounts(parsedAccounts);
 
+        if (loadedUser) {
+          const isAdmin = await checkIfUserIsAdmin(loadedUser.email, loadedUser.uid);
+          if (isAdmin) {
+            await AsyncStorage.multiRemove([STORAGE_KEY_USER, STORAGE_KEY_MEMBER]);
+            loadedUser = null;
+            setUser(null);
+            setMember(null);
+          }
+        }
+
         // Silent background check if user and org exist: ensure device binding is still valid
         if (loadedUser && loadedOrg && id) {
           findExistingMember(loadedOrg.id, loadedUser.email, id)
@@ -221,6 +232,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const handleUserAuthenticated = useCallback(
     async (authUser: MobileUser): Promise<AuthResult> => {
+      // Security Check: Verify that this account is not an organization administrator on the web portal
+      const cleanEmail = (authUser.email || '').trim().toLowerCase();
+      const isAdmin = await checkIfUserIsAdmin(cleanEmail, authUser.uid);
+      if (isAdmin) {
+        if (Platform.OS === 'web' && auth.currentUser) {
+          await FirebaseAuth.signOut(auth).catch(() => {});
+        }
+        await AsyncStorage.multiRemove([STORAGE_KEY_USER, STORAGE_KEY_MEMBER]);
+        setUser(null);
+        setMember(null);
+        throw new Error(
+          `This account (${cleanEmail}) is registered as an organization administrator on the web portal. Administrator accounts cannot be used as workforce members on the mobile app. Please sign in with a designated workforce account.`
+        );
+      }
+
       // 1. Persist user session
       AsyncStorage.setItem(STORAGE_KEY_USER, JSON.stringify(authUser)).catch(() => {});
       setUser(authUser);
@@ -407,6 +433,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   ): Promise<ChurchMember> => {
     if (!organization) {
       throw new Error('Please pair an organization first.');
+    }
+
+    const cleanEmail = (user?.email || '').trim().toLowerCase();
+    const isAdmin = await checkIfUserIsAdmin(cleanEmail, user?.uid);
+    if (isAdmin) {
+      throw new Error(
+        `This account (${cleanEmail}) is registered as an organization administrator on the web portal and cannot be registered as a workforce member.`
+      );
     }
 
     const newMember = await registerMember(organization.id, {
