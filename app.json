@@ -12,7 +12,8 @@
       "bundleIdentifier": "com.attendance.mobile",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Presenti requires your location to verify physical presence on premises for attendance.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "Presenti requires your location to verify physical presence on premises for attendance."
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Presenti requires your location to verify physical presence on premises for attendance.",
+        "NSCameraUsageDescription": "Presenti requires camera access to scan premises calibration QR codes."
       }
     },
     "android": {
@@ -24,7 +25,8 @@
         "ACCESS_WIFI_STATE",
         "CHANGE_WIFI_STATE",
         "ACCESS_NETWORK_STATE",
-        "NEARBY_WIFI_DEVICES"
+        "NEARBY_WIFI_DEVICES",
+        "CAMERA"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#162447",
@@ -55,6 +57,12 @@
         {
           "locationAlwaysAndWhenInUsePermission": "Allow Presenti to verify physical presence on premises for attendance.",
           "locationWhenInUsePermission": "Allow Presenti to verify physical presence on premises for attendance."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Presenti to access camera to scan premises calibration QR codes."
         }
       ],
       "react-native-wifi-reborn"
