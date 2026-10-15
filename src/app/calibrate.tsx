@@ -57,6 +57,7 @@ export default function CalibrateScreen() {
   const [selectedBssid, setSelectedBssid] = useState<string>("");
   const [showManualWifi, setShowManualWifi] = useState(false);
   const [wifiFilterQuery, setWifiFilterQuery] = useState("");
+  const [wifiScanNotice, setWifiScanNotice] = useState<string | null>(null);
 
   // Tier 2: Geofence State
   const [latitude, setLatitude] = useState<number>(4.975);
@@ -175,6 +176,7 @@ export default function CalibrateScreen() {
   // Scan Real Wi-Fi Networks & Mobile Hotspots
   const handleScanWifi = useCallback(async () => {
     setIsScanningWifi(true);
+    setWifiScanNotice(null);
     try {
       const res = await scanPhysicalWifiNetworks();
       if (res.success && res.networks) {
@@ -187,7 +189,8 @@ export default function CalibrateScreen() {
         }
       }
       if (res.error) {
-        toast.warn(res.error, { duration: 5000 });
+        setWifiScanNotice(res.error);
+        toast.warn(res.error, { duration: 6000 });
       }
     } catch (err: any) {
       console.warn("Could not scan Wi-Fi signals:", err);
@@ -675,6 +678,51 @@ export default function CalibrateScreen() {
                 </TouchableOpacity>
               </View>
 
+              {/* Phone Wi-Fi & GPS Mandatory Requirement Banner */}
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "flex-start",
+                  gap: 10,
+                  backgroundColor: availableNetworks.length === 0 ? "#FEF3C7" : "#F0F9FF",
+                  padding: 12,
+                  borderRadius: 10,
+                  borderWidth: 1,
+                  borderColor: availableNetworks.length === 0 ? "#FCD34D" : "#BAE6FD",
+                  marginHorizontal: 16,
+                  marginTop: 12,
+                  marginBottom: 4,
+                }}
+              >
+                <Ionicons
+                  name={availableNetworks.length === 0 ? "warning-outline" : "information-circle-outline"}
+                  size={18}
+                  color={availableNetworks.length === 0 ? "#D97706" : "#0284C7"}
+                />
+                <View style={{ flex: 1 }}>
+                  <Text
+                    style={{
+                      fontSize: 12,
+                      fontWeight: "700",
+                      color: availableNetworks.length === 0 ? "#92400E" : "#0369A1",
+                      marginBottom: 2,
+                    }}
+                  >
+                    Phone Wi-Fi Must Be Turned ON
+                  </Text>
+                  <Text
+                    style={{
+                      fontSize: 11,
+                      color: availableNetworks.length === 0 ? "#B45309" : "#475569",
+                      lineHeight: 16,
+                    }}
+                  >
+                    {wifiScanNotice ||
+                      "Swipe down from top of your phone screen to ensure both Wi-Fi and Location (GPS) toggles are turned ON to detect premises routers and mobile hotspots."}
+                  </Text>
+                </View>
+              </View>
+
               {/* Wi-Fi Filter Search Box */}
               <View style={styles.wifiFilterBox}>
                 <Ionicons name="search" size={15} color="#94A3B8" />
@@ -774,10 +822,49 @@ export default function CalibrateScreen() {
                   })
                 ) : (
                   <View style={styles.emptyState}>
-                    <Text style={styles.emptyStateText}>
-                      No networks detected. Make sure Wi-Fi and Location are
-                      turned on.
+                    <Ionicons
+                      name="wifi-outline"
+                      size={36}
+                      color="#94A3B8"
+                      style={{ marginBottom: 8 }}
+                    />
+                    <Text
+                      style={[
+                        styles.emptyStateText,
+                        { fontWeight: "700", color: "#334155", marginBottom: 4 },
+                      ]}
+                    >
+                      No Wireless Networks Detected
                     </Text>
+                    <Text style={styles.emptyStateText}>
+                      Please swipe down from the top of your phone screen to make
+                      sure Wi-Fi and Location (GPS) are toggled ON.
+                    </Text>
+                    <TouchableOpacity
+                      style={{
+                        marginTop: 14,
+                        backgroundColor: "#0284C7",
+                        paddingHorizontal: 16,
+                        paddingVertical: 9,
+                        borderRadius: 8,
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 6,
+                      }}
+                      onPress={handleScanWifi}
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons name="refresh" size={15} color="#FFFFFF" />
+                      <Text
+                        style={{
+                          color: "#FFFFFF",
+                          fontWeight: "700",
+                          fontSize: 13,
+                        }}
+                      >
+                        Rescan Wi-Fi &amp; Hotspots
+                      </Text>
+                    </TouchableOpacity>
                   </View>
                 )}
               </View>

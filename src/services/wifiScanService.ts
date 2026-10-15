@@ -100,6 +100,23 @@ export async function scanPhysicalWifiNetworks(): Promise<{
       return { success: false, networks: [], error: 'Native Wi-Fi module not initialized.' };
     }
 
+    // 3b. Verify Smartphone Wi-Fi Radio is switched ON
+    try {
+      if (typeof WifiManager.isEnabled === 'function') {
+        const isWifiOn = await WifiManager.isEnabled();
+        if (!isWifiOn) {
+          return {
+            success: false,
+            networks: [],
+            error:
+              "Your phone's Wi-Fi toggle is turned OFF. Please swipe down from top of your screen and turn ON Wi-Fi to detect nearby networks and mobile hotspots.",
+          };
+        }
+      }
+    } catch (wifiErr) {
+      console.warn('Wi-Fi isEnabled check warning:', wifiErr);
+    }
+
     const seen = new Set<string>();
     const formatted: ScannedWifiNetwork[] = [];
 
