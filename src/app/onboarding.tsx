@@ -35,18 +35,20 @@ export function formatOrgCode(raw: string, prev: string = ""): string {
     return raw.toUpperCase();
   }
 
-  if (Math.abs(raw.length - prev.length) > 1 && raw.includes("-")) {
+  // If pasted with hyphens or user explicitly typed hyphens, clean and preserve them
+  if (raw.includes("-")) {
     return raw
       .toUpperCase()
       .replace(/[^A-Z0-9-]/g, "")
       .replace(/-+/g, "-")
-      .slice(0, 20);
+      .slice(0, 25);
   }
 
+  // Natural typing without hyphens: auto-insert hyphens for XX-XXX-XXX (2-3-3 format)
   const clean = raw
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "")
-    .slice(0, 7);
+    .slice(0, 15);
   if (!clean) return "";
 
   if (clean.length < 2) {
@@ -55,13 +57,13 @@ export function formatOrgCode(raw: string, prev: string = ""): string {
   if (clean.length === 2) {
     return `${clean}-`;
   }
-  if (clean.length < 4) {
+  if (clean.length < 5) {
     return `${clean.slice(0, 2)}-${clean.slice(2)}`;
   }
-  if (clean.length === 4) {
-    return `${clean.slice(0, 2)}-${clean.slice(2, 4)}-`;
+  if (clean.length === 5) {
+    return `${clean.slice(0, 2)}-${clean.slice(2, 5)}-`;
   }
-  return `${clean.slice(0, 2)}-${clean.slice(2, 4)}-${clean.slice(4, 7)}`;
+  return `${clean.slice(0, 2)}-${clean.slice(2, 5)}-${clean.slice(5, 8)}`;
 }
 
 export default function OnboardingScreen() {
@@ -246,7 +248,7 @@ export default function OnboardingScreen() {
                   <TextInput
                     ref={codeInputRef}
                     style={[styles.input, styles.codeInput]}
-                    placeholder="XX-XX-XXX"
+                    placeholder="XX-XXX-XXX"
                     placeholderTextColor="#94A3B8"
                     value={churchCodeInput}
                     onChangeText={(t) => {

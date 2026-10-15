@@ -31,6 +31,7 @@ import {
 } from "../utils/timePolicy";
 import { verifyPresenceAnchors } from "../services/presenceVerificationService";
 import type { TodayPunchRecord } from "../types";
+import { AdminCalibrationModal } from "../components/AdminCalibrationModal";
 
 export default function DashboardScreen() {
   const {
@@ -44,6 +45,9 @@ export default function DashboardScreen() {
     refreshOrganization,
   } = useAuth();
   const toast = useToast();
+
+  // Calibration Modal State
+  const [showCalibrationModal, setShowCalibrationModal] = useState(false);
 
   // Real-time clock ticking every second
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -396,10 +400,31 @@ export default function DashboardScreen() {
               style={styles.heroBrandLogo}
               resizeMode="contain"
             />
-            <View style={styles.codeBadge}>
-              <Text style={styles.codeBadgeText}>
-                {organization.churchCode}
-              </Text>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <TouchableOpacity
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 4,
+                  backgroundColor: "#F0F9FF",
+                  paddingHorizontal: 8,
+                  paddingVertical: 4,
+                  borderRadius: 6,
+                  borderWidth: 1,
+                  borderColor: "#BAE6FD",
+                }}
+                onPress={() => setShowCalibrationModal(true)}
+              >
+                <Ionicons name="hardware-chip-outline" size={13} color="#0284C7" />
+                <Text style={{ fontSize: 11, fontWeight: "700", color: "#0284C7" }}>
+                  Calibrate
+                </Text>
+              </TouchableOpacity>
+              <View style={styles.codeBadge}>
+                <Text style={styles.codeBadgeText}>
+                  {organization.churchCode}
+                </Text>
+              </View>
             </View>
           </View>
 
@@ -719,6 +744,15 @@ export default function DashboardScreen() {
           </TouchableOpacity>
         </View>
       </ScrollView>
+
+      {/* Admin QR & Premises Hardware Calibration Modal */}
+      <AdminCalibrationModal
+        visible={showCalibrationModal}
+        onClose={() => setShowCalibrationModal(false)}
+        onSuccess={() => {
+          refreshOrganization();
+        }}
+      />
     </SafeAreaView>
   );
 }

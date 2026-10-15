@@ -23,6 +23,8 @@ import {
   registerMember,
   findExistingMember,
   checkIfUserIsAdmin,
+  getAdminOrganization,
+  updateOrganizationAnchors as updateOrganizationAnchorsService,
 } from '../services/organizationService';
 import type { Organization, CachedAnchors, ChurchMember, MobileUser } from '../types';
 
@@ -39,6 +41,7 @@ interface AuthContextType {
   cachedAnchors: CachedAnchors | null;
   deviceId: string;
   isLoading: boolean;
+  isAdmin: boolean;
   knownAccounts: MobileUser[];
   signInWithGoogle: (customUser?: Partial<MobileUser>) => Promise<AuthResult>;
   signInWithGoogleCredential: (idToken: string) => Promise<AuthResult>;
@@ -47,6 +50,13 @@ interface AuthContextType {
   completeRegistration: (fullName: string, phone: string, department: string) => Promise<ChurchMember>;
   signOut: () => Promise<void>;
   refreshOrganization: () => Promise<Organization | null>;
+  updateAnchors: (anchors: {
+    ssidHint: string;
+    targetBssid: string;
+    latitude: number;
+    longitude: number;
+    radiusMeters: number;
+  }) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -142,12 +152,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setKnownAccounts(parsedAccounts);
 
         if (loadedUser) {
-          const isAdmin = await checkIfUserIsAdmin(loadedUser.email, loadedUser.uid);
-          if (isAdmin) {
-            await AsyncStorage.multiRemove([STORAGE_KEY_USER, STORAGE_KEY_MEMBER]);
-            loadedUser = null;
-            setUser(null);
-            setMember(null);
+          const isAdminUser = await checkIfUserIsAdmin(loadedUser.email, loadedUser.uid);
+          loadedUser.isAdmin = isAdminUser;
+          setUser(loadedUser);
+          if (isAdminUser && !loadedOrg) {
+            const adminOrg = await getAdminOrganization(loadedUser.email, loadedUser.uid);
+            if (adminOrg) {
+              loadedOrg = adminOrg;
+              setOrganization(adminOrg);
+              await AsyncStorage.setItem(STORAGE_KEY_ORG, JSON.stringify(adminOrg)).catch(() => {});
+            }
           }
         }
 
@@ -232,19 +246,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const handleUserAuthenticated = useCallback(
     async (authUser: MobileUser): Promise<AuthResult> => {
-      // Security Check: Verify that this account is not an organization administrator on the web portal
+      // Check if user is an organization administrator
       const cleanEmail = (authUser.email || '').trim().toLowerCase();
       const isAdmin = await checkIfUserIsAdmin(cleanEmail, authUser.uid);
+      authUser.isAdmin = isAdmin;
+
       if (isAdmin) {
-        if (Platform.OS === 'web' && auth.currentUser) {
-          await FirebaseAuth.signOut(auth).catch(() => {});
+        // Resolve admin's organization
+        let adminOrg = organization || (await getCachedOrganization());
+        if (!adminOrg) {
+          adminOrg = await getAdminOrganization(cleanEmail, authUser.uid);
         }
-        await AsyncStorage.multiRemove([STORAGE_KEY_USER, STORAGE_KEY_MEMBER]);
-        setUser(null);
+        if (adminOrg) {
+          setOrganization(adminOrg);
+          await AsyncStorage.setItem(STORAGE_KEY_ORG, JSON.stringify(adminOrg)).catch(() => {});
+        }
+        await AsyncStorage.setItem(STORAGE_KEY_USER, JSON.stringify(authUser)).catch(() => {});
+        setUser(authUser);
         setMember(null);
-        throw new Error(
-          `This account (${cleanEmail}) is registered as an organization administrator on the web portal. Administrator accounts cannot be used as workforce members on the mobile app. Please sign in with a designated workforce account.`
-        );
+        return {
+          user: authUser,
+          organization: adminOrg,
+          member: null,
+        };
       }
 
       // 1. Persist user session
@@ -469,6 +493,51 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const updateAnchors = useCallback(
+    async (anchors: {
+      ssidHint: string;
+      targetBssid: string;
+      latitude: number;
+      longitude: number;
+      radiusMeters: number;
+    }) => {
+      const targetOrgId = organization?.id;
+      if (!targetOrgId) {
+        throw new Error('No active organization found to calibrate.');
+      }
+      await updateOrganizationAnchorsService(targetOrgId, anchors);
+      const updatedOrg: Organization = {
+        ...organization,
+        beaconConfig: {
+          ssidHint: anchors.ssidHint,
+          targetBssid: anchors.targetBssid,
+        },
+        geoFallback: {
+          latitude: anchors.latitude,
+          longitude: anchors.longitude,
+          radiusMeters: anchors.radiusMeters,
+        },
+      };
+      setOrganization(updatedOrg);
+      await AsyncStorage.setItem(STORAGE_KEY_ORG, JSON.stringify(updatedOrg)).catch(() => {});
+      const updatedCachedAnchors: CachedAnchors = {
+        churchId: targetOrgId,
+        churchName: updatedOrg.churchName,
+        branchName: updatedOrg.branchName,
+        churchCode: updatedOrg.churchCode,
+        ssidHint: anchors.ssidHint,
+        targetBssid: anchors.targetBssid,
+        latitude: anchors.latitude,
+        longitude: anchors.longitude,
+        radiusMeters: anchors.radiusMeters,
+        cachedAt: new Date().toISOString(),
+      };
+      setCachedAnchors(updatedCachedAnchors);
+      await AsyncStorage.setItem(STORAGE_KEY_ANCHORS, JSON.stringify(updatedCachedAnchors)).catch(() => {});
+    },
+    [organization]
+  );
+
   return (
     <AuthContext.Provider
       value={{
@@ -478,6 +547,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         cachedAnchors,
         deviceId,
         isLoading,
+        isAdmin: Boolean(user?.isAdmin),
         knownAccounts,
         signInWithGoogle,
         signInWithGoogleCredential,
@@ -486,6 +556,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         completeRegistration,
         signOut,
         refreshOrganization,
+        updateAnchors,
       }}
     >
       {children}

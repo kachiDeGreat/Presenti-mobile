@@ -65,6 +65,7 @@ export interface MobileUser {
   email: string;
   displayName: string;
   photoURL?: string;
+  isAdmin?: boolean;
 }
 
 export interface AttendanceRecordInput {

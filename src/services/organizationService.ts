@@ -547,3 +547,135 @@ export async function fetchTodayMemberAttendance(
     return null;
   }
 }
+
+export async function getAdminOrganization(
+  email?: string,
+  uid?: string
+): Promise<Organization | null> {
+  const cleanEmail = (email || '').trim().toLowerCase();
+  if (!cleanEmail && !uid) return null;
+
+  try {
+    if (cleanEmail) {
+      const roleRef = doc(db, 'account_roles', cleanEmail);
+      const roleSnap = await getDoc(roleRef);
+      if (roleSnap.exists()) {
+        const roleData = roleSnap.data();
+        if (roleData.churchId) {
+          const churchSnap = await getDoc(doc(db, 'churches', roleData.churchId));
+          if (churchSnap.exists()) {
+            const data = churchSnap.data();
+            return {
+              id: churchSnap.id,
+              churchName: data.churchName || 'Organization',
+              branchName: data.branchName || 'Main Campus',
+              churchCode: data.churchCode || '',
+              departments: Array.isArray(data.departments) && data.departments.length > 0
+                ? data.departments
+                : ['General Workforce'],
+              beaconConfig: {
+                ssidHint: data.beaconConfig?.ssidHint || '',
+                targetBssid: data.beaconConfig?.targetBssid || '',
+              },
+              geoFallback: {
+                latitude: Number(data.geoFallback?.latitude ?? 0),
+                longitude: Number(data.geoFallback?.longitude ?? 0),
+                radiusMeters: Number(data.geoFallback?.radiusMeters ?? 10),
+              },
+              policySettings: data.policySettings,
+            };
+          }
+        }
+      }
+    }
+
+    if (cleanEmail) {
+      const q = query(
+        collection(db, 'churches'),
+        where('adminEmail', '==', cleanEmail),
+        limit(1)
+      );
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        const docSnap = snap.docs[0];
+        const data = docSnap.data();
+        return {
+          id: docSnap.id,
+          churchName: data.churchName || 'Organization',
+          branchName: data.branchName || 'Main Campus',
+          churchCode: data.churchCode || '',
+          departments: Array.isArray(data.departments) && data.departments.length > 0
+            ? data.departments
+            : ['General Workforce'],
+          beaconConfig: {
+            ssidHint: data.beaconConfig?.ssidHint || '',
+            targetBssid: data.beaconConfig?.targetBssid || '',
+          },
+          geoFallback: {
+            latitude: Number(data.geoFallback?.latitude ?? 0),
+            longitude: Number(data.geoFallback?.longitude ?? 0),
+            radiusMeters: Number(data.geoFallback?.radiusMeters ?? 10),
+          },
+          policySettings: data.policySettings,
+        };
+      }
+    }
+
+    if (uid) {
+      const q = query(
+        collection(db, 'churches'),
+        where('adminUids', 'array-contains', uid),
+        limit(1)
+      );
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        const docSnap = snap.docs[0];
+        const data = docSnap.data();
+        return {
+          id: docSnap.id,
+          churchName: data.churchName || 'Organization',
+          branchName: data.branchName || 'Main Campus',
+          churchCode: data.churchCode || '',
+          departments: Array.isArray(data.departments) && data.departments.length > 0
+            ? data.departments
+            : ['General Workforce'],
+          beaconConfig: {
+            ssidHint: data.beaconConfig?.ssidHint || '',
+            targetBssid: data.beaconConfig?.targetBssid || '',
+          },
+          geoFallback: {
+            latitude: Number(data.geoFallback?.latitude ?? 0),
+            longitude: Number(data.geoFallback?.longitude ?? 0),
+            radiusMeters: Number(data.geoFallback?.radiusMeters ?? 10),
+          },
+          policySettings: data.policySettings,
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('getAdminOrganization query skipped or error:', err);
+  }
+
+  return null;
+}
+
+export async function updateOrganizationAnchors(
+  churchId: string,
+  anchors: {
+    ssidHint: string;
+    targetBssid: string;
+    latitude: number;
+    longitude: number;
+    radiusMeters: number;
+  }
+): Promise<void> {
+  const churchRef = doc(db, 'churches', churchId);
+  await updateDoc(churchRef, {
+    'beaconConfig.ssidHint': anchors.ssidHint.trim(),
+    'beaconConfig.targetBssid': anchors.targetBssid.trim().toLowerCase(),
+    'geoFallback.latitude': anchors.latitude,
+    'geoFallback.longitude': anchors.longitude,
+    'geoFallback.radiusMeters': anchors.radiusMeters,
+    updatedAt: new Date().toISOString(),
+  });
+}

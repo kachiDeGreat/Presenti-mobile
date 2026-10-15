@@ -21,6 +21,7 @@ import {
 } from "@react-native-google-signin/google-signin";
 import { useAuth, type AuthResult } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
+import { AdminCalibrationModal } from "../components/AdminCalibrationModal";
 
 // Official Google OAuth Web Client ID for attendance-app-1ab15
 const GOOGLE_CLIENT_ID =
@@ -33,6 +34,7 @@ export default function LoginScreen() {
   const toast = useToast();
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showCalibrationModal, setShowCalibrationModal] = useState(false);
 
   useEffect(() => {
     if (user && organization && member) {
@@ -53,6 +55,11 @@ export default function LoginScreen() {
   }, []);
 
   const navigateAfterAuth = (result: AuthResult) => {
+    if (result.user?.isAdmin) {
+      toast.success(`Welcome Administrator, ${result.user.displayName}!`);
+      router.replace("/calibrate" as any);
+      return;
+    }
     if (result.organization && result.member) {
       toast.success(`Welcome back, ${result.member.fullName || result.user.displayName}!`);
       router.replace("/");
@@ -181,10 +188,37 @@ export default function LoginScreen() {
               </>
             )}
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={{
+              marginTop: 14,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              paddingVertical: 12,
+              borderRadius: 10,
+              backgroundColor: '#F1F5F9',
+              borderWidth: 1,
+              borderColor: '#E2E8F0',
+            }}
+            onPress={() => setShowCalibrationModal(true)}
+          >
+            <Ionicons name="hardware-chip-outline" size={17} color="#0284C7" />
+            <Text style={{ fontSize: 13, fontWeight: '600', color: '#0F172A' }}>
+              Administrator? Calibrate Premises Anchors
+            </Text>
+          </TouchableOpacity>
         </View>
 
         {/* Verification & Trust Card (matching Admin Web) */}
       </ScrollView>
+
+      {/* Admin QR & Premises Hardware Calibration Modal */}
+      <AdminCalibrationModal
+        visible={showCalibrationModal}
+        onClose={() => setShowCalibrationModal(false)}
+      />
     </SafeAreaView>
   );
 }
