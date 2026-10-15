@@ -10,6 +10,7 @@ import {
   Platform,
   Alert,
   Modal,
+  BackHandler,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -71,14 +72,56 @@ export default function CalibrateScreen() {
   const [isSaving, setIsSaving] = useState(false);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
 
-  // Safe navigation handler
-  const handleGoBack = () => {
+  const isSavedSuccessfullyRef = useRef(false);
+  const pairedOrgIdRef = useRef<string>("");
+
+  useEffect(() => {
+    pairedOrgIdRef.current = pairedOrgId || organization?.id || "";
+  }, [pairedOrgId, organization?.id]);
+
+  // Kill signal: notify web portal immediately that mobile device has disconnected
+  const sendDisconnectSignal = useCallback((orgId?: string) => {
+    const target = orgId || pairedOrgIdRef.current || pairedOrgId || organization?.id;
+    if (!target) return;
+    setDoc(
+      doc(db, "churches", target, "calibration", "session"),
+      {
+        status: "DISCONNECTED",
+        disconnectedAt: new Date().toISOString(),
+      },
+      { merge: true },
+    ).catch((err) => console.warn("Could not send disconnect kill signal:", err));
+  }, [pairedOrgId, organization?.id]);
+
+  // Safe navigation handler (with instant kill signal if leaving before saving)
+  const handleGoBack = useCallback(() => {
+    if (!isSavedSuccessfullyRef.current) {
+      sendDisconnectSignal();
+    }
     if (router.canGoBack()) {
       router.back();
     } else {
       router.replace("/login");
     }
-  };
+  }, [sendDisconnectSignal]);
+
+  // Listen for Android hardware back button
+  useEffect(() => {
+    const backSub = BackHandler.addEventListener("hardwareBackPress", () => {
+      handleGoBack();
+      return true;
+    });
+    return () => backSub.remove();
+  }, [handleGoBack]);
+
+  // Cleanup on unmount: if user exits screen without saving, kill the session
+  useEffect(() => {
+    return () => {
+      if (!isSavedSuccessfullyRef.current) {
+        sendDisconnectSignal();
+      }
+    };
+  }, [sendDisconnectSignal]);
 
   // Reverse geocode to display address name
   const reverseGeocode = async (lat: number, lng: number) => {
@@ -129,22 +172,30 @@ export default function CalibrateScreen() {
     }
   }, [organization]);
 
-  // Scan Real Wi-Fi Networks
+  // Scan Real Wi-Fi Networks & Mobile Hotspots
   const handleScanWifi = useCallback(async () => {
     setIsScanningWifi(true);
     try {
       const res = await scanPhysicalWifiNetworks();
       if (res.success && res.networks) {
         setAvailableNetworks(res.networks);
-      } else if (res.error) {
-        console.warn("Wi-Fi scan message:", res.error);
+        // If an active connected network or hotspot is detected, auto-select it if none selected yet
+        const inUse = res.networks.find((n) => n.inUse);
+        if (inUse && !selectedBssid) {
+          setSelectedSsid(inUse.ssid);
+          setSelectedBssid(inUse.bssid);
+        }
+      }
+      if (res.error) {
+        toast.warn(res.error, { duration: 5000 });
       }
     } catch (err: any) {
       console.warn("Could not scan Wi-Fi signals:", err);
+      toast.error("Could not scan wireless signals.");
     } finally {
       setIsScanningWifi(false);
     }
-  }, []);
+  }, [selectedBssid, toast]);
 
   // Fetch Current Phone GPS Location (Fast cached lookup + high accuracy refinement)
   const handleGetCurrentLocation = async () => {
@@ -367,6 +418,7 @@ export default function CalibrateScreen() {
         console.warn("Could not write completed status to Firestore:", e);
       }
 
+      isSavedSuccessfullyRef.current = true;
       toast.success("Organization anchors calibrated and saved successfully!");
       handleGoBack();
     } catch (err: any) {
@@ -546,6 +598,7 @@ export default function CalibrateScreen() {
                   backgroundColor: "#FEE2E2",
                 }}
                 onPress={async () => {
+                  sendDisconnectSignal();
                   await signOut();
                   toast.info("Signed out.");
                   router.replace("/login");
@@ -582,6 +635,7 @@ export default function CalibrateScreen() {
               <TouchableOpacity
                 style={styles.rescanBtn}
                 onPress={() => {
+                  sendDisconnectSignal();
                   hasHandshakedRef.current = false;
                   setScanCooldown(false);
                   setIsQrPaired(false);
@@ -681,6 +735,29 @@ export default function CalibrateScreen() {
                           </View>
                         </View>
                         <View style={styles.wifiItemRight}>
+                          {net.inUse && (
+                            <View
+                              style={{
+                                backgroundColor: "#ECFDF5",
+                                paddingHorizontal: 6,
+                                paddingVertical: 2,
+                                borderRadius: 4,
+                                marginRight: 4,
+                                borderWidth: 1,
+                                borderColor: "#A7F3D0",
+                              }}
+                            >
+                              <Text
+                                style={{
+                                  fontSize: 9,
+                                  fontWeight: "700",
+                                  color: "#059669",
+                                }}
+                              >
+                                CONNECTED
+                              </Text>
+                            </View>
+                          )}
                           {net.band && (
                             <Text style={styles.wifiBandBadge}>{net.band}</Text>
                           )}
