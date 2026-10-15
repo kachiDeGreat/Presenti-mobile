@@ -27,6 +27,7 @@
 - **Account Sharing Prevention:** Signing into another person's device is immediately rejected, eliminating buddy punching and proxy clock-ins.
 
 ### 4. Admin Premises Calibration Suite
+- **Secret 3-Second Logo Gesture:** The calibration mode is completely invisible to workers. Administrators access it by pressing and holding the Presenti logo on the sign-in screen (or dashboard header) for 3 seconds.
 - **QR Code Pairing Gateway:** Organization administrators scan a live session QR code displayed on the Admin Web Portal to unlock the calibration suite on their phone.
 - **Instant Camera Dismissal:** The camera feed unmounts the instant the QR payload is verified, immediately presenting an interactive calibration workspace.
 - **Physical Wi-Fi Spectrum Scanner:** Discovers nearby access points, signal strengths (RSSI), and exact router BSSID MAC addresses for binding.

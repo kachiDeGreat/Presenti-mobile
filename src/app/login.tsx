@@ -9,6 +9,7 @@ import {
   Platform,
   ScrollView,
   Image,
+  Vibration,
 } from "react-native";
 import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -154,11 +155,21 @@ export default function LoginScreen() {
       <ScrollView contentContainerStyle={styles.scrollContent}>
         {/* Brand Header */}
         <View style={styles.header}>
-          <Image
-            source={require("../image/app-icon.png")}
-            style={styles.brandIconImage}
-            resizeMode="contain"
-          />
+          <TouchableOpacity
+            activeOpacity={0.9}
+            delayLongPress={3000}
+            onLongPress={() => {
+              Vibration.vibrate([0, 100, 60, 100]);
+              toast.info("Entering Administrator Calibration Mode...");
+              router.push("/calibrate" as any);
+            }}
+          >
+            <Image
+              source={require("../image/app-icon.png")}
+              style={styles.brandIconImage}
+              resizeMode="contain"
+            />
+          </TouchableOpacity>
           <View style={styles.brandBadge}>
             <Ionicons name="shield-checkmark" size={13} color="#2563EB" />
             <Text style={styles.brandTag}>PRESENTI • PROOF OF PRESENCE</Text>
@@ -195,34 +206,6 @@ export default function LoginScreen() {
             )}
           </TouchableOpacity>
         </View>
-
-        {/* Divider */}
-        <View style={styles.dividerRow}>
-          <View style={styles.dividerLine} />
-          <Text style={styles.dividerText}>OR CALIBRATE PREMISES</Text>
-          <View style={styles.dividerLine} />
-        </View>
-
-        {/* Administrator Direct Calibration Access (No Login Required) */}
-        <TouchableOpacity
-          style={styles.adminCard}
-          onPress={() => router.push("/calibrate" as any)}
-          activeOpacity={0.85}
-        >
-          <View style={styles.adminIconBadge}>
-            <Ionicons name="hardware-chip-outline" size={20} color="#0284C7" />
-          </View>
-          <View style={{ flex: 1, gap: 2 }}>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-              <Text style={styles.adminCardTitle}>Administrator? Calibrate Premises</Text>
-              <Ionicons name="qr-code-outline" size={13} color="#0284C7" />
-            </View>
-            <Text style={styles.adminCardSubtitle}>
-              Scan the QR code displayed on the Admin Web Portal to calibrate Wi-Fi & GPS anchors.
-            </Text>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
-        </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );

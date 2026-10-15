@@ -10,6 +10,7 @@ import {
   Image,
   RefreshControl,
   AppState,
+  Vibration,
 } from "react-native";
 import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -400,33 +401,22 @@ export default function DashboardScreen() {
         {/* Top Hero Card (Clean White Executive Style) */}
         <View style={styles.heroCard}>
           <View style={styles.heroTopRow}>
-            <Image
-              source={require("../image/logo-dark.png")}
-              style={styles.heroBrandLogo}
-              resizeMode="contain"
-            />
+            <TouchableOpacity
+              activeOpacity={0.9}
+              delayLongPress={3000}
+              onLongPress={() => {
+                Vibration.vibrate([0, 100, 60, 100]);
+                toast.info("Entering Administrator Calibration Mode...");
+                router.push("/calibrate" as any);
+              }}
+            >
+              <Image
+                source={require("../image/logo-dark.png")}
+                style={styles.heroBrandLogo}
+                resizeMode="contain"
+              />
+            </TouchableOpacity>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              {isAdmin && (
-                <TouchableOpacity
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: 4,
-                    backgroundColor: "#F0F9FF",
-                    paddingHorizontal: 8,
-                    paddingVertical: 4,
-                    borderRadius: 6,
-                    borderWidth: 1,
-                    borderColor: "#BAE6FD",
-                  }}
-                  onPress={() => router.push("/calibrate" as any)}
-                >
-                  <Ionicons name="hardware-chip-outline" size={13} color="#0284C7" />
-                  <Text style={{ fontSize: 11, fontWeight: "700", color: "#0284C7" }}>
-                    Calibrate
-                  </Text>
-                </TouchableOpacity>
-              )}
               <View style={styles.codeBadge}>
                 <Text style={styles.codeBadgeText}>
                   {organization.churchCode}
