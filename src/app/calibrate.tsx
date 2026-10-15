@@ -74,30 +74,50 @@ export default function CalibrateScreen() {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
 
   const isSavedSuccessfullyRef = useRef(false);
+  const sessionOrgIdRef = useRef<string>("");
   const pairedOrgIdRef = useRef<string>("");
 
   useEffect(() => {
-    pairedOrgIdRef.current = pairedOrgId || organization?.id || "";
+    const id = pairedOrgId || organization?.id || "";
+    if (id) {
+      pairedOrgIdRef.current = id;
+      sessionOrgIdRef.current = id;
+    }
   }, [pairedOrgId, organization?.id]);
 
   // Kill signal: notify web portal immediately that mobile device has disconnected
-  const sendDisconnectSignal = useCallback((orgId?: string) => {
-    const target = orgId || pairedOrgIdRef.current || pairedOrgId || organization?.id;
-    if (!target) return;
-    setDoc(
-      doc(db, "churches", target, "calibration", "session"),
-      {
-        status: "DISCONNECTED",
-        disconnectedAt: new Date().toISOString(),
-      },
-      { merge: true },
-    ).catch((err) => console.warn("Could not send disconnect kill signal:", err));
-  }, [pairedOrgId, organization?.id]);
+  const sendDisconnectSignal = useCallback(
+    async (orgId?: string) => {
+      const target =
+        orgId ||
+        sessionOrgIdRef.current ||
+        pairedOrgIdRef.current ||
+        pairedOrgId ||
+        organization?.id;
+      if (!target) return;
+      try {
+        await Promise.race([
+          setDoc(
+            doc(db, "churches", target, "calibration", "session"),
+            {
+              status: "DISCONNECTED",
+              disconnectedAt: new Date().toISOString(),
+            },
+            { merge: true },
+          ),
+          new Promise((resolve) => setTimeout(resolve, 800)),
+        ]);
+      } catch (err) {
+        console.warn("Could not send disconnect kill signal:", err);
+      }
+    },
+    [pairedOrgId, organization?.id],
+  );
 
   // Safe navigation handler (with instant kill signal if leaving before saving)
-  const handleGoBack = useCallback(() => {
+  const handleGoBack = useCallback(async () => {
     if (!isSavedSuccessfullyRef.current) {
-      sendDisconnectSignal();
+      await sendDisconnectSignal();
     }
     if (router.canGoBack()) {
       router.back();
@@ -308,6 +328,8 @@ export default function CalibrateScreen() {
         parsed?.n || parsed?.name || parsed?.churchName || "Organization";
 
       if (targetId) {
+        sessionOrgIdRef.current = targetId;
+        pairedOrgIdRef.current = targetId;
         // INSTANT: Dismiss camera immediately and display loading transition overlay
         setIsConnectingSession(true);
         setPairedOrgId(targetId);
@@ -471,6 +493,11 @@ export default function CalibrateScreen() {
                 backgroundColor: "rgba(239, 68, 68, 0.25)",
               }}
               onPress={async () => {
+                const target =
+                  sessionOrgIdRef.current ||
+                  pairedOrgId ||
+                  organization?.id;
+                await sendDisconnectSignal(target);
                 await signOut();
                 toast.info("Signed out.");
                 router.replace("/login");
@@ -549,10 +576,35 @@ export default function CalibrateScreen() {
                       size={20}
                       color="#38BDF8"
                     />
-                    <Text style={styles.hintText}>
-                      Point your camera at the QR code on your computer screen
-                      (Admin Web &gt; Settings &gt; Premises Anchors)
-                    </Text>
+                    <View style={{ flex: 1, gap: 4 }}>
+                      <Text style={styles.hintText}>
+                        Point your camera at the QR code on your computer screen
+                        (Admin Web &gt; Settings &gt; Premises Anchors)
+                      </Text>
+                      <View
+                        style={{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          gap: 5,
+                          marginTop: 2,
+                        }}
+                      >
+                        <Ionicons
+                          name="information-circle-outline"
+                          size={14}
+                          color="#FBBF24"
+                        />
+                        <Text
+                          style={{
+                            color: "#FDE68A",
+                            fontSize: 11,
+                            fontWeight: "600",
+                          }}
+                        >
+                          Ensure this phone's Wi-Fi &amp; GPS are turned ON
+                        </Text>
+                      </View>
+                    </View>
                   </View>
                 </View>
               </View>
@@ -601,7 +653,11 @@ export default function CalibrateScreen() {
                   backgroundColor: "#FEE2E2",
                 }}
                 onPress={async () => {
-                  sendDisconnectSignal();
+                  const target =
+                    sessionOrgIdRef.current ||
+                    pairedOrgId ||
+                    organization?.id;
+                  await sendDisconnectSignal(target);
                   await signOut();
                   toast.info("Signed out.");
                   router.replace("/login");
@@ -637,8 +693,8 @@ export default function CalibrateScreen() {
               </View>
               <TouchableOpacity
                 style={styles.rescanBtn}
-                onPress={() => {
-                  sendDisconnectSignal();
+                onPress={async () => {
+                  await sendDisconnectSignal();
                   hasHandshakedRef.current = false;
                   setScanCooldown(false);
                   setIsQrPaired(false);
