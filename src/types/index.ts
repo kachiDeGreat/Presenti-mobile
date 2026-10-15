@@ -6,6 +6,7 @@ export interface Organization {
   adminName?: string;
   adminEmail?: string;
   adminPhone?: string;
+  adminUids?: string[];
   departments: string[];
   beaconConfig: {
     ssidHint: string;
@@ -15,6 +16,7 @@ export interface Organization {
     latitude: number;
     longitude: number;
     radiusMeters: number;
+    isConfigured?: boolean;
   };
   policySettings?: PolicySettings;
 }

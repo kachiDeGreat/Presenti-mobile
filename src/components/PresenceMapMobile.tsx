@@ -166,7 +166,11 @@ export const PresenceMapMobile: React.FC<PresenceMapMobileProps> = ({
       if (lat && lng) {
         marker.setLatLng([lat, lng]);
         circle.setLatLng([lat, lng]);
-        map.panTo([lat, lng]);
+        if (typeof map.flyTo === 'function') {
+          map.flyTo([lat, lng], 18, { duration: 1.2 });
+        } else {
+          map.panTo([lat, lng]);
+        }
       }
       if (radius) {
         circle.setRadius(radius);

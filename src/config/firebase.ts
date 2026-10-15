@@ -2,7 +2,7 @@ import { initializeApp, getApps, type FirebaseApp } from 'firebase/app';
 import * as FirebaseAuth from 'firebase/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
-import { getFirestore, type Firestore } from 'firebase/firestore';
+import { getFirestore, initializeFirestore, type Firestore } from 'firebase/firestore';
 
 const firebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY || process.env.EXPO_PUBLIC_GOOGLE_SERVICES_API_KEY,
@@ -38,7 +38,14 @@ try {
   auth = FirebaseAuth.getAuth(app);
 }
 
-const db: Firestore = getFirestore(app);
+let db: Firestore;
+try {
+  db = initializeFirestore(app, {
+    experimentalForceLongPolling: true,
+  });
+} catch {
+  db = getFirestore(app);
+}
 const googleProvider = new FirebaseAuth.GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 

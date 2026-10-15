@@ -16,6 +16,7 @@ import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Location from "expo-location";
 import { doc, updateDoc, setDoc } from "firebase/firestore";
 import { db } from "../config/firebase";
+import { PresenceMapMobile } from "./PresenceMapMobile";
 
 interface CalibrationPayload {
   type: string;
@@ -132,7 +133,7 @@ export const AdminCalibrationModal: React.FC<AdminCalibrationModalProps> = ({
     if (hasHandshakedRef.current || mode !== "SCANNER") return;
 
     try {
-      let parsed: CalibrationPayload | null = null;
+      let parsed: any = null;
       try {
         parsed = JSON.parse(data);
       } catch {
@@ -142,14 +143,23 @@ export const AdminCalibrationModal: React.FC<AdminCalibrationModalProps> = ({
         }
       }
 
-      if (parsed && (parsed.type === "CALIBRATE_ANCHORS" || parsed.churchId)) {
+      const targetId = parsed?.id || parsed?.churchId;
+      const targetCode = parsed?.c || parsed?.code || parsed?.churchCode || "ORG";
+      const targetName = parsed?.n || parsed?.name || parsed?.churchName || "Organization";
+
+      if (targetId) {
         hasHandshakedRef.current = true;
-        setTargetOrg(parsed);
+        setTargetOrg({
+          type: "CALIBRATE_ANCHORS",
+          churchId: targetId,
+          churchCode: targetCode,
+          churchName: targetName,
+        });
 
         // Send instant handshake ping to Firestore
         try {
           await setDoc(
-            doc(db, "churches", parsed.churchId, "calibration", "session"),
+            doc(db, "churches", targetId, "calibration", "session"),
             {
               status: "CONNECTED",
               connectedAt: new Date().toISOString(),
@@ -631,6 +641,21 @@ export const AdminCalibrationModal: React.FC<AdminCalibrationModalProps> = ({
                     </>
                   )}
                 </TouchableOpacity>
+              </View>
+
+              {/* LIVE SATELLITE HYBRID MAP */}
+              <View style={{ borderRadius: 12, overflow: "hidden", borderWidth: 1, borderColor: "#CBD5E1", marginTop: 12 }}>
+                <PresenceMapMobile
+                  latitude={latitude ?? 4.975}
+                  longitude={longitude ?? 8.3417}
+                  radiusMeters={radiusMeters}
+                  onCoordinatesChange={(lat, lng) => {
+                    setLatitude(lat);
+                    setLongitude(lng);
+                    reverseGeocode(lat, lng);
+                  }}
+                  height={250}
+                />
               </View>
 
               {/* Radius Selector */}

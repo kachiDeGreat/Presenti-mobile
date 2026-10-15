@@ -51,7 +51,7 @@
           "resizeMode": "contain"
         }
       ],
-      "@react-native-google-signin/google-signin",
+      "@react-native-google-signin/google-signin/app.plugin.js",
       [
         "expo-location",
         {

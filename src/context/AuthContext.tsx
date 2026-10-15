@@ -44,10 +44,11 @@ interface AuthContextType {
   isAdmin: boolean;
   knownAccounts: MobileUser[];
   signInWithGoogle: (customUser?: Partial<MobileUser>) => Promise<AuthResult>;
-  signInWithGoogleCredential: (idToken: string) => Promise<AuthResult>;
+  signInWithGoogleCredential: (idToken: string, profileHint?: Partial<MobileUser>) => Promise<AuthResult>;
   addOrSelectGoogleAccount: (account: MobileUser) => Promise<AuthResult>;
   pairOrganization: (code: string) => Promise<Organization>;
   completeRegistration: (fullName: string, phone: string, department: string) => Promise<ChurchMember>;
+  checkAdminStatus: (email?: string, uid?: string) => Promise<boolean>;
   signOut: () => Promise<void>;
   refreshOrganization: () => Promise<Organization | null>;
   updateAnchors: (anchors: {
@@ -152,16 +153,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setKnownAccounts(parsedAccounts);
 
         if (loadedUser) {
-          const isAdminUser = await checkIfUserIsAdmin(loadedUser.email, loadedUser.uid);
-          loadedUser.isAdmin = isAdminUser;
-          setUser(loadedUser);
+          const isAdminUser = loadedUser.isAdmin === true;
+          setUser({ ...loadedUser, isAdmin: isAdminUser });
           if (isAdminUser && !loadedOrg) {
-            const adminOrg = await getAdminOrganization(loadedUser.email, loadedUser.uid);
-            if (adminOrg) {
-              loadedOrg = adminOrg;
-              setOrganization(adminOrg);
-              await AsyncStorage.setItem(STORAGE_KEY_ORG, JSON.stringify(adminOrg)).catch(() => {});
-            }
+            getAdminOrganization(loadedUser.email, loadedUser.uid)
+              .then((adminOrg) => {
+                if (adminOrg) {
+                  setOrganization(adminOrg);
+                  AsyncStorage.setItem(STORAGE_KEY_ORG, JSON.stringify(adminOrg)).catch(() => {});
+                }
+              })
+              .catch(() => {});
           }
         }
 
@@ -246,32 +248,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const handleUserAuthenticated = useCallback(
     async (authUser: MobileUser): Promise<AuthResult> => {
-      // Check if user is an organization administrator
-      const cleanEmail = (authUser.email || '').trim().toLowerCase();
-      const isAdmin = await checkIfUserIsAdmin(cleanEmail, authUser.uid);
+      // 0. Workforce accounts do not perform slow blocking admin queries.
+      // If user was already marked as admin locally or in session, preserve it.
+      const isAdmin = authUser.isAdmin === true;
       authUser.isAdmin = isAdmin;
 
       if (isAdmin) {
-        // Resolve admin's organization
         let adminOrg = organization || (await getCachedOrganization());
         if (!adminOrg) {
-          adminOrg = await getAdminOrganization(cleanEmail, authUser.uid);
+          adminOrg = await getAdminOrganization(authUser.email, authUser.uid);
         }
         if (adminOrg) {
           setOrganization(adminOrg);
           await AsyncStorage.setItem(STORAGE_KEY_ORG, JSON.stringify(adminOrg)).catch(() => {});
         }
-        await AsyncStorage.setItem(STORAGE_KEY_USER, JSON.stringify(authUser)).catch(() => {});
-        setUser(authUser);
+        await AsyncStorage.setItem(STORAGE_KEY_USER, JSON.stringify({ ...authUser, isAdmin: true })).catch(() => {});
+        setUser({ ...authUser, isAdmin: true });
         setMember(null);
+
+        setKnownAccounts((prev) => {
+          const filtered = prev.filter((a) => a.email.toLowerCase() !== authUser.email.toLowerCase());
+          const updated = [{ ...authUser, isAdmin: true }, ...filtered];
+          AsyncStorage.setItem(STORAGE_KEY_KNOWN_ACCOUNTS, JSON.stringify(updated)).catch(() => {});
+          return updated;
+        });
+
         return {
-          user: authUser,
+          user: { ...authUser, isAdmin: true },
           organization: adminOrg,
           member: null,
         };
       }
 
-      // 1. Persist user session
+      // 1. Instant user session persistence
       AsyncStorage.setItem(STORAGE_KEY_USER, JSON.stringify(authUser)).catch(() => {});
       setUser(authUser);
 
@@ -289,11 +298,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setDeviceId(activeDeviceId);
       }
 
-      // 4. Resolve active organization (from state, local cache, or Firestore)
+      // 4. Resolve active organization (from state or device local cache)
       let activeOrg = organization || (await getCachedOrganization());
       let existingMember: ChurchMember | null = await getCachedMember();
 
-      // If cached member does not match the newly logged in user, don't use stale member
+      // If cached member does not match the newly logged in user, clear stale member
       if (
         existingMember &&
         existingMember.email &&
@@ -303,42 +312,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         existingMember = null;
       }
 
-      // If activeOrg is missing, search across churches in Firestore by member email (capped at 3s)
-      if (!activeOrg && authUser.email) {
-        try {
-          const membersGroup = collectionGroup(db, 'members');
-          const cleanEmail = authUser.email.trim().toLowerCase();
-          const q = query(membersGroup, where('email', '==', cleanEmail), limit(1));
-          const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000));
-          const snap = await Promise.race([getDocs(q), timeoutPromise]);
-
-          if (snap && !snap.empty) {
-            const memberDoc = snap.docs[0];
-            const churchDocRef = memberDoc.ref.parent.parent;
-            if (churchDocRef) {
-              const churchSnap = await getDoc(churchDocRef);
-              if (churchSnap.exists()) {
-                const churchData = { id: churchSnap.id, ...churchSnap.data() } as any;
-                activeOrg = {
-                  id: churchSnap.id,
-                  churchName: churchData.churchName || 'Church',
-                  branchName: churchData.branchName || 'Main Branch',
-                  churchCode: churchData.churchCode || '',
-                  departments: churchData.departments || [],
-                  beaconConfig: churchData.beaconConfig,
-                  geoFallback: churchData.geoFallback,
-                  policySettings: churchData.policySettings,
-                };
-                cacheOrganizationAnchors(activeOrg).catch(() => {});
-              }
-            }
-          }
-        } catch (cgErr) {
-          console.warn('Organization search by email skipped:', cgErr);
-        }
-      }
-
-      // 5. If we have activeOrg, query existing member in this organization
+      // 5. If organization is already paired on this device, check member enrollment
       if (activeOrg) {
         setOrganization(activeOrg);
         try {
@@ -348,9 +322,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         } catch (error) {
           console.warn('findExistingMember check error:', error);
-          await AsyncStorage.removeItem(STORAGE_KEY_USER);
-          setUser(null);
-          throw error;
         }
       }
 
@@ -401,16 +372,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const signInWithGoogleCredential = async (idToken: string): Promise<AuthResult> => {
+  const signInWithGoogleCredential = async (
+    idToken: string,
+    profileHint?: Partial<MobileUser>
+  ): Promise<AuthResult> => {
     setIsLoading(true);
     try {
       const credential = FirebaseAuth.GoogleAuthProvider.credential(idToken);
       const cred = await FirebaseAuth.signInWithCredential(auth, credential);
+      const effectiveEmail = (cred.user.email || profileHint?.email || '').trim();
+      const effectiveName =
+        cred.user.displayName ||
+        profileHint?.displayName ||
+        effectiveEmail.split('@')[0] ||
+        'Workforce Member';
+      const effectivePhoto = cred.user.photoURL || profileHint?.photoURL || undefined;
+
       const authUser: MobileUser = {
         uid: cred.user.uid,
-        email: cred.user.email || '',
-        displayName: cred.user.displayName || cred.user.email?.split('@')[0] || 'Workforce Member',
-        photoURL: cred.user.photoURL || undefined,
+        email: effectiveEmail,
+        displayName: effectiveName,
+        photoURL: effectivePhoto,
       };
       return await handleUserAuthenticated(authUser);
     } catch (error) {
@@ -460,8 +442,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     const cleanEmail = (user?.email || '').trim().toLowerCase();
-    const isAdmin = await checkIfUserIsAdmin(cleanEmail, user?.uid);
-    if (isAdmin) {
+    if (organization.adminEmail && cleanEmail && organization.adminEmail.toLowerCase() === cleanEmail) {
       throw new Error(
         `This account (${cleanEmail}) is registered as an organization administrator on the web portal and cannot be registered as a workforce member.`
       );
@@ -479,6 +460,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setMember(newMember);
     return newMember;
   };
+
+  const checkAdminStatus = useCallback(
+    async (emailOverride?: string, uidOverride?: string): Promise<boolean> => {
+      const targetEmail = (emailOverride || user?.email || '').trim().toLowerCase();
+      const targetUid = uidOverride || user?.uid;
+      if (!targetEmail && !targetUid) return false;
+
+      const isAdminUser = await checkIfUserIsAdmin(targetEmail, targetUid);
+      if (isAdminUser && user) {
+        const updatedUser: MobileUser = { ...user, isAdmin: true };
+        setUser(updatedUser);
+        await AsyncStorage.setItem(STORAGE_KEY_USER, JSON.stringify(updatedUser)).catch(() => {});
+        if (!organization) {
+          const adminOrg = await getAdminOrganization(targetEmail, targetUid);
+          if (adminOrg) {
+            setOrganization(adminOrg);
+            await AsyncStorage.setItem(STORAGE_KEY_ORG, JSON.stringify(adminOrg)).catch(() => {});
+          }
+        }
+      }
+      return isAdminUser;
+    },
+    [user, organization]
+  );
 
   const signOut = async () => {
     try {
@@ -516,6 +521,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           latitude: anchors.latitude,
           longitude: anchors.longitude,
           radiusMeters: anchors.radiusMeters,
+          isConfigured: true,
         },
       };
       setOrganization(updatedOrg);
@@ -554,6 +560,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         addOrSelectGoogleAccount,
         pairOrganization,
         completeRegistration,
+        checkAdminStatus,
         signOut,
         refreshOrganization,
         updateAnchors,

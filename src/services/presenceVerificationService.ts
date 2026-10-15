@@ -79,11 +79,21 @@ export async function verifyPresenceAnchors(
       if (WifiManager) {
         let wifiList: any[] = [];
         try {
-          if (typeof WifiManager.reScanAndLoadWifiList === 'function') {
-            wifiList = await WifiManager.reScanAndLoadWifiList();
-          } else if (typeof WifiManager.loadWifiList === 'function') {
-            wifiList = await WifiManager.loadWifiList();
-          }
+          const scanPromise = (async () => {
+            if (typeof WifiManager.reScanAndLoadWifiList === 'function') {
+              return await WifiManager.reScanAndLoadWifiList();
+            } else if (typeof WifiManager.loadWifiList === 'function') {
+              return await WifiManager.loadWifiList();
+            }
+            return [];
+          })();
+
+          // Strict 20-second timeout on primary Wi-Fi scan before falling back to geofence
+          const timeoutPromise = new Promise<any[]>((resolve) =>
+            setTimeout(() => resolve([]), 20000)
+          );
+
+          wifiList = await Promise.race([scanPromise, timeoutPromise]).catch(() => []);
         } catch (scanErr) {
           // If fresh scan is throttled by Android OS (max 4 scans / 2 min), read cached scan results
           if (typeof WifiManager.loadWifiList === 'function') {

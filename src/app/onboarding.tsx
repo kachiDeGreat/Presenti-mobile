@@ -24,31 +24,19 @@ import {
 } from "../services/permissionService";
 
 export function formatOrgCode(raw: string, prev: string = ""): string {
-  // If user deleted (backspace)
+  // If user deleted (backspace) and hit a hyphen
   if (prev.length > raw.length) {
     if (prev.endsWith("-") && raw === prev.slice(0, -1)) {
-      return raw.slice(0, -1).toUpperCase();
-    }
-    if (raw.endsWith("-")) {
       return raw.slice(0, -1).toUpperCase();
     }
     return raw.toUpperCase();
   }
 
-  // If pasted with hyphens or user explicitly typed hyphens, clean and preserve them
-  if (raw.includes("-")) {
-    return raw
-      .toUpperCase()
-      .replace(/[^A-Z0-9-]/g, "")
-      .replace(/-+/g, "-")
-      .slice(0, 25);
-  }
-
-  // Natural typing without hyphens: auto-insert hyphens for XX-XXX-XXX (2-3-3 format)
+  // Strip all non-alphanumeric characters, up to 8 core alphanumeric characters
   const clean = raw
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "")
-    .slice(0, 15);
+    .slice(0, 8);
   if (!clean) return "";
 
   if (clean.length < 2) {
@@ -67,8 +55,14 @@ export function formatOrgCode(raw: string, prev: string = ""): string {
 }
 
 export default function OnboardingScreen() {
-  const { user, organization, member, pairOrganization, completeRegistration } =
-    useAuth();
+  const {
+    user,
+    organization,
+    member,
+    isAdmin,
+    pairOrganization,
+    completeRegistration,
+  } = useAuth();
   const toast = useToast();
 
   const [churchCodeInput, setChurchCodeInput] = useState(
@@ -81,6 +75,15 @@ export default function OnboardingScreen() {
   const [phoneNumber, setPhoneNumber] = useState("");
   const [selectedDept, setSelectedDept] = useState("");
   const [isRegistering, setIsRegistering] = useState(false);
+  const [permissions, setPermissions] = useState<AppPermissionsStatus | null>(null);
+  const codeInputRef = React.useRef<TextInput>(null);
+
+  // Administrators route to calibration
+  useEffect(() => {
+    if (isAdmin || user?.isAdmin) {
+      router.replace("/calibrate");
+    }
+  }, [isAdmin, user]);
 
   // If user is already registered with an active organization, forward to dashboard
   useEffect(() => {
@@ -96,14 +99,14 @@ export default function OnboardingScreen() {
     }
   }, [user]);
 
+  // Auto-select first department when org is verified
   useEffect(() => {
     if (verifiedOrg && verifiedOrg.departments.length > 0 && !selectedDept) {
       setSelectedDept(verifiedOrg.departments[0]);
     }
   }, [verifiedOrg, selectedDept]);
 
-  const [permissions, setPermissions] = useState<AppPermissionsStatus | null>(null);
-
+  // Check initial permissions
   useEffect(() => {
     getAppPermissionsStatus().then(setPermissions).catch(() => {});
   }, []);
@@ -117,8 +120,6 @@ export default function OnboardingScreen() {
       toast.warn("Location permission required for attendance verification.");
     }
   };
-
-  const codeInputRef = React.useRef<TextInput>(null);
 
   const handlePasteCode = async () => {
     try {
@@ -257,7 +258,7 @@ export default function OnboardingScreen() {
                     }}
                     autoCapitalize="characters"
                     autoCorrect={false}
-                    maxLength={20}
+                    maxLength={10}
                   />
                   {churchCodeInput.length > 0 && (
                     <TouchableOpacity
@@ -270,7 +271,7 @@ export default function OnboardingScreen() {
                   )}
                 </View>
                 <Text style={styles.helperText}>
-                  Standard format: XX-XX-XXX (e.g. CP-88-41A). Auto-inserts
+                  Standard format: XX-XXX-XXX (e.g. TO-CRR-656). Auto-inserts
                   dashes as you type.
                 </Text>
               </View>

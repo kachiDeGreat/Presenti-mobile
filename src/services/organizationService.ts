@@ -189,7 +189,41 @@ export async function checkIfUserIsAdmin(email?: string, uid?: string): Promise<
   const cleanEmail = (email || '').trim().toLowerCase();
   if (!cleanEmail && !uid) return false;
 
+  // 0. Instant local check: If cached organization or user on device already confirms admin role
   try {
+    const [cachedOrgRaw, cachedUserRaw] = await Promise.all([
+      AsyncStorage.getItem(STORAGE_KEY_ORG),
+      AsyncStorage.getItem('@sanctuary_user'),
+    ]);
+
+    if (cachedUserRaw) {
+      try {
+        const u = JSON.parse(cachedUserRaw);
+        if (
+          u.isAdmin === true &&
+          ((cleanEmail && u.email?.toLowerCase() === cleanEmail) || (uid && u.uid === uid))
+        ) {
+          return true;
+        }
+      } catch {}
+    }
+
+    if (cachedOrgRaw) {
+      try {
+        const o = JSON.parse(cachedOrgRaw);
+        if (
+          (cleanEmail && o.adminEmail && o.adminEmail.toLowerCase() === cleanEmail) ||
+          (uid && Array.isArray(o.adminUids) && o.adminUids.includes(uid)) ||
+          (uid && o.id === uid)
+        ) {
+          return true;
+        }
+      } catch {}
+    }
+  } catch {}
+
+  // Function to execute Firestore queries with retry on transient network errors
+  const executeQuery = async (): Promise<boolean> => {
     // 1. Direct O(1) read from account_roles registry
     if (cleanEmail) {
       const roleRef = doc(db, 'account_roles', cleanEmail);
@@ -210,7 +244,6 @@ export async function checkIfUserIsAdmin(email?: string, uid?: string): Promise<
       );
       const snapEmail = await getDocs(qEmail);
       if (!snapEmail.empty) {
-        // Cache role in account_roles for subsequent instant checks
         try {
           await setDoc(
             doc(db, 'account_roles', cleanEmail),
@@ -273,11 +306,30 @@ export async function checkIfUserIsAdmin(email?: string, uid?: string): Promise<
         return true;
       }
     }
-  } catch (err) {
-    console.warn('checkIfUserIsAdmin query skipped or error:', err);
-  }
 
-  return false;
+    if (cleanEmail) {
+      try {
+        await setDoc(
+          doc(db, 'account_roles', cleanEmail),
+          {
+            email: cleanEmail,
+            role: 'WORKER',
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+      } catch {}
+    }
+
+    return false;
+  };
+
+  try {
+    return await executeQuery();
+  } catch (err) {
+    console.warn('checkIfUserIsAdmin error:', err);
+    return false;
+  }
 }
 
 export async function registerMember(
@@ -297,11 +349,17 @@ export async function registerMember(
 
     // 0. Security Guard: Prevent administrators from registering as workforce members
     if (cleanEmail) {
-      const isAdmin = await checkIfUserIsAdmin(cleanEmail);
-      if (isAdmin) {
-        throw new Error(
-          `This account (${cleanEmail}) is registered as an organization administrator on the web portal. Administrator accounts cannot be registered as workforce members on the mobile app. Please sign in with a designated workforce account.`
-        );
+      const orgDoc = await getDoc(doc(db, 'churches', orgId));
+      if (orgDoc.exists()) {
+        const orgData = orgDoc.data();
+        if (
+          (orgData.adminEmail && orgData.adminEmail.toLowerCase() === cleanEmail) ||
+          (Array.isArray(orgData.adminUids) && orgData.adminUids.includes(cleanEmail))
+        ) {
+          throw new Error(
+            `This account (${cleanEmail}) is registered as an organization administrator on the web portal. Administrator accounts cannot be registered as workforce members on the mobile app. Please sign in with a designated workforce account.`
+          );
+        }
       }
     }
 
@@ -555,6 +613,19 @@ export async function getAdminOrganization(
   const cleanEmail = (email || '').trim().toLowerCase();
   if (!cleanEmail && !uid) return null;
 
+  // 0. Local cache check
+  try {
+    const cachedOrg = await getCachedOrganization();
+    if (
+      cachedOrg &&
+      ((cleanEmail && cachedOrg.adminEmail && cachedOrg.adminEmail.toLowerCase() === cleanEmail) ||
+        (uid && Array.isArray(cachedOrg.adminUids) && cachedOrg.adminUids.includes(uid)) ||
+        (uid && cachedOrg.id === uid))
+    ) {
+      return cachedOrg;
+    }
+  } catch {}
+
   try {
     if (cleanEmail) {
       const roleRef = doc(db, 'account_roles', cleanEmail);
@@ -565,7 +636,7 @@ export async function getAdminOrganization(
           const churchSnap = await getDoc(doc(db, 'churches', roleData.churchId));
           if (churchSnap.exists()) {
             const data = churchSnap.data();
-            return {
+            const org: Organization = {
               id: churchSnap.id,
               churchName: data.churchName || 'Organization',
               branchName: data.branchName || 'Main Campus',
@@ -584,6 +655,8 @@ export async function getAdminOrganization(
               },
               policySettings: data.policySettings,
             };
+            cacheOrganizationAnchors(org).catch(() => {});
+            return org;
           }
         }
       }
@@ -599,7 +672,7 @@ export async function getAdminOrganization(
       if (!snap.empty) {
         const docSnap = snap.docs[0];
         const data = docSnap.data();
-        return {
+        const org: Organization = {
           id: docSnap.id,
           churchName: data.churchName || 'Organization',
           branchName: data.branchName || 'Main Campus',
@@ -618,10 +691,38 @@ export async function getAdminOrganization(
           },
           policySettings: data.policySettings,
         };
+        cacheOrganizationAnchors(org).catch(() => {});
+        return org;
       }
     }
 
     if (uid) {
+      const directSnap = await getDoc(doc(db, 'churches', uid));
+      if (directSnap.exists()) {
+        const data = directSnap.data();
+        const org: Organization = {
+          id: directSnap.id,
+          churchName: data.churchName || 'Organization',
+          branchName: data.branchName || 'Main Campus',
+          churchCode: data.churchCode || '',
+          departments: Array.isArray(data.departments) && data.departments.length > 0
+            ? data.departments
+            : ['General Workforce'],
+          beaconConfig: {
+            ssidHint: data.beaconConfig?.ssidHint || '',
+            targetBssid: data.beaconConfig?.targetBssid || '',
+          },
+          geoFallback: {
+            latitude: Number(data.geoFallback?.latitude ?? 0),
+            longitude: Number(data.geoFallback?.longitude ?? 0),
+            radiusMeters: Number(data.geoFallback?.radiusMeters ?? 10),
+          },
+          policySettings: data.policySettings,
+        };
+        cacheOrganizationAnchors(org).catch(() => {});
+        return org;
+      }
+
       const q = query(
         collection(db, 'churches'),
         where('adminUids', 'array-contains', uid),
@@ -631,7 +732,7 @@ export async function getAdminOrganization(
       if (!snap.empty) {
         const docSnap = snap.docs[0];
         const data = docSnap.data();
-        return {
+        const org: Organization = {
           id: docSnap.id,
           churchName: data.churchName || 'Organization',
           branchName: data.branchName || 'Main Campus',
@@ -650,6 +751,8 @@ export async function getAdminOrganization(
           },
           policySettings: data.policySettings,
         };
+        cacheOrganizationAnchors(org).catch(() => {});
+        return org;
       }
     }
   } catch (err) {
@@ -670,12 +773,21 @@ export async function updateOrganizationAnchors(
   }
 ): Promise<void> {
   const churchRef = doc(db, 'churches', churchId);
-  await updateDoc(churchRef, {
-    'beaconConfig.ssidHint': anchors.ssidHint.trim(),
-    'beaconConfig.targetBssid': anchors.targetBssid.trim().toLowerCase(),
-    'geoFallback.latitude': anchors.latitude,
-    'geoFallback.longitude': anchors.longitude,
-    'geoFallback.radiusMeters': anchors.radiusMeters,
-    updatedAt: new Date().toISOString(),
-  });
+  await setDoc(
+    churchRef,
+    {
+      beaconConfig: {
+        ssidHint: anchors.ssidHint.trim(),
+        targetBssid: anchors.targetBssid.trim().toLowerCase(),
+      },
+      geoFallback: {
+        latitude: anchors.latitude,
+        longitude: anchors.longitude,
+        radiusMeters: anchors.radiusMeters,
+        isConfigured: true,
+      },
+      updatedAt: new Date().toISOString(),
+    },
+    { merge: true }
+  );
 }

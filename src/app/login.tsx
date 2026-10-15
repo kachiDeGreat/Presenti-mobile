@@ -21,26 +21,27 @@ import {
 } from "@react-native-google-signin/google-signin";
 import { useAuth, type AuthResult } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
-import { AdminCalibrationModal } from "../components/AdminCalibrationModal";
-
 // Official Google OAuth Web Client ID for attendance-app-1ab15
 const GOOGLE_CLIENT_ID =
   process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID ||
   "75234088565-1544l2u164o869tt1ddafo5h2vjijoed.apps.googleusercontent.com";
 
 export default function LoginScreen() {
-  const { user, organization, member, signInWithGoogle, signInWithGoogleCredential } =
+  const { user, organization, member, isAdmin, signInWithGoogle, signInWithGoogleCredential } =
     useAuth();
   const toast = useToast();
 
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [showCalibrationModal, setShowCalibrationModal] = useState(false);
 
   useEffect(() => {
+    if (isAdmin || user?.isAdmin) {
+      router.replace("/calibrate" as any);
+      return;
+    }
     if (user && organization && member) {
       router.replace("/");
     }
-  }, [user, organization, member]);
+  }, [isAdmin, user, organization, member]);
 
   useEffect(() => {
     if (Platform.OS !== "web") {
@@ -55,7 +56,7 @@ export default function LoginScreen() {
   }, []);
 
   const navigateAfterAuth = (result: AuthResult) => {
-    if (result.user?.isAdmin) {
+    if (result.user?.isAdmin || isAdmin) {
       toast.success(`Welcome Administrator, ${result.user.displayName}!`);
       router.replace("/calibrate" as any);
       return;
@@ -86,7 +87,12 @@ export default function LoginScreen() {
         if (isSuccessResponse(response)) {
           const idToken = response.data.idToken;
           if (idToken) {
-            const res = await signInWithGoogleCredential(idToken);
+            const profileHint = {
+              email: response.data.user.email,
+              displayName: response.data.user.name || undefined,
+              photoURL: response.data.user.photo || undefined,
+            };
+            const res = await signInWithGoogleCredential(idToken, profileHint);
             navigateAfterAuth(res);
           } else {
             toast.error("Unable to retrieve ID token from Google.");
@@ -188,37 +194,36 @@ export default function LoginScreen() {
               </>
             )}
           </TouchableOpacity>
-
-          <TouchableOpacity
-            style={{
-              marginTop: 14,
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: 8,
-              paddingVertical: 12,
-              borderRadius: 10,
-              backgroundColor: '#F1F5F9',
-              borderWidth: 1,
-              borderColor: '#E2E8F0',
-            }}
-            onPress={() => setShowCalibrationModal(true)}
-          >
-            <Ionicons name="hardware-chip-outline" size={17} color="#0284C7" />
-            <Text style={{ fontSize: 13, fontWeight: '600', color: '#0F172A' }}>
-              Administrator? Calibrate Premises Anchors
-            </Text>
-          </TouchableOpacity>
         </View>
 
-        {/* Verification & Trust Card (matching Admin Web) */}
-      </ScrollView>
+        {/* Divider */}
+        <View style={styles.dividerRow}>
+          <View style={styles.dividerLine} />
+          <Text style={styles.dividerText}>OR CALIBRATE PREMISES</Text>
+          <View style={styles.dividerLine} />
+        </View>
 
-      {/* Admin QR & Premises Hardware Calibration Modal */}
-      <AdminCalibrationModal
-        visible={showCalibrationModal}
-        onClose={() => setShowCalibrationModal(false)}
-      />
+        {/* Administrator Direct Calibration Access (No Login Required) */}
+        <TouchableOpacity
+          style={styles.adminCard}
+          onPress={() => router.push("/calibrate" as any)}
+          activeOpacity={0.85}
+        >
+          <View style={styles.adminIconBadge}>
+            <Ionicons name="hardware-chip-outline" size={20} color="#0284C7" />
+          </View>
+          <View style={{ flex: 1, gap: 2 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+              <Text style={styles.adminCardTitle}>Administrator? Calibrate Premises</Text>
+              <Ionicons name="qr-code-outline" size={13} color="#0284C7" />
+            </View>
+            <Text style={styles.adminCardSubtitle}>
+              Scan the QR code displayed on the Admin Web Portal to calibrate Wi-Fi & GPS anchors.
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
+        </TouchableOpacity>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -344,5 +349,58 @@ const styles = StyleSheet.create({
     color: "#475569",
     lineHeight: 18,
     flex: 1,
+  },
+  dividerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginVertical: 18,
+    gap: 12,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: "#E2E8F0",
+  },
+  dividerText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#94A3B8",
+    letterSpacing: 0.8,
+  },
+  adminCard: {
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1.5,
+    borderColor: "#BAE6FD",
+    borderRadius: 14,
+    padding: 16,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    shadowColor: "#0284C7",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    elevation: 2,
+  },
+  adminIconBadge: {
+    width: 42,
+    height: 42,
+    borderRadius: 10,
+    backgroundColor: "#F0F9FF",
+    borderWidth: 1,
+    borderColor: "#E0F2FE",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  adminCardTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#0369A1",
+    letterSpacing: -0.2,
+  },
+  adminCardSubtitle: {
+    fontSize: 12,
+    color: "#64748B",
+    lineHeight: 16,
   },
 });

@@ -11,7 +11,7 @@ import {
   RefreshControl,
   AppState,
 } from "react-native";
-import { router, Redirect } from "expo-router";
+import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useAuth } from "../context/AuthContext";
@@ -41,6 +41,7 @@ export default function DashboardScreen() {
     cachedAnchors,
     deviceId,
     isLoading,
+    isAdmin,
     signOut,
     refreshOrganization,
   } = useAuth();
@@ -184,18 +185,22 @@ export default function DashboardScreen() {
     }
   }, [refreshOrganization, member, organization, todayServiceDate, toast]);
 
-  if (isLoading) {
+  // Guard routing: redirect unauthenticated or admin or unenrolled users cleanly after mount
+  useEffect(() => {
+    if (isLoading) return;
+    if (!user) {
+      router.replace("/login");
+    } else if (user.isAdmin || isAdmin) {
+      router.replace("/calibrate");
+    } else if (!organization || !member) {
+      router.replace("/onboarding");
+    }
+  }, [isLoading, user, isAdmin, organization, member]);
+
+  if (isLoading || !user || user.isAdmin || isAdmin || !organization || !member) {
     return (
       <LoadingIndicator fullScreen message="Loading attendance dashboard..." />
     );
-  }
-
-  if (!user) {
-    return <Redirect href="/login" />;
-  }
-
-  if (!organization || !member) {
-    return <Redirect href="/onboarding" />;
   }
 
   // --- Clock In Execution (Instant Time Trap + Presence Verification + Cloud Sync) ---
@@ -401,25 +406,27 @@ export default function DashboardScreen() {
               resizeMode="contain"
             />
             <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-              <TouchableOpacity
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  gap: 4,
-                  backgroundColor: "#F0F9FF",
-                  paddingHorizontal: 8,
-                  paddingVertical: 4,
-                  borderRadius: 6,
-                  borderWidth: 1,
-                  borderColor: "#BAE6FD",
-                }}
-                onPress={() => setShowCalibrationModal(true)}
-              >
-                <Ionicons name="hardware-chip-outline" size={13} color="#0284C7" />
-                <Text style={{ fontSize: 11, fontWeight: "700", color: "#0284C7" }}>
-                  Calibrate
-                </Text>
-              </TouchableOpacity>
+              {isAdmin && (
+                <TouchableOpacity
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 4,
+                    backgroundColor: "#F0F9FF",
+                    paddingHorizontal: 8,
+                    paddingVertical: 4,
+                    borderRadius: 6,
+                    borderWidth: 1,
+                    borderColor: "#BAE6FD",
+                  }}
+                  onPress={() => router.push("/calibrate" as any)}
+                >
+                  <Ionicons name="hardware-chip-outline" size={13} color="#0284C7" />
+                  <Text style={{ fontSize: 11, fontWeight: "700", color: "#0284C7" }}>
+                    Calibrate
+                  </Text>
+                </TouchableOpacity>
+              )}
               <View style={styles.codeBadge}>
                 <Text style={styles.codeBadgeText}>
                   {organization.churchCode}

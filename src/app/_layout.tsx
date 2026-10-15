@@ -22,23 +22,24 @@ function RootNavigator() {
     }
   }, [isLoading]);
 
-  if (isLoading) {
-    return <LoadingIndicator fullScreen message="Initializing workforce session..." />;
-  }
-
   return (
-    <Stack
-      screenOptions={{
-        headerShown: false,
-        animation: 'fade',
-        contentStyle: { backgroundColor: '#F8FAFC' },
-      }}
-    >
-      <Stack.Screen name="index" />
-      <Stack.Screen name="login" options={{ gestureEnabled: false }} />
-      <Stack.Screen name="onboarding" options={{ gestureEnabled: false }} />
-      <Stack.Screen name="calibrate" />
-    </Stack>
+    <>
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          animation: 'fade',
+          contentStyle: { backgroundColor: '#F8FAFC' },
+        }}
+      >
+        <Stack.Screen name="index" />
+        <Stack.Screen name="login" options={{ gestureEnabled: false }} />
+        <Stack.Screen name="onboarding" options={{ gestureEnabled: false }} />
+        <Stack.Screen name="calibrate" />
+      </Stack>
+      {isLoading && (
+        <LoadingIndicator fullScreen message="Initializing workforce session..." />
+      )}
+    </>
   );
 }
 
