@@ -79,6 +79,7 @@ export default function CalibrateScreen() {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
 
   const isSavedSuccessfullyRef = useRef(false);
+  const hasSentDisconnectRef = useRef(false);
   const sessionOrgIdRef = useRef<string>("");
   const pairedOrgIdRef = useRef<string>("");
 
@@ -93,6 +94,8 @@ export default function CalibrateScreen() {
   // Kill signal: notify web portal immediately that mobile device has disconnected
   const sendDisconnectSignal = useCallback(
     async (orgId?: string) => {
+      if (hasSentDisconnectRef.current || isSavedSuccessfullyRef.current) return;
+      hasSentDisconnectRef.current = true;
       const target =
         orgId ||
         sessionOrgIdRef.current ||
@@ -344,6 +347,8 @@ export default function CalibrateScreen() {
       if (targetId) {
         sessionOrgIdRef.current = targetId;
         pairedOrgIdRef.current = targetId;
+        hasSentDisconnectRef.current = false;
+        isSavedSuccessfullyRef.current = false;
         // INSTANT: Dismiss camera immediately and display loading transition overlay
         setIsConnectingSession(true);
         setPairedOrgId(targetId);
