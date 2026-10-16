@@ -45,6 +45,7 @@ export async function fetchOrganizationByCode(rawCode: string): Promise<Organiza
       beaconConfig: {
         ssidHint: data.beaconConfig?.ssidHint || '',
         targetBssid: data.beaconConfig?.targetBssid || '',
+        verificationMode: data.beaconConfig?.verificationMode || (data.beaconConfig?.targetBssid ? 'HYBRID' : 'GEOFENCE_ONLY'),
       },
       geoFallback: {
         latitude: Number(data.geoFallback?.latitude ?? 0),
@@ -139,16 +140,18 @@ export function subscribeToOrganization(
 }
 
 export async function cacheOrganizationAnchors(org: Organization): Promise<CachedAnchors> {
+  const mode = org.beaconConfig?.verificationMode || (org.beaconConfig?.targetBssid ? 'HYBRID' : 'GEOFENCE_ONLY');
   const anchors: CachedAnchors = {
     churchId: org.id,
     churchName: org.churchName,
     branchName: org.branchName,
     churchCode: org.churchCode,
-    ssidHint: org.beaconConfig.ssidHint,
-    targetBssid: org.beaconConfig.targetBssid,
+    ssidHint: org.beaconConfig?.ssidHint || '',
+    targetBssid: org.beaconConfig?.targetBssid || '',
     latitude: org.geoFallback.latitude,
     longitude: org.geoFallback.longitude,
     radiusMeters: org.geoFallback.radiusMeters,
+    verificationMode: mode,
     cachedAt: new Date().toISOString(),
   };
 
@@ -770,21 +773,31 @@ export async function updateOrganizationAnchors(
     latitude: number;
     longitude: number;
     radiusMeters: number;
+    verificationMode?: 'HYBRID' | 'GEOFENCE_ONLY';
   }
 ): Promise<void> {
   const churchRef = doc(db, 'churches', churchId);
+  const mode = anchors.verificationMode || (anchors.targetBssid.trim() ? 'HYBRID' : 'GEOFENCE_ONLY');
   await setDoc(
     churchRef,
     {
       beaconConfig: {
         ssidHint: anchors.ssidHint.trim(),
         targetBssid: anchors.targetBssid.trim().toLowerCase(),
+        verificationMode: mode,
       },
       geoFallback: {
         latitude: anchors.latitude,
         longitude: anchors.longitude,
         radiusMeters: anchors.radiusMeters,
         isConfigured: true,
+        isCalibrated: true,
+      },
+      isCalibrated: true,
+      calibrationSession: {
+        status: 'COMPLETED',
+        completedAt: new Date().toISOString(),
+        mode,
       },
       updatedAt: new Date().toISOString(),
     },

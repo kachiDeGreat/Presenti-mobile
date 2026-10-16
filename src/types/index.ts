@@ -11,14 +11,17 @@ export interface Organization {
   beaconConfig: {
     ssidHint: string;
     targetBssid: string;
+    verificationMode?: 'HYBRID' | 'GEOFENCE_ONLY';
   };
   geoFallback: {
     latitude: number;
     longitude: number;
     radiusMeters: number;
     isConfigured?: boolean;
+    isCalibrated?: boolean;
   };
   policySettings?: PolicySettings;
+  isCalibrated?: boolean;
 }
 
 export interface PolicySettings {
@@ -48,6 +51,7 @@ export interface CachedAnchors {
   latitude: number;
   longitude: number;
   radiusMeters: number;
+  verificationMode?: 'HYBRID' | 'GEOFENCE_ONLY';
   cachedAt: string;
 }
 

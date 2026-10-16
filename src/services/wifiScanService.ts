@@ -100,17 +100,14 @@ export async function scanPhysicalWifiNetworks(): Promise<{
       return { success: false, networks: [], error: 'Native Wi-Fi module not initialized.' };
     }
 
-    // 3b. Verify Smartphone Wi-Fi Radio is switched ON
+    // 3b. Verify Smartphone Wi-Fi Radio status (soft check - do not hard-abort)
+    let wifiToggleWarning: string | null = null;
     try {
       if (typeof WifiManager.isEnabled === 'function') {
         const isWifiOn = await WifiManager.isEnabled();
         if (!isWifiOn) {
-          return {
-            success: false,
-            networks: [],
-            error:
-              "Your phone's Wi-Fi toggle is turned OFF. Please swipe down from top of your screen and turn ON Wi-Fi to detect nearby networks and mobile hotspots.",
-          };
+          wifiToggleWarning =
+            "Your phone's Wi-Fi toggle is turned OFF (or Mobile Hotspot is active). If no networks appear below, switch on Wi-Fi or select 'GPS Geofence Only' mode.";
         }
       }
     } catch (wifiErr) {
@@ -228,7 +225,7 @@ export async function scanPhysicalWifiNetworks(): Promise<{
     return {
       success: true,
       networks: formatted,
-      error: formatted.length === 0 && scanError ? scanError : undefined,
+      error: formatted.length === 0 ? (scanError || wifiToggleWarning || undefined) : undefined,
     };
   } catch (err: any) {
     return {

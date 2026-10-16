@@ -45,16 +45,18 @@ export interface PresenceAnchorConfig {
   latitude?: number;
   longitude?: number;
   radiusMeters?: number;
+  verificationMode?: 'HYBRID' | 'GEOFENCE_ONLY';
 }
 
 /**
  * Verifies that the worker is physically on-premise:
- * 1. Ambient Wi-Fi Beacon Scan (Android only):
- *    Silently listens for the church router's unique hardware MAC/BSSID in the air.
+ * 1. Ambient Wi-Fi Beacon Scan (Android only - HYBRID mode only):
+ *    Silently listens for the church/company router's unique hardware MAC/BSSID in the air.
  *    The phone does NOT need to connect to the Wi-Fi.
- * 2. High-Accuracy GPS Geofencing (Fallback):
- *    Used if router is powered off, out of range, or on iOS.
- *    Rejects sign-in if outside the premises perimeter.
+ *    If the company is configured as GEOFENCE_ONLY, this step is completely skipped.
+ * 2. High-Accuracy GPS Geofencing:
+ *    Always active for GEOFENCE_ONLY companies, and acts as instant fail-safe
+ *    fallback in HYBRID mode if router is out of range or phone Wi-Fi toggle is off.
  */
 export async function verifyPresenceAnchors(
   anchors?: PresenceAnchorConfig | null
@@ -65,12 +67,16 @@ export async function verifyPresenceAnchors(
   const targetRadius = Number(anchors?.radiusMeters ?? 30);
   const hasGeofence = targetLat !== 0 && targetLng !== 0;
 
+  // Determine verification mode: explicit or inferred from targetBssid presence
+  const mode: 'HYBRID' | 'GEOFENCE_ONLY' =
+    anchors?.verificationMode || (targetBssid ? 'HYBRID' : 'GEOFENCE_ONLY');
+  const isHybrid = mode === 'HYBRID' && Boolean(targetBssid);
+
   // -------------------------------------------------------------
-  // STEP 1: Ambient Wi-Fi Beacon Scan (Android only)
-  // Searches ambient radio waves for the router's hardware BSSID (MAC).
-  // The worker's phone does NOT need to be connected to the router.
+  // STEP 1: Ambient Wi-Fi Beacon Scan (Android only - HYBRID mode)
+  // If company is GEOFENCE_ONLY, completely bypass radio scanning for maximum speed.
   // -------------------------------------------------------------
-  if (Platform.OS === 'android' && targetBssid) {
+  if (Platform.OS === 'android' && isHybrid && targetBssid) {
     try {
       // Dynamically require native module with safe fallback
       const wifiModule = require('react-native-wifi-reborn');
@@ -88,9 +94,9 @@ export async function verifyPresenceAnchors(
             return [];
           })();
 
-          // Strict 20-second timeout on primary Wi-Fi scan before falling back to geofence
+          // Fast 3.5-second timeout on primary Wi-Fi scan before falling back to geofence
           const timeoutPromise = new Promise<any[]>((resolve) =>
-            setTimeout(() => resolve([]), 20000)
+            setTimeout(() => resolve([]), 3500)
           );
 
           wifiList = await Promise.race([scanPromise, timeoutPromise]).catch(() => []);

@@ -233,9 +233,18 @@ export default function DashboardScreen() {
 
     setIsSyncingToCloud(true);
 
+    const effectiveMode =
+      organization.beaconConfig?.verificationMode ||
+      cachedAnchors?.verificationMode ||
+      (organization.beaconConfig?.targetBssid || cachedAnchors?.targetBssid
+        ? "HYBRID"
+        : "GEOFENCE_ONLY");
+
     // 4. Drop down animated toast while checking physical presence anchors
     toast.syncing(
-      `Trapped at ${timeDisplay}. Scanning Wi-Fi & verifying GPS presence...`,
+      effectiveMode === "GEOFENCE_ONLY"
+        ? `Trapped at ${timeDisplay}. Verifying GPS Satellite Geofence...`
+        : `Trapped at ${timeDisplay}. Scanning Wi-Fi & verifying GPS presence...`,
       {
         title: "Verifying Presence",
       },
@@ -243,6 +252,7 @@ export default function DashboardScreen() {
 
     // 5. Physical Presence Verification (Wi-Fi Anchor or Geofence fallback)
     const effectiveAnchors = {
+      verificationMode: effectiveMode,
       targetBssid:
         organization.beaconConfig?.targetBssid ||
         cachedAnchors?.targetBssid ||

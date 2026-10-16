@@ -45,6 +45,7 @@ export const AdminCalibrationModal: React.FC<AdminCalibrationModalProps> = ({
   const [permission, requestPermission] = useCameraPermissions();
   const [mode, setMode] = useState<"SCANNER" | "CALIBRATE">("SCANNER");
   const [targetOrg, setTargetOrg] = useState<CalibrationPayload | null>(null);
+  const [calibrationMode, setCalibrationMode] = useState<"HYBRID" | "GEOFENCE_ONLY">("HYBRID");
 
   // Calibration Form State
   const [selectedSsid, setSelectedSsid] = useState("");
@@ -73,6 +74,7 @@ export const AdminCalibrationModal: React.FC<AdminCalibrationModalProps> = ({
     if (visible) {
       setMode("SCANNER");
       setTargetOrg(null);
+      setCalibrationMode("HYBRID");
       setSelectedSsid("");
       setSelectedBssid("");
       setLatitude(null);
@@ -146,6 +148,9 @@ export const AdminCalibrationModal: React.FC<AdminCalibrationModalProps> = ({
       const targetId = parsed?.id || parsed?.churchId;
       const targetCode = parsed?.c || parsed?.code || parsed?.churchCode || "ORG";
       const targetName = parsed?.n || parsed?.name || parsed?.churchName || "Organization";
+      const targetMode: "HYBRID" | "GEOFENCE_ONLY" =
+        (parsed?.mode === "GEOFENCE_ONLY" || parsed?.m === "GEOFENCE_ONLY") ? "GEOFENCE_ONLY" : "HYBRID";
+      setCalibrationMode(targetMode);
 
       if (targetId) {
         hasHandshakedRef.current = true;
@@ -156,26 +161,39 @@ export const AdminCalibrationModal: React.FC<AdminCalibrationModalProps> = ({
           churchName: targetName,
         });
 
-        // Send instant handshake ping to Firestore
-        try {
-          await setDoc(
-            doc(db, "churches", targetId, "calibration", "session"),
-            {
-              status: "CONNECTED",
-              connectedAt: new Date().toISOString(),
-              platform: Platform.OS,
-            },
-            { merge: true }
-          );
-        } catch (e) {
-          console.warn("Could not write handshake ping:", e);
-        }
+        // Send instant handshake ping to BOTH church doc and session subcollection
+        const sessionPayload = {
+          status: "CONNECTED",
+          connectedAt: new Date().toISOString(),
+          platform: Platform.OS,
+          mode: targetMode,
+        };
+
+        updateDoc(doc(db, "churches", targetId), {
+          "calibrationSession.status": "CONNECTED",
+          "calibrationSession.connectedAt": sessionPayload.connectedAt,
+          "calibrationSession.platform": sessionPayload.platform,
+          "calibrationSession.mode": targetMode,
+        }).catch((e) => console.warn("Could not write handshake to church doc:", e));
+
+        setDoc(
+          doc(db, "churches", targetId, "calibration", "session"),
+          sessionPayload,
+          { merge: true }
+        ).catch((e) => {
+          console.warn("Could not write handshake ping to session doc:", e);
+        });
 
         setMode("CALIBRATE");
 
-        // Immediately trigger initial GPS and Wi-Fi scans
-        acquireGps();
-        scanPhysicalWifi();
+        if (targetMode === "GEOFENCE_ONLY") {
+          setSelectedSsid("Office Geofence Zone");
+          setSelectedBssid("");
+          acquireGps();
+        } else {
+          acquireGps();
+          scanPhysicalWifi();
+        }
       }
     } catch (err) {
       console.warn("QR code parsing error:", err);
@@ -279,14 +297,16 @@ export const AdminCalibrationModal: React.FC<AdminCalibrationModalProps> = ({
   const handleSaveCalibration = async () => {
     if (!targetOrg) return;
 
-    if (!selectedSsid.trim()) {
-      Alert.alert("Missing Router SSID", "Please select or enter the premises router name.");
-      return;
-    }
+    if (calibrationMode === "HYBRID") {
+      if (!selectedSsid.trim()) {
+        Alert.alert("Missing Router SSID", "Please select or enter the premises router name.");
+        return;
+      }
 
-    if (!selectedBssid.trim()) {
-      Alert.alert("Missing Router MAC", "Please enter or select the hardware MAC address (BSSID).");
-      return;
+      if (!selectedBssid.trim()) {
+        Alert.alert("Missing Router MAC", "Please enter or select the hardware MAC address (BSSID).");
+        return;
+      }
     }
 
     if (latitude === null || longitude === null) {
@@ -296,21 +316,27 @@ export const AdminCalibrationModal: React.FC<AdminCalibrationModalProps> = ({
 
     setIsSubmitting(true);
     try {
-      const cleanBssid = selectedBssid.trim().toLowerCase();
-      const cleanSsid = selectedSsid.trim();
+      const cleanBssid = calibrationMode === "HYBRID" ? selectedBssid.trim().toLowerCase() : "";
+      const cleanSsid = calibrationMode === "HYBRID" ? selectedSsid.trim() : "Office Geofence Zone";
 
       // 1. Update main church document
       await updateDoc(doc(db, "churches", targetOrg.churchId), {
         beaconConfig: {
           ssidHint: cleanSsid,
           targetBssid: cleanBssid,
+          verificationMode: calibrationMode,
         },
         geoFallback: {
           latitude: Number(latitude),
           longitude: Number(longitude),
           radiusMeters: Number(radiusMeters),
           locationLabel: locationName || undefined,
+          isConfigured: true,
+          isCalibrated: true,
         },
+        isCalibrated: true,
+        "calibrationSession.status": "COMPLETED",
+        "calibrationSession.completedAt": new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       });
 
@@ -323,12 +349,15 @@ export const AdminCalibrationModal: React.FC<AdminCalibrationModalProps> = ({
           beaconConfig: {
             ssidHint: cleanSsid,
             targetBssid: cleanBssid,
+            verificationMode: calibrationMode,
           },
           geoFallback: {
             latitude: Number(latitude),
             longitude: Number(longitude),
             radiusMeters: Number(radiusMeters),
             locationLabel: locationName || undefined,
+            isConfigured: true,
+            isCalibrated: true,
           },
         },
         { merge: true }
@@ -336,7 +365,9 @@ export const AdminCalibrationModal: React.FC<AdminCalibrationModalProps> = ({
 
       Alert.alert(
         "Anchors Successfully Calibrated!",
-        `Premises Wi-Fi and Geofence boundaries have been synchronized to the Web Portal.\n\n• Router: ${cleanSsid}\n• Coordinates: ${latitude}, ${longitude}\n• Perimeter: ${radiusMeters}m`,
+        calibrationMode === "GEOFENCE_ONLY"
+          ? `Premises Geofence boundaries have been synchronized to the Web Portal.\n\n• Mode: GPS Geofence Only\n• Coordinates: ${latitude}, ${longitude}\n• Perimeter: ${radiusMeters}m`
+          : `Premises Wi-Fi and Geofence boundaries have been synchronized to the Web Portal.\n\n• Router: ${cleanSsid}\n• Coordinates: ${latitude}, ${longitude}\n• Perimeter: ${radiusMeters}m`,
         [
           {
             text: "Done",
@@ -360,6 +391,24 @@ export const AdminCalibrationModal: React.FC<AdminCalibrationModalProps> = ({
     }
   };
 
+  const handleClose = () => {
+    if (targetOrg?.churchId && !isSubmitting) {
+      updateDoc(doc(db, "churches", targetOrg.churchId), {
+        "calibrationSession.status": "DISCONNECTED",
+        "calibrationSession.disconnectedAt": new Date().toISOString(),
+      }).catch(() => {});
+      setDoc(
+        doc(db, "churches", targetOrg.churchId, "calibration", "session"),
+        {
+          status: "DISCONNECTED",
+          disconnectedAt: new Date().toISOString(),
+        },
+        { merge: true },
+      ).catch(() => {});
+    }
+    onClose();
+  };
+
   const filteredNetworks = detectedNetworks.filter((net) => {
     if (!wifiFilterQuery.trim()) return true;
     const q = wifiFilterQuery.toLowerCase();
@@ -367,11 +416,11 @@ export const AdminCalibrationModal: React.FC<AdminCalibrationModalProps> = ({
   });
 
   return (
-    <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
+    <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={handleClose}>
       <View style={styles.container}>
         {/* Header Bar */}
         <View style={styles.topBar}>
-          <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
+          <TouchableOpacity onPress={handleClose} style={styles.closeBtn}>
             <Ionicons name="close" size={24} color="#0F172A" />
           </TouchableOpacity>
           <View style={styles.headerInfo}>
@@ -457,112 +506,155 @@ export const AdminCalibrationModal: React.FC<AdminCalibrationModalProps> = ({
               </View>
             </View>
 
-            {/* STEP 1: PHYSICAL WI-FI DETECTION */}
-            <View style={styles.sectionCard}>
-              <View style={styles.sectionHeader}>
-                <View style={[styles.sectionIconCircle, { backgroundColor: "#EFF6FF" }]}>
-                  <Ionicons name="wifi" size={18} color="#2563EB" />
+            {/* STEP 1: PHYSICAL WI-FI DETECTION (HYBRID ONLY) OR GEOFENCE ONLY BANNER */}
+            {calibrationMode === "GEOFENCE_ONLY" ? (
+              <View style={[styles.sectionCard, { backgroundColor: "#F0FDF4", borderColor: "#BBF7D0", borderWidth: 1 }]}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 12 }}>
+                  <View style={[styles.sectionIconCircle, { backgroundColor: "#DCFCE7" }]}>
+                    <Ionicons name="navigate-circle" size={26} color="#16A34A" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                      <Text style={{ fontSize: 15, fontWeight: "700", color: "#166534" }}>
+                        Router-Free GPS Geofence Mode
+                      </Text>
+                      <View style={{ backgroundColor: "#BBF7D0", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                        <Text style={{ fontSize: 10, fontWeight: "700", color: "#166534" }}>ACTIVE</Text>
+                      </View>
+                    </View>
+                    <Text style={{ fontSize: 12, color: "#15803D", lineHeight: 17 }}>
+                      Your organization is configured for satellite GPS verification only. No physical office Wi-Fi router required. Pinpoint your venue coordinates below.
+                    </Text>
+                  </View>
                 </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.sectionTitle}>1. Premises Wi-Fi Anchor</Text>
-                  <Text style={styles.sectionDesc}>Filter or select the premises router workers will detect</Text>
-                </View>
-                <TouchableOpacity
-                  onPress={scanPhysicalWifi}
-                  disabled={isScanningWifi}
-                  style={styles.refreshIconBtn}
-                >
-                  {isScanningWifi ? (
-                    <ActivityIndicator size="small" color="#2563EB" />
-                  ) : (
-                    <Ionicons name="refresh" size={18} color="#2563EB" />
-                  )}
-                </TouchableOpacity>
               </View>
-
-              {/* Wi-Fi Search / Filter Input */}
-              <View style={styles.searchBarRow}>
-                <Ionicons name="search" size={16} color="#94A3B8" />
-                <TextInput
-                  style={styles.searchBarInput}
-                  value={wifiFilterQuery}
-                  onChangeText={setWifiFilterQuery}
-                  placeholder="Filter or search nearby Wi-Fi..."
-                  placeholderTextColor="#94A3B8"
-                />
-                {wifiFilterQuery ? (
-                  <TouchableOpacity onPress={() => setWifiFilterQuery("")}>
-                    <Ionicons name="close-circle" size={16} color="#94A3B8" />
+            ) : (
+              <View style={styles.sectionCard}>
+                <View style={styles.sectionHeader}>
+                  <View style={[styles.sectionIconCircle, { backgroundColor: "#EFF6FF" }]}>
+                    <Ionicons name="wifi" size={18} color="#2563EB" />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.sectionTitle}>1. Premises Wi-Fi Anchor</Text>
+                    <Text style={styles.sectionDesc}>Filter or select the premises router workers will detect</Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={scanPhysicalWifi}
+                    disabled={isScanningWifi}
+                    style={styles.refreshIconBtn}
+                  >
+                    {isScanningWifi ? (
+                      <ActivityIndicator size="small" color="#2563EB" />
+                    ) : (
+                      <Ionicons name="refresh" size={18} color="#2563EB" />
+                    )}
                   </TouchableOpacity>
-                ) : null}
-              </View>
+                </View>
 
-              {/* Detected Wi-Fi Networks List */}
-              <View style={styles.networkList}>
-                {filteredNetworks.length > 0 ? (
-                  filteredNetworks.map((net) => {
-                    const isSelected = selectedBssid.toLowerCase() === net.bssid.toLowerCase();
-                    return (
-                      <TouchableOpacity
-                        key={net.bssid + net.ssid}
-                        style={[styles.networkItem, isSelected && styles.networkItemSelected]}
-                        onPress={() => {
-                          setSelectedSsid(net.ssid);
-                          setSelectedBssid(net.bssid);
-                        }}
-                      >
-                        <View style={styles.networkItemLeft}>
-                          <Ionicons
-                            name={isSelected ? "radio-button-on" : "radio-button-off"}
-                            size={18}
-                            color={isSelected ? "#2563EB" : "#94A3B8"}
-                          />
-                          <View style={{ marginLeft: 8 }}>
-                            <Text style={[styles.networkSsid, isSelected && { color: "#1E40AF", fontWeight: "700" }]}>
-                              {net.ssid}
-                            </Text>
-                            <Text style={styles.networkBssid}>{net.bssid}</Text>
-                          </View>
-                        </View>
-                        {isSelected && (
-                          <View style={styles.selectedBadge}>
-                            <Text style={styles.selectedBadgeText}>Selected</Text>
-                          </View>
-                        )}
-                      </TouchableOpacity>
-                    );
-                  })
-                ) : (
-                  <Text style={{ fontSize: 13, color: "#94A3B8", textAlign: "center", paddingVertical: 12 }}>
-                    No networks match your filter. Enter router SSID &amp; MAC below.
+                {/* Hotspot/Office Wi-Fi Alert */}
+                <View
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "flex-start",
+                    gap: 8,
+                    backgroundColor: "#EFF6FF",
+                    padding: 10,
+                    borderRadius: 8,
+                    marginBottom: 12,
+                    borderWidth: 1,
+                    borderColor: "#BFDBFE",
+                  }}
+                >
+                  <Ionicons name="information-circle-outline" size={16} color="#2563EB" style={{ marginTop: 1 }} />
+                  <Text style={{ fontSize: 11, color: "#1E40AF", lineHeight: 15, flex: 1 }}>
+                    Ensure both this phone and your computer are actively connected to your office Wi-Fi router.
                   </Text>
-                )}
-              </View>
+                </View>
 
-              {/* Manual/Fine-tune fields */}
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Router SSID (Network Name)</Text>
-                <TextInput
-                  style={styles.textInput}
-                  value={selectedSsid}
-                  onChangeText={setSelectedSsid}
-                  placeholder="e.g. Office_Main_5G"
-                  placeholderTextColor="#94A3B8"
-                />
-              </View>
+                {/* Wi-Fi Search / Filter Input */}
+                <View style={styles.searchBarRow}>
+                  <Ionicons name="search" size={16} color="#94A3B8" />
+                  <TextInput
+                    style={styles.searchBarInput}
+                    value={wifiFilterQuery}
+                    onChangeText={setWifiFilterQuery}
+                    placeholder="Filter or search nearby Wi-Fi..."
+                    placeholderTextColor="#94A3B8"
+                  />
+                  {wifiFilterQuery ? (
+                    <TouchableOpacity onPress={() => setWifiFilterQuery("")}>
+                      <Ionicons name="close-circle" size={16} color="#94A3B8" />
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
 
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Hardware BSSID (MAC Address)</Text>
-                <TextInput
-                  style={[styles.textInput, { fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }]}
-                  value={selectedBssid}
-                  onChangeText={setSelectedBssid}
-                  placeholder="e.g. 0c:61:f9:65:8f:07"
-                  placeholderTextColor="#94A3B8"
-                  autoCapitalize="none"
-                />
+                {/* Detected Wi-Fi Networks List */}
+                <View style={styles.networkList}>
+                  {filteredNetworks.length > 0 ? (
+                    filteredNetworks.map((net) => {
+                      const isSelected = selectedBssid.toLowerCase() === net.bssid.toLowerCase();
+                      return (
+                        <TouchableOpacity
+                          key={net.bssid + net.ssid}
+                          style={[styles.networkItem, isSelected && styles.networkItemSelected]}
+                          onPress={() => {
+                            setSelectedSsid(net.ssid);
+                            setSelectedBssid(net.bssid);
+                          }}
+                        >
+                          <View style={styles.networkItemLeft}>
+                            <Ionicons
+                              name={isSelected ? "radio-button-on" : "radio-button-off"}
+                              size={18}
+                              color={isSelected ? "#2563EB" : "#94A3B8"}
+                            />
+                            <View style={{ marginLeft: 8 }}>
+                              <Text style={[styles.networkSsid, isSelected && { color: "#1E40AF", fontWeight: "700" }]}>
+                                {net.ssid}
+                              </Text>
+                              <Text style={styles.networkBssid}>{net.bssid}</Text>
+                            </View>
+                          </View>
+                          {isSelected && (
+                            <View style={styles.selectedBadge}>
+                              <Text style={styles.selectedBadgeText}>Selected</Text>
+                            </View>
+                          )}
+                        </TouchableOpacity>
+                      );
+                    })
+                  ) : (
+                    <Text style={{ fontSize: 13, color: "#94A3B8", textAlign: "center", paddingVertical: 12 }}>
+                      No networks match your filter. Enter router SSID &amp; MAC below.
+                    </Text>
+                  )}
+                </View>
+
+                {/* Manual/Fine-tune fields */}
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Router SSID (Network Name)</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    value={selectedSsid}
+                    onChangeText={setSelectedSsid}
+                    placeholder="e.g. Office_Main_5G"
+                    placeholderTextColor="#94A3B8"
+                  />
+                </View>
+
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Hardware BSSID (MAC Address)</Text>
+                  <TextInput
+                    style={[styles.textInput, { fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace" }]}
+                    value={selectedBssid}
+                    onChangeText={setSelectedBssid}
+                    placeholder="e.g. 0c:61:f9:65:8f:07"
+                    placeholderTextColor="#94A3B8"
+                    autoCapitalize="none"
+                  />
+                </View>
               </View>
-            </View>
+            )}
 
             {/* STEP 2: GPS VENUE PINPOINT */}
             <View style={styles.sectionCard}>
@@ -571,7 +663,9 @@ export const AdminCalibrationModal: React.FC<AdminCalibrationModalProps> = ({
                   <Ionicons name="location" size={18} color="#059669" />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.sectionTitle}>2. Physical GPS Geofence</Text>
+                  <Text style={styles.sectionTitle}>
+                    {calibrationMode === "GEOFENCE_ONLY" ? "Premises GPS Geofence" : "2. Physical GPS Geofence"}
+                  </Text>
                   <Text style={styles.sectionDesc}>Acquires device GPS or searches venue address</Text>
                 </View>
               </View>

@@ -57,6 +57,7 @@ interface AuthContextType {
     latitude: number;
     longitude: number;
     radiusMeters: number;
+    verificationMode?: 'HYBRID' | 'GEOFENCE_ONLY';
   }) => Promise<void>;
 }
 
@@ -505,17 +506,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       latitude: number;
       longitude: number;
       radiusMeters: number;
+      verificationMode?: 'HYBRID' | 'GEOFENCE_ONLY';
     }) => {
       const targetOrgId = organization?.id;
       if (!targetOrgId) {
         throw new Error('No active organization found to calibrate.');
       }
+      const mode = anchors.verificationMode || (anchors.targetBssid.trim() ? 'HYBRID' : 'GEOFENCE_ONLY');
       await updateOrganizationAnchorsService(targetOrgId, anchors);
       const updatedOrg: Organization = {
         ...organization,
         beaconConfig: {
           ssidHint: anchors.ssidHint,
           targetBssid: anchors.targetBssid,
+          verificationMode: mode,
         },
         geoFallback: {
           latitude: anchors.latitude,
@@ -536,6 +540,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         latitude: anchors.latitude,
         longitude: anchors.longitude,
         radiusMeters: anchors.radiusMeters,
+        verificationMode: mode,
         cachedAt: new Date().toISOString(),
       };
       setCachedAnchors(updatedCachedAnchors);

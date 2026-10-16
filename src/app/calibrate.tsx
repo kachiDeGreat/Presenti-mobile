@@ -17,7 +17,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import * as Location from "expo-location";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import { doc, setDoc } from "firebase/firestore";
+import { doc, setDoc, updateDoc } from "firebase/firestore";
 import { db } from "../config/firebase";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
@@ -47,6 +47,9 @@ export default function CalibrateScreen() {
   const [pairedOrgId, setPairedOrgId] = useState<string>("");
   const [pairedOrgName, setPairedOrgName] = useState<string>("");
   const [pairedOrgCode, setPairedOrgCode] = useState<string>("");
+
+  // Verification Architecture Mode: HYBRID (Wi-Fi + GPS) vs GEOFENCE_ONLY (Router-free)
+  const [calibrationMode, setCalibrationMode] = useState<"HYBRID" | "GEOFENCE_ONLY">("HYBRID");
 
   // Tier 1: Wi-Fi Anchor State
   const [availableNetworks, setAvailableNetworks] = useState<
@@ -96,7 +99,11 @@ export default function CalibrateScreen() {
         organization?.id;
       if (!target) return;
       try {
-        await Promise.race([
+        await Promise.all([
+          updateDoc(doc(db, "churches", target), {
+            "calibrationSession.status": "DISCONNECTED",
+            "calibrationSession.disconnectedAt": new Date().toISOString(),
+          }).catch(() => {}),
           setDoc(
             doc(db, "churches", target, "calibration", "session"),
             {
@@ -104,8 +111,7 @@ export default function CalibrateScreen() {
               disconnectedAt: new Date().toISOString(),
             },
             { merge: true },
-          ),
-          new Promise((resolve) => setTimeout(resolve, 800)),
+          ).catch(() => {}),
         ]);
       } catch (err) {
         console.warn("Could not send disconnect kill signal:", err);
@@ -336,27 +342,53 @@ export default function CalibrateScreen() {
         setPairedOrgName(targetName);
         setPairedOrgCode(targetCode);
 
-        // Send instant handshake ping to Firestore in background (non-blocking)
+        // Extract QR calibration mode (defaults to HYBRID for backward compatibility)
+        const targetMode: "HYBRID" | "GEOFENCE_ONLY" =
+          (parsed?.mode === "GEOFENCE_ONLY" || parsed?.m === "GEOFENCE_ONLY") ? "GEOFENCE_ONLY" : "HYBRID";
+        setCalibrationMode(targetMode);
+
+        // Send instant handshake ping to Firestore in background (both main doc and subcollection doc)
+        const sessionPayload = {
+          status: "CONNECTED",
+          connectedAt: new Date().toISOString(),
+          platform: Platform.OS,
+          mode: targetMode,
+        };
+
+        updateDoc(doc(db, "churches", targetId), {
+          "calibrationSession.status": "CONNECTED",
+          "calibrationSession.connectedAt": sessionPayload.connectedAt,
+          "calibrationSession.platform": sessionPayload.platform,
+          "calibrationSession.mode": targetMode,
+        }).catch((e) => console.warn("Could not write handshake to church doc:", e));
+
         setDoc(
           doc(db, "churches", targetId, "calibration", "session"),
-          {
-            status: "CONNECTED",
-            connectedAt: new Date().toISOString(),
-            platform: Platform.OS,
-          },
+          sessionPayload,
           { merge: true },
         ).catch((e) => {
-          console.warn("Could not write handshake ping:", e);
+          console.warn("Could not write handshake ping to session doc:", e);
         });
 
-        // Scan nearby Wi-Fi networks in background
-        handleScanWifi();
+        // Trigger appropriate sensors based on selected mode
+        if (targetMode === "GEOFENCE_ONLY") {
+          setSelectedSsid("Office Geofence Zone");
+          setSelectedBssid("");
+          handleGetCurrentLocation();
+        } else {
+          handleScanWifi();
+          handleGetCurrentLocation();
+        }
 
         // Smooth transition to calibration workspace
         setTimeout(() => {
           setIsQrPaired(true);
           setIsConnectingSession(false);
-          toast.success(`Live paired with ${targetName}!`);
+          toast.success(
+            targetMode === "GEOFENCE_ONLY"
+              ? `Paired in GPS-Only Mode with ${targetName}!`
+              : `Live paired with ${targetName}!`,
+          );
         }, 350);
       } else {
         setScanCooldown(false);
@@ -385,16 +417,21 @@ export default function CalibrateScreen() {
       );
       return;
     }
-    if (!selectedBssid.trim()) {
-      toast.warn(
-        "Please select or enter your premises Wi-Fi router BSSID (MAC).",
-      );
-      return;
+
+    // Only validate Wi-Fi router in HYBRID mode
+    if (calibrationMode === "HYBRID") {
+      if (!selectedBssid.trim()) {
+        toast.warn(
+          "Please select or enter your premises Wi-Fi router BSSID (MAC). If you do not have a router, switch to 'GPS Geofence Only' mode above.",
+        );
+        return;
+      }
+      if (!selectedSsid.trim()) {
+        toast.warn("Please enter a router SSID label.");
+        return;
+      }
     }
-    if (!selectedSsid.trim()) {
-      toast.warn("Please enter a router SSID label.");
-      return;
-    }
+
     if (!latitude || !longitude) {
       toast.warn("Please set a valid geolocation coordinate.");
       return;
@@ -410,9 +447,19 @@ export default function CalibrateScreen() {
 
     setIsSaving(true);
     try {
+      const finalSsid =
+        calibrationMode === "GEOFENCE_ONLY"
+          ? (selectedSsid.trim() || "Office Geofence Zone")
+          : selectedSsid.trim();
+      const finalBssid =
+        calibrationMode === "GEOFENCE_ONLY"
+          ? ""
+          : selectedBssid.trim().toLowerCase();
+
       await updateAnchorsService(targetOrgId, {
-        ssidHint: selectedSsid.trim(),
-        targetBssid: selectedBssid.trim().toLowerCase(),
+        verificationMode: calibrationMode,
+        ssidHint: finalSsid,
+        targetBssid: finalBssid,
         latitude,
         longitude,
         radiusMeters,
@@ -420,8 +467,9 @@ export default function CalibrateScreen() {
 
       if (organization?.id === targetOrgId) {
         updateAnchors({
-          ssidHint: selectedSsid.trim(),
-          targetBssid: selectedBssid.trim().toLowerCase(),
+          verificationMode: calibrationMode,
+          ssidHint: finalSsid,
+          targetBssid: finalBssid,
           latitude,
           longitude,
           radiusMeters,
@@ -705,34 +753,65 @@ export default function CalibrateScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* Section 1: Premises Wi-Fi Router (Anchor) */}
-            <View style={styles.card}>
-              <View style={styles.cardHeader}>
-                <View
-                  style={[styles.cardIconBox, { backgroundColor: "#EFF6FF" }]}
-                >
-                  <Ionicons name="wifi" size={20} color="#0284C7" />
+            {/* Section 1: Premises Wi-Fi Router (HYBRID ONLY) OR Geofence-Only Banner */}
+            {calibrationMode === "GEOFENCE_ONLY" ? (
+              <View style={styles.geofenceOnlyCard}>
+                <View style={styles.geofenceOnlyIconBox}>
+                  <Ionicons name="navigate-circle" size={28} color="#16A34A" />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.cardTitle}>
-                    1. Premises Wi-Fi Router (Anchor)
-                  </Text>
-                  <Text style={styles.cardSubtitle}>
-                    Select the physical router in your workplace premises
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 2 }}>
+                    <Text style={styles.geofenceOnlyTitle}>Router-Free GPS Geofence Mode</Text>
+                    <View style={{ backgroundColor: "#DCFCE7", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                      <Text style={{ fontSize: 10, fontWeight: "700", color: "#16A34A" }}>ACTIVE</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.geofenceOnlyDesc}>
+                    Your workplace attendance is configured for pure satellite GPS verification. No physical office router required. Pinpoint your venue and set your allowed perimeter radius below.
                   </Text>
                 </View>
-                <TouchableOpacity
-                  style={styles.scanActionBtn}
-                  onPress={handleScanWifi}
-                  disabled={isScanningWifi}
-                >
-                  {isScanningWifi ? (
-                    <ActivityIndicator size="small" color="#0284C7" />
-                  ) : (
-                    <Text style={styles.scanActionText}>Rescan</Text>
-                  )}
-                </TouchableOpacity>
               </View>
+            ) : (
+              <>
+                <View style={styles.modeCard}>
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                    <Text style={styles.modeCardLabel}>VERIFICATION ARCHITECTURE</Text>
+                    <View style={{ backgroundColor: "#E0F2FE", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
+                      <Text style={{ fontSize: 10, fontWeight: "700", color: "#0369A1" }}>HYBRID SECURITY</Text>
+                    </View>
+                  </View>
+                  <Text style={{ fontSize: 13, color: "#475569", lineHeight: 18 }}>
+                    Dual-Tier Hybrid Security. Workers authenticate against your physical office router MAC, backed by automated satellite GPS failover.
+                  </Text>
+                </View>
+
+                <View style={styles.card}>
+                  <View style={styles.cardHeader}>
+                    <View
+                      style={[styles.cardIconBox, { backgroundColor: "#EFF6FF" }]}
+                    >
+                      <Ionicons name="wifi" size={20} color="#0284C7" />
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.cardTitle}>
+                        1. Premises Wi-Fi Router (Anchor)
+                      </Text>
+                      <Text style={styles.cardSubtitle}>
+                        Select the physical router in your workplace premises
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.scanActionBtn}
+                      onPress={handleScanWifi}
+                      disabled={isScanningWifi}
+                    >
+                      {isScanningWifi ? (
+                        <ActivityIndicator size="small" color="#0284C7" />
+                      ) : (
+                        <Text style={styles.scanActionText}>Rescan</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
 
               {/* Phone Wi-Fi & GPS Mandatory Requirement Banner */}
               <View
@@ -977,6 +1056,8 @@ export default function CalibrateScreen() {
                 </View>
               )}
             </View>
+            </>
+            )}
 
             {/* Section 2: Interactive Geolocation Satellite Map */}
             <View style={styles.card}>
@@ -988,7 +1069,9 @@ export default function CalibrateScreen() {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.cardTitle}>
-                    2. Geofence Perimeter (GPS)
+                    {calibrationMode === "GEOFENCE_ONLY"
+                      ? "Premises Perimeter Geofence (GPS)"
+                      : "2. Geofence Perimeter (GPS Fallback)"}
                   </Text>
                   <Text style={styles.cardSubtitle}>
                     Search venue, drag the marker, or tap Phone GPS
@@ -1175,18 +1258,32 @@ export default function CalibrateScreen() {
                     </Text>
                   </View>
 
-                  {/* Router */}
+                  {/* Mode */}
                   <View style={styles.modalSection}>
                     <Text style={styles.modalSectionLabel}>
-                      PREMISES ROUTER
+                      VERIFICATION MODE
                     </Text>
                     <Text style={styles.modalSectionValue}>
-                      {selectedSsid || "Unnamed Router"}
-                    </Text>
-                    <Text style={styles.modalSubValue}>
-                      MAC: {selectedBssid}
+                      {calibrationMode === "GEOFENCE_ONLY"
+                        ? "GPS Geofence Only (Router-Free)"
+                        : "Wi-Fi + GPS (Hybrid Security)"}
                     </Text>
                   </View>
+
+                  {/* Router if Hybrid */}
+                  {calibrationMode === "HYBRID" && (
+                    <View style={styles.modalSection}>
+                      <Text style={styles.modalSectionLabel}>
+                        PREMISES ROUTER
+                      </Text>
+                      <Text style={styles.modalSectionValue}>
+                        {selectedSsid || "Unnamed Router"}
+                      </Text>
+                      <Text style={styles.modalSubValue}>
+                        MAC: {selectedBssid}
+                      </Text>
+                    </View>
+                  )}
 
                   {/* Geofence */}
                   <View style={styles.modalSection}>
@@ -1439,6 +1536,79 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "700",
     color: "#0284C7",
+  },
+  modeCard: {
+    backgroundColor: "#F8FAFC",
+    borderRadius: 12,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    gap: 6,
+  },
+  modeCardLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#64748B",
+    letterSpacing: 0.5,
+  },
+  modeTabsRow: {
+    flexDirection: "row",
+    gap: 8,
+  },
+  modeTabBtn: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 9,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1.5,
+    borderColor: "#E2E8F0",
+  },
+  modeTabBtnActive: {
+    backgroundColor: "#EFF6FF",
+    borderColor: "#0284C7",
+  },
+  modeTabBtnText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#64748B",
+  },
+  modeTabBtnTextActive: {
+    fontWeight: "700",
+    color: "#0284C7",
+  },
+  geofenceOnlyCard: {
+    backgroundColor: "#EFF6FF",
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1.5,
+    borderColor: "#BFDBFE",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+  },
+  geofenceOnlyIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    backgroundColor: "#DBEAFE",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  geofenceOnlyTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#1E40AF",
+    marginBottom: 4,
+  },
+  geofenceOnlyDesc: {
+    fontSize: 12,
+    color: "#3B82F6",
+    lineHeight: 17,
   },
   card: {
     backgroundColor: "#FFFFFF",
