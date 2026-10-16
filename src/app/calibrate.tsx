@@ -17,7 +17,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import * as Location from "expo-location";
 import { CameraView, useCameraPermissions } from "expo-camera";
-import { doc, setDoc, updateDoc } from "firebase/firestore";
+import { doc, setDoc, updateDoc, onSnapshot } from "firebase/firestore";
 import { db } from "../config/firebase";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
@@ -160,6 +160,45 @@ export default function CalibrateScreen() {
       }
     };
   }, [sendDisconnectSignal]);
+
+  // Listen for remote disconnect signal from Admin Web Portal
+  useEffect(() => {
+    const targetOrgId = pairedOrgId || sessionOrgIdRef.current;
+    if (!targetOrgId || !isQrPaired) return;
+
+    const sessionRef = doc(db, "churches", targetOrgId, "calibration", "session");
+    let isInitial = true;
+
+    const unsubscribe = onSnapshot(
+      sessionRef,
+      (snap) => {
+        if (isInitial) {
+          isInitial = false;
+          return;
+        }
+        if (snap.exists()) {
+          const data = snap.data();
+          if (
+            !isSavedSuccessfullyRef.current &&
+            (data?.status === "DISCONNECTED" || data?.status === "CANCELLED")
+          ) {
+            toast.warn("Calibration session ended by Web Admin.");
+            setIsQrPaired(false);
+            setPairedOrgId("");
+            sessionOrgIdRef.current = "";
+            pairedOrgIdRef.current = "";
+            hasHandshakedRef.current = false;
+            setScanCooldown(false);
+          }
+        }
+      },
+      (err) => {
+        console.warn("Mobile session listener warning:", err);
+      },
+    );
+
+    return () => unsubscribe();
+  }, [pairedOrgId, isQrPaired]);
 
   // Reverse geocode to display address name
   const reverseGeocode = async (lat: number, lng: number) => {
