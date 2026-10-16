@@ -110,6 +110,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             .then((fresh) => {
               if (fresh) {
                 setOrganization(fresh);
+              } else {
+                setOrganization(null);
+                setCachedAnchors(null);
+                AsyncStorage.multiRemove([STORAGE_KEY_ORG, STORAGE_KEY_ANCHORS]).catch(() => {});
               }
             })
             .catch(() => {});

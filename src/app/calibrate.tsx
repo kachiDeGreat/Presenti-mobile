@@ -49,7 +49,9 @@ export default function CalibrateScreen() {
   const [pairedOrgCode, setPairedOrgCode] = useState<string>("");
 
   // Verification Architecture Mode: HYBRID (Wi-Fi + GPS) vs GEOFENCE_ONLY (Router-free)
-  const [calibrationMode, setCalibrationMode] = useState<"HYBRID" | "GEOFENCE_ONLY">("HYBRID");
+  const [calibrationMode, setCalibrationMode] = useState<
+    "HYBRID" | "GEOFENCE_ONLY"
+  >("HYBRID");
 
   // Tier 1: Wi-Fi Anchor State
   const [availableNetworks, setAvailableNetworks] = useState<
@@ -344,7 +346,9 @@ export default function CalibrateScreen() {
 
         // Extract QR calibration mode (defaults to HYBRID for backward compatibility)
         const targetMode: "HYBRID" | "GEOFENCE_ONLY" =
-          (parsed?.mode === "GEOFENCE_ONLY" || parsed?.m === "GEOFENCE_ONLY") ? "GEOFENCE_ONLY" : "HYBRID";
+          parsed?.mode === "GEOFENCE_ONLY" || parsed?.m === "GEOFENCE_ONLY"
+            ? "GEOFENCE_ONLY"
+            : "HYBRID";
         setCalibrationMode(targetMode);
 
         // Send instant handshake ping to Firestore in background (both main doc and subcollection doc)
@@ -360,7 +364,9 @@ export default function CalibrateScreen() {
           "calibrationSession.connectedAt": sessionPayload.connectedAt,
           "calibrationSession.platform": sessionPayload.platform,
           "calibrationSession.mode": targetMode,
-        }).catch((e) => console.warn("Could not write handshake to church doc:", e));
+        }).catch((e) =>
+          console.warn("Could not write handshake to church doc:", e),
+        );
 
         setDoc(
           doc(db, "churches", targetId, "calibration", "session"),
@@ -449,7 +455,7 @@ export default function CalibrateScreen() {
     try {
       const finalSsid =
         calibrationMode === "GEOFENCE_ONLY"
-          ? (selectedSsid.trim() || "Office Geofence Zone")
+          ? selectedSsid.trim() || "Office Geofence Zone"
           : selectedSsid.trim();
       const finalBssid =
         calibrationMode === "GEOFENCE_ONLY"
@@ -542,9 +548,7 @@ export default function CalibrateScreen() {
               }}
               onPress={async () => {
                 const target =
-                  sessionOrgIdRef.current ||
-                  pairedOrgId ||
-                  organization?.id;
+                  sessionOrgIdRef.current || pairedOrgId || organization?.id;
                 await sendDisconnectSignal(target);
                 await signOut();
                 toast.info("Signed out.");
@@ -618,7 +622,7 @@ export default function CalibrateScreen() {
                   <View style={styles.reticleUnfocused} />
                 </View>
                 <View style={styles.reticleUnfocused}>
-                  <View style={styles.hintCard}>
+                  {/* <View style={styles.hintCard}>
                     <Ionicons
                       name="qr-code-outline"
                       size={20}
@@ -652,8 +656,8 @@ export default function CalibrateScreen() {
                           Ensure this phone's Wi-Fi &amp; GPS are turned ON
                         </Text>
                       </View>
-                    </View>
-                  </View>
+                    </View> 
+                  </View> */}
                 </View>
               </View>
             </View>
@@ -702,9 +706,7 @@ export default function CalibrateScreen() {
                 }}
                 onPress={async () => {
                   const target =
-                    sessionOrgIdRef.current ||
-                    pairedOrgId ||
-                    organization?.id;
+                    sessionOrgIdRef.current || pairedOrgId || organization?.id;
                   await sendDisconnectSignal(target);
                   await signOut();
                   toast.info("Signed out.");
@@ -760,35 +762,93 @@ export default function CalibrateScreen() {
                   <Ionicons name="navigate-circle" size={28} color="#16A34A" />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 2 }}>
-                    <Text style={styles.geofenceOnlyTitle}>Router-Free GPS Geofence Mode</Text>
-                    <View style={{ backgroundColor: "#DCFCE7", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                      <Text style={{ fontSize: 10, fontWeight: "700", color: "#16A34A" }}>ACTIVE</Text>
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 6,
+                      marginBottom: 2,
+                    }}
+                  >
+                    <Text style={styles.geofenceOnlyTitle}>
+                      Router-Free GPS Geofence Mode
+                    </Text>
+                    <View
+                      style={{
+                        backgroundColor: "#DCFCE7",
+                        paddingHorizontal: 6,
+                        paddingVertical: 2,
+                        borderRadius: 4,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 10,
+                          fontWeight: "700",
+                          color: "#16A34A",
+                        }}
+                      >
+                        ACTIVE
+                      </Text>
                     </View>
                   </View>
                   <Text style={styles.geofenceOnlyDesc}>
-                    Your workplace attendance is configured for pure satellite GPS verification. No physical office router required. Pinpoint your venue and set your allowed perimeter radius below.
+                    Your workplace attendance is configured for pure satellite
+                    GPS verification. No physical office router required.
+                    Pinpoint your venue and set your allowed perimeter radius
+                    below.
                   </Text>
                 </View>
               </View>
             ) : (
               <>
                 <View style={styles.modeCard}>
-                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                    <Text style={styles.modeCardLabel}>VERIFICATION ARCHITECTURE</Text>
-                    <View style={{ backgroundColor: "#E0F2FE", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 }}>
-                      <Text style={{ fontSize: 10, fontWeight: "700", color: "#0369A1" }}>HYBRID SECURITY</Text>
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      marginBottom: 6,
+                    }}
+                  >
+                    <Text style={styles.modeCardLabel}>
+                      VERIFICATION ARCHITECTURE
+                    </Text>
+                    <View
+                      style={{
+                        backgroundColor: "#E0F2FE",
+                        paddingHorizontal: 6,
+                        paddingVertical: 2,
+                        borderRadius: 4,
+                      }}
+                    >
+                      <Text
+                        style={{
+                          fontSize: 10,
+                          fontWeight: "700",
+                          color: "#0369A1",
+                        }}
+                      >
+                        HYBRID SECURITY
+                      </Text>
                     </View>
                   </View>
-                  <Text style={{ fontSize: 13, color: "#475569", lineHeight: 18 }}>
-                    Dual-Tier Hybrid Security. Workers authenticate against your physical office router MAC, backed by automated satellite GPS failover.
+                  <Text
+                    style={{ fontSize: 13, color: "#475569", lineHeight: 18 }}
+                  >
+                    Dual-Tier Hybrid Security. Workers authenticate against your
+                    physical office router MAC, backed by automated satellite
+                    GPS failover.
                   </Text>
                 </View>
 
                 <View style={styles.card}>
                   <View style={styles.cardHeader}>
                     <View
-                      style={[styles.cardIconBox, { backgroundColor: "#EFF6FF" }]}
+                      style={[
+                        styles.cardIconBox,
+                        { backgroundColor: "#EFF6FF" },
+                      ]}
                     >
                       <Ionicons name="wifi" size={20} color="#0284C7" />
                     </View>
@@ -813,250 +873,273 @@ export default function CalibrateScreen() {
                     </TouchableOpacity>
                   </View>
 
-              {/* Phone Wi-Fi & GPS Mandatory Requirement Banner */}
-              <View
-                style={{
-                  flexDirection: "row",
-                  alignItems: "flex-start",
-                  gap: 10,
-                  backgroundColor: availableNetworks.length === 0 ? "#FEF3C7" : "#F0F9FF",
-                  padding: 12,
-                  borderRadius: 10,
-                  borderWidth: 1,
-                  borderColor: availableNetworks.length === 0 ? "#FCD34D" : "#BAE6FD",
-                  marginHorizontal: 16,
-                  marginTop: 12,
-                  marginBottom: 4,
-                }}
-              >
-                <Ionicons
-                  name={availableNetworks.length === 0 ? "warning-outline" : "information-circle-outline"}
-                  size={18}
-                  color={availableNetworks.length === 0 ? "#D97706" : "#0284C7"}
-                />
-                <View style={{ flex: 1 }}>
-                  <Text
+                  {/* Phone Wi-Fi & GPS Mandatory Requirement Banner */}
+                  <View
                     style={{
-                      fontSize: 12,
-                      fontWeight: "700",
-                      color: availableNetworks.length === 0 ? "#92400E" : "#0369A1",
-                      marginBottom: 2,
+                      flexDirection: "row",
+                      alignItems: "flex-start",
+                      gap: 10,
+                      backgroundColor:
+                        availableNetworks.length === 0 ? "#FEF3C7" : "#F0F9FF",
+                      padding: 12,
+                      borderRadius: 10,
+                      borderWidth: 1,
+                      borderColor:
+                        availableNetworks.length === 0 ? "#FCD34D" : "#BAE6FD",
+                      marginHorizontal: 16,
+                      marginTop: 12,
+                      marginBottom: 4,
                     }}
                   >
-                    Phone Wi-Fi Must Be Turned ON
-                  </Text>
-                  <Text
-                    style={{
-                      fontSize: 11,
-                      color: availableNetworks.length === 0 ? "#B45309" : "#475569",
-                      lineHeight: 16,
-                    }}
-                  >
-                    {wifiScanNotice ||
-                      "Swipe down from top of your phone screen to ensure both Wi-Fi and Location (GPS) toggles are turned ON to detect premises routers and mobile hotspots."}
-                  </Text>
-                </View>
-              </View>
-
-              {/* Wi-Fi Filter Search Box */}
-              <View style={styles.wifiFilterBox}>
-                <Ionicons name="search" size={15} color="#94A3B8" />
-                <TextInput
-                  style={styles.wifiFilterInput}
-                  value={wifiFilterQuery}
-                  onChangeText={setWifiFilterQuery}
-                  placeholder="Filter or search nearby Wi-Fi..."
-                  placeholderTextColor="#94A3B8"
-                />
-              </View>
-
-              {/* Scanned Networks List */}
-              <View style={styles.wifiListContainer}>
-                {isScanningWifi && availableNetworks.length === 0 ? (
-                  <View style={styles.emptyState}>
-                    <ActivityIndicator size="small" color="#0284C7" />
-                    <Text style={styles.emptyStateText}>
-                      Scanning nearby radio airwaves...
-                    </Text>
-                  </View>
-                ) : filteredNetworks.length > 0 ? (
-                  filteredNetworks.map((net) => {
-                    const isSelected =
-                      Boolean(selectedBssid) &&
-                      selectedBssid.toLowerCase() === net.bssid.toLowerCase();
-                    return (
-                      <TouchableOpacity
-                        key={net.bssid + net.ssid}
-                        style={[
-                          styles.wifiItem,
-                          isSelected && styles.wifiItemActive,
-                        ]}
-                        onPress={() => handleSelectNetwork(net)}
-                      >
-                        <View style={styles.wifiItemLeft}>
-                          <Ionicons
-                            name={
-                              isSelected
-                                ? "radio-button-on"
-                                : "radio-button-off"
-                            }
-                            size={18}
-                            color={isSelected ? "#0284C7" : "#94A3B8"}
-                          />
-                          <View style={{ marginLeft: 8 }}>
-                            <Text
-                              style={[
-                                styles.wifiItemSsid,
-                                isSelected && styles.wifiItemSsidActive,
-                              ]}
-                            >
-                              {net.ssid}
-                            </Text>
-                            <Text style={styles.wifiItemBssid}>
-                              {net.bssid}
-                            </Text>
-                          </View>
-                        </View>
-                        <View style={styles.wifiItemRight}>
-                          {net.inUse && (
-                            <View
-                              style={{
-                                backgroundColor: "#ECFDF5",
-                                paddingHorizontal: 6,
-                                paddingVertical: 2,
-                                borderRadius: 4,
-                                marginRight: 4,
-                                borderWidth: 1,
-                                borderColor: "#A7F3D0",
-                              }}
-                            >
-                              <Text
-                                style={{
-                                  fontSize: 9,
-                                  fontWeight: "700",
-                                  color: "#059669",
-                                }}
-                              >
-                                CONNECTED
-                              </Text>
-                            </View>
-                          )}
-                          {net.band && (
-                            <Text style={styles.wifiBandBadge}>{net.band}</Text>
-                          )}
-                          {isSelected && (
-                            <View style={styles.selectedPill}>
-                              <Text style={styles.selectedPillText}>
-                                Selected
-                              </Text>
-                            </View>
-                          )}
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })
-                ) : (
-                  <View style={styles.emptyState}>
                     <Ionicons
-                      name="wifi-outline"
-                      size={36}
-                      color="#94A3B8"
-                      style={{ marginBottom: 8 }}
+                      name={
+                        availableNetworks.length === 0
+                          ? "warning-outline"
+                          : "information-circle-outline"
+                      }
+                      size={18}
+                      color={
+                        availableNetworks.length === 0 ? "#D97706" : "#0284C7"
+                      }
                     />
-                    <Text
-                      style={[
-                        styles.emptyStateText,
-                        { fontWeight: "700", color: "#334155", marginBottom: 4 },
-                      ]}
-                    >
-                      No Wireless Networks Detected
-                    </Text>
-                    <Text style={styles.emptyStateText}>
-                      Please swipe down from the top of your phone screen to make
-                      sure Wi-Fi and Location (GPS) are toggled ON.
-                    </Text>
-                    <TouchableOpacity
-                      style={{
-                        marginTop: 14,
-                        backgroundColor: "#0284C7",
-                        paddingHorizontal: 16,
-                        paddingVertical: 9,
-                        borderRadius: 8,
-                        flexDirection: "row",
-                        alignItems: "center",
-                        gap: 6,
-                      }}
-                      onPress={handleScanWifi}
-                      activeOpacity={0.8}
-                    >
-                      <Ionicons name="refresh" size={15} color="#FFFFFF" />
+                    <View style={{ flex: 1 }}>
                       <Text
                         style={{
-                          color: "#FFFFFF",
+                          fontSize: 12,
                           fontWeight: "700",
-                          fontSize: 13,
+                          color:
+                            availableNetworks.length === 0
+                              ? "#92400E"
+                              : "#0369A1",
+                          marginBottom: 2,
                         }}
                       >
-                        Rescan Wi-Fi &amp; Hotspots
+                        Phone Wi-Fi Must Be Turned ON
                       </Text>
-                    </TouchableOpacity>
+                      <Text
+                        style={{
+                          fontSize: 11,
+                          color:
+                            availableNetworks.length === 0
+                              ? "#B45309"
+                              : "#475569",
+                          lineHeight: 16,
+                        }}
+                      >
+                        {wifiScanNotice ||
+                          "Swipe down from top of your phone screen to ensure both Wi-Fi and Location (GPS) toggles are turned ON to detect premises routers and mobile hotspots."}
+                      </Text>
+                    </View>
                   </View>
-                )}
-              </View>
 
-              {/* Toggle for manual MAC input */}
-              <TouchableOpacity
-                style={styles.manualToggle}
-                onPress={() => setShowManualWifi(!showManualWifi)}
-              >
-                <Text style={styles.manualToggleText}>
-                  {showManualWifi
-                    ? "Hide Manual Inputs"
-                    : "Manual Router MAC / Hidden SSID Entry"}
-                </Text>
-                <Ionicons
-                  name={showManualWifi ? "chevron-up" : "chevron-down"}
-                  size={14}
-                  color="#0284C7"
-                />
-              </TouchableOpacity>
-
-              {showManualWifi && (
-                <View style={styles.manualInputsGroup}>
-                  <View style={styles.field}>
-                    <Text style={styles.fieldLabel}>Router SSID Name *</Text>
+                  {/* Wi-Fi Filter Search Box */}
+                  <View style={styles.wifiFilterBox}>
+                    <Ionicons name="search" size={15} color="#94A3B8" />
                     <TextInput
-                      style={styles.input}
-                      value={selectedSsid}
-                      onChangeText={setSelectedSsid}
-                      placeholder="e.g. Office_Guest_5G"
+                      style={styles.wifiFilterInput}
+                      value={wifiFilterQuery}
+                      onChangeText={setWifiFilterQuery}
+                      placeholder="Filter or search nearby Wi-Fi..."
                       placeholderTextColor="#94A3B8"
                     />
                   </View>
 
-                  <View style={styles.field}>
-                    <Text style={styles.fieldLabel}>
-                      Router Hardware MAC (BSSID) *
+                  {/* Scanned Networks List */}
+                  <View style={styles.wifiListContainer}>
+                    {isScanningWifi && availableNetworks.length === 0 ? (
+                      <View style={styles.emptyState}>
+                        <ActivityIndicator size="small" color="#0284C7" />
+                        <Text style={styles.emptyStateText}>
+                          Scanning nearby radio airwaves...
+                        </Text>
+                      </View>
+                    ) : filteredNetworks.length > 0 ? (
+                      filteredNetworks.map((net) => {
+                        const isSelected =
+                          Boolean(selectedBssid) &&
+                          selectedBssid.toLowerCase() ===
+                            net.bssid.toLowerCase();
+                        return (
+                          <TouchableOpacity
+                            key={net.bssid + net.ssid}
+                            style={[
+                              styles.wifiItem,
+                              isSelected && styles.wifiItemActive,
+                            ]}
+                            onPress={() => handleSelectNetwork(net)}
+                          >
+                            <View style={styles.wifiItemLeft}>
+                              <Ionicons
+                                name={
+                                  isSelected
+                                    ? "radio-button-on"
+                                    : "radio-button-off"
+                                }
+                                size={18}
+                                color={isSelected ? "#0284C7" : "#94A3B8"}
+                              />
+                              <View style={{ marginLeft: 8 }}>
+                                <Text
+                                  style={[
+                                    styles.wifiItemSsid,
+                                    isSelected && styles.wifiItemSsidActive,
+                                  ]}
+                                >
+                                  {net.ssid}
+                                </Text>
+                                <Text style={styles.wifiItemBssid}>
+                                  {net.bssid}
+                                </Text>
+                              </View>
+                            </View>
+                            <View style={styles.wifiItemRight}>
+                              {net.inUse && (
+                                <View
+                                  style={{
+                                    backgroundColor: "#ECFDF5",
+                                    paddingHorizontal: 6,
+                                    paddingVertical: 2,
+                                    borderRadius: 4,
+                                    marginRight: 4,
+                                    borderWidth: 1,
+                                    borderColor: "#A7F3D0",
+                                  }}
+                                >
+                                  <Text
+                                    style={{
+                                      fontSize: 9,
+                                      fontWeight: "700",
+                                      color: "#059669",
+                                    }}
+                                  >
+                                    CONNECTED
+                                  </Text>
+                                </View>
+                              )}
+                              {net.band && (
+                                <Text style={styles.wifiBandBadge}>
+                                  {net.band}
+                                </Text>
+                              )}
+                              {isSelected && (
+                                <View style={styles.selectedPill}>
+                                  <Text style={styles.selectedPillText}>
+                                    Selected
+                                  </Text>
+                                </View>
+                              )}
+                            </View>
+                          </TouchableOpacity>
+                        );
+                      })
+                    ) : (
+                      <View style={styles.emptyState}>
+                        <Ionicons
+                          name="wifi-outline"
+                          size={36}
+                          color="#94A3B8"
+                          style={{ marginBottom: 8 }}
+                        />
+                        <Text
+                          style={[
+                            styles.emptyStateText,
+                            {
+                              fontWeight: "700",
+                              color: "#334155",
+                              marginBottom: 4,
+                            },
+                          ]}
+                        >
+                          No Wireless Networks Detected
+                        </Text>
+                        <Text style={styles.emptyStateText}>
+                          Please swipe down from the top of your phone screen to
+                          make sure Wi-Fi and Location (GPS) are toggled ON.
+                        </Text>
+                        <TouchableOpacity
+                          style={{
+                            marginTop: 14,
+                            backgroundColor: "#0284C7",
+                            paddingHorizontal: 16,
+                            paddingVertical: 9,
+                            borderRadius: 8,
+                            flexDirection: "row",
+                            alignItems: "center",
+                            gap: 6,
+                          }}
+                          onPress={handleScanWifi}
+                          activeOpacity={0.8}
+                        >
+                          <Ionicons name="refresh" size={15} color="#FFFFFF" />
+                          <Text
+                            style={{
+                              color: "#FFFFFF",
+                              fontWeight: "700",
+                              fontSize: 13,
+                            }}
+                          >
+                            Rescan Wi-Fi &amp; Hotspots
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+
+                  {/* Toggle for manual MAC input */}
+                  <TouchableOpacity
+                    style={styles.manualToggle}
+                    onPress={() => setShowManualWifi(!showManualWifi)}
+                  >
+                    <Text style={styles.manualToggleText}>
+                      {showManualWifi
+                        ? "Hide Manual Inputs"
+                        : "Manual Router MAC / Hidden SSID Entry"}
                     </Text>
-                    <TextInput
-                      style={[
-                        styles.input,
-                        {
-                          fontFamily:
-                            Platform.OS === "ios" ? "Menlo" : "monospace",
-                        },
-                      ]}
-                      value={selectedBssid}
-                      onChangeText={setSelectedBssid}
-                      placeholder="0c:61:f9:65:8f:07"
-                      placeholderTextColor="#94A3B8"
-                      autoCapitalize="none"
+                    <Ionicons
+                      name={showManualWifi ? "chevron-up" : "chevron-down"}
+                      size={14}
+                      color="#0284C7"
                     />
-                  </View>
+                  </TouchableOpacity>
+
+                  {showManualWifi && (
+                    <View style={styles.manualInputsGroup}>
+                      <View style={styles.field}>
+                        <Text style={styles.fieldLabel}>
+                          Router SSID Name *
+                        </Text>
+                        <TextInput
+                          style={styles.input}
+                          value={selectedSsid}
+                          onChangeText={setSelectedSsid}
+                          placeholder="e.g. Office_Guest_5G"
+                          placeholderTextColor="#94A3B8"
+                        />
+                      </View>
+
+                      <View style={styles.field}>
+                        <Text style={styles.fieldLabel}>
+                          Router Hardware MAC (BSSID) *
+                        </Text>
+                        <TextInput
+                          style={[
+                            styles.input,
+                            {
+                              fontFamily:
+                                Platform.OS === "ios" ? "Menlo" : "monospace",
+                            },
+                          ]}
+                          value={selectedBssid}
+                          onChangeText={setSelectedBssid}
+                          placeholder="0c:61:f9:65:8f:07"
+                          placeholderTextColor="#94A3B8"
+                          autoCapitalize="none"
+                        />
+                      </View>
+                    </View>
+                  )}
                 </View>
-              )}
-            </View>
-            </>
+              </>
             )}
 
             {/* Section 2: Interactive Geolocation Satellite Map */}
