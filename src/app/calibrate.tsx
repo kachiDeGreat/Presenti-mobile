@@ -111,6 +111,7 @@ export default function CalibrateScreen() {
               calibrationSession: {
                 status: "DISCONNECTED",
                 disconnectedAt: new Date().toISOString(),
+                source: "MOBILE_APP",
               },
             },
             { merge: true },
@@ -120,6 +121,7 @@ export default function CalibrateScreen() {
             {
               status: "DISCONNECTED",
               disconnectedAt: new Date().toISOString(),
+              source: "MOBILE_APP",
             },
             { merge: true },
           ).catch(() => {}),
@@ -178,9 +180,12 @@ export default function CalibrateScreen() {
         }
         if (snap.exists()) {
           const data = snap.data();
+          // Only show Web Admin alert if the Web Admin terminated the session
           if (
             !isSavedSuccessfullyRef.current &&
-            (data?.status === "DISCONNECTED" || data?.status === "CANCELLED")
+            !hasSentDisconnectRef.current &&
+            (data?.status === "DISCONNECTED" || data?.status === "CANCELLED") &&
+            (data?.source === "WEB_PORTAL" || data?.reason === "ADMIN_LEFT_PAGE")
           ) {
             toast.warn("Calibration session ended by Web Admin.");
             setIsQrPaired(false);
