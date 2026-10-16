@@ -102,10 +102,16 @@ export default function CalibrateScreen() {
       if (!target) return;
       try {
         await Promise.all([
-          updateDoc(doc(db, "churches", target), {
-            "calibrationSession.status": "DISCONNECTED",
-            "calibrationSession.disconnectedAt": new Date().toISOString(),
-          }).catch(() => {}),
+          setDoc(
+            doc(db, "churches", target),
+            {
+              calibrationSession: {
+                status: "DISCONNECTED",
+                disconnectedAt: new Date().toISOString(),
+              },
+            },
+            { merge: true },
+          ).catch(() => {}),
           setDoc(
             doc(db, "churches", target, "calibration", "session"),
             {
@@ -119,7 +125,7 @@ export default function CalibrateScreen() {
         console.warn("Could not send disconnect kill signal:", err);
       }
     },
-    [pairedOrgId, organization?.id],
+    [],
   );
 
   // Safe navigation handler (with instant kill signal if leaving before saving)
@@ -146,8 +152,8 @@ export default function CalibrateScreen() {
   // Cleanup on unmount: if user exits screen without saving, kill the session
   useEffect(() => {
     return () => {
-      if (!isSavedSuccessfullyRef.current) {
-        sendDisconnectSignal();
+      if (!isSavedSuccessfullyRef.current && sessionOrgIdRef.current) {
+        sendDisconnectSignal(sessionOrgIdRef.current);
       }
     };
   }, [sendDisconnectSignal]);
@@ -359,12 +365,13 @@ export default function CalibrateScreen() {
           mode: targetMode,
         };
 
-        updateDoc(doc(db, "churches", targetId), {
-          "calibrationSession.status": "CONNECTED",
-          "calibrationSession.connectedAt": sessionPayload.connectedAt,
-          "calibrationSession.platform": sessionPayload.platform,
-          "calibrationSession.mode": targetMode,
-        }).catch((e) =>
+        setDoc(
+          doc(db, "churches", targetId),
+          {
+            calibrationSession: sessionPayload,
+          },
+          { merge: true },
+        ).catch((e) =>
           console.warn("Could not write handshake to church doc:", e),
         );
 
