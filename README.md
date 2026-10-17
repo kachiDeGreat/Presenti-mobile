@@ -111,8 +111,20 @@ sequenceDiagram
 | **Database** | Firebase Firestore (Real-time snapshots & offline cache) |
 | **Wi-Fi Hardware Scanner** | `react-native-wifi-reborn` / Native Network APIs |
 | **Location & Geofencing** | `expo-location` (High accuracy native GPS) |
+| **Geocoding & Search** | Multi-tier engine: Google Maps API + Android Google Play Geocoder + Photon (Nigeria BBox) + Nominatim |
 | **Camera & QR** | `expo-camera` (`CameraView`) |
 | **Local Storage** | `@react-native-async-storage/async-storage` |
+
+---
+
+## Location Calibration & Venue Search
+
+The mobile calibration interface (`calibrate.tsx`) features an intelligent multi-tiered geocoding engine:
+1. **State & City Abbreviation Expansion**: Automatically normalizes Nigerian state acronyms and shorthand (e.g. `CRS` &rarr; `Cross River State`, `FCT` &rarr; `Abuja`, `PH` &rarr; `Port Harcourt`, `LG` &rarr; `Lagos State`).
+2. **Android Native Google Play Geocoder**: Utilizes device-native `Location.geocodeAsync` directly connected to Google Play Services on Android for 100% free, unlimited, high-precision address lookups.
+3. **Google Maps Geocoding API**: Integrates with Google Maps Platform when `EXPO_PUBLIC_GOOGLE_MAPS_API_KEY` or `EXPO_PUBLIC_GOOGLE_SERVICES_API_KEY` is provided ($200 free monthly credit).
+4. **Nigeria Country Scoping & Bounding Box**: Uses geographic bounds (`bbox=2.6769,4.2725,14.6778,13.8920` and `countrycodes=ng`) with boundary safety validation to guarantee queries never drift outside Nigeria (preventing false matches overseas).
+5. **Raw Coordinates & Google Maps Link Parsing**: Direct paste support for Google Maps share links, `@lat,lng` URLs, and coordinate pairs (`lat, lng`).
 
 ---
 

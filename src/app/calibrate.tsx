@@ -1234,7 +1234,7 @@ export default function CalibrateScreen() {
                     setAddressSearchQuery(text);
                     if (showSearchResults) setShowSearchResults(false);
                   }}
-                  placeholder="Search venue or address (e.g. Calabar)..."
+                  placeholder="Search venue, city, or state (e.g. Calabar, CRS)..."
                   placeholderTextColor="#94A3B8"
                   onSubmitEditing={handleSearchAddress}
                   returnKeyType="search"
