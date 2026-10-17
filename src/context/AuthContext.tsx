@@ -348,7 +348,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   );
 
   const signInWithGoogle = async (customUser?: Partial<MobileUser>): Promise<AuthResult> => {
-    setIsLoading(true);
     try {
       if (Platform.OS === 'web' && !customUser) {
         const cred = await FirebaseAuth.signInWithPopup(auth, googleProvider);
@@ -372,8 +371,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (error) {
       console.error('Google Sign-In failed:', error);
       throw error;
-    } finally {
-      setIsLoading(false);
     }
   };
 
@@ -381,7 +378,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     idToken: string,
     profileHint?: Partial<MobileUser>
   ): Promise<AuthResult> => {
-    setIsLoading(true);
     try {
       const credential = FirebaseAuth.GoogleAuthProvider.credential(idToken);
       const cred = await FirebaseAuth.signInWithCredential(auth, credential);
@@ -403,18 +399,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (error) {
       console.error('Firebase Google Credential Sign-In failed:', error);
       throw error;
-    } finally {
-      setIsLoading(false);
     }
   };
 
   const addOrSelectGoogleAccount = async (selectedAccount: MobileUser): Promise<AuthResult> => {
-    setIsLoading(true);
-    try {
-      return await handleUserAuthenticated(selectedAccount);
-    } finally {
-      setIsLoading(false);
-    }
+    return await handleUserAuthenticated(selectedAccount);
   };
 
   const pairOrganization = async (code: string): Promise<Organization> => {

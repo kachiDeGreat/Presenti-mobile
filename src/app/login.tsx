@@ -85,19 +85,19 @@ export default function LoginScreen() {
         });
         const response = await GoogleSignin.signIn();
 
-        if (isSuccessResponse(response)) {
-          const idToken = response.data.idToken;
-          if (idToken) {
-            const profileHint = {
-              email: response.data.user.email,
-              displayName: response.data.user.name || undefined,
-              photoURL: response.data.user.photo || undefined,
-            };
-            const res = await signInWithGoogleCredential(idToken, profileHint);
-            navigateAfterAuth(res);
-          } else {
-            toast.error("Unable to retrieve ID token from Google.");
-          }
+        const idToken = (response as any)?.data?.idToken || (response as any)?.idToken;
+        const userObj = (response as any)?.data?.user || (response as any)?.user;
+
+        if (idToken) {
+          const profileHint = {
+            email: userObj?.email,
+            displayName: userObj?.name || undefined,
+            photoURL: userObj?.photo || undefined,
+          };
+          const res = await signInWithGoogleCredential(idToken, profileHint);
+          navigateAfterAuth(res);
+        } else if (isSuccessResponse(response)) {
+          toast.error("Unable to retrieve ID token from Google.");
         }
       }
     } catch (err: any) {
