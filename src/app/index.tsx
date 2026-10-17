@@ -12,6 +12,7 @@ import {
   AppState,
   Vibration,
   Alert,
+  Linking,
 } from "react-native";
 import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -231,7 +232,22 @@ export default function DashboardScreen() {
         Alert.alert(
           biometricAuth.errorTitle || "Security Setup Required",
           `${biometricAuth.error}\n\nWhat to do:\n${biometricAuth.instruction}`,
-          [{ text: "Understood", style: "default" }],
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Go to Settings",
+              style: "default",
+              onPress: () => {
+                if (Platform.OS === "android") {
+                  Linking.sendIntent("android.settings.SECURITY_SETTINGS").catch(() => {
+                    Linking.openSettings().catch(() => {});
+                  });
+                } else {
+                  Linking.openSettings().catch(() => {});
+                }
+              },
+            },
+          ],
         );
       } else {
         const fullMessage = biometricAuth.instruction
