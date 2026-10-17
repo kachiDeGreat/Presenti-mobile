@@ -11,6 +11,7 @@ import {
   Alert,
   Modal,
   BackHandler,
+  Keyboard,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -27,6 +28,11 @@ import {
   ScannedWifiNetwork,
 } from "../services/wifiScanService";
 import { updateOrganizationAnchors as updateAnchorsService } from "../services/organizationService";
+import {
+  searchGlobalLocations,
+  reverseGeocodeCoords,
+  GeocodedLocation,
+} from "../services/geocodingService";
 
 const RADIUS_OPTIONS = [10, 20, 30, 50, 80, 100];
 
@@ -73,6 +79,8 @@ export default function CalibrateScreen() {
   const [isLocating, setIsLocating] = useState(false);
   const [addressSearchQuery, setAddressSearchQuery] = useState("");
   const [isSearchingAddress, setIsSearchingAddress] = useState(false);
+  const [searchResults, setSearchResults] = useState<GeocodedLocation[]>([]);
+  const [showSearchResults, setShowSearchResults] = useState(false);
 
   // Form Submission
   const [isSaving, setIsSaving] = useState(false);
@@ -208,19 +216,9 @@ export default function CalibrateScreen() {
   // Reverse geocode to display address name
   const reverseGeocode = async (lat: number, lng: number) => {
     try {
-      const results = await Location.reverseGeocodeAsync({
-        latitude: lat,
-        longitude: lng,
-      });
-      if (results && results.length > 0) {
-        const item = results[0];
-        const parts = [
-          item.name,
-          item.street,
-          item.city || item.subregion,
-          item.region,
-        ].filter(Boolean);
-        setLocationName(parts.join(", "));
+      const info = await reverseGeocodeCoords(lat, lng);
+      if (info && info.displayName) {
+        setLocationName(info.displayName);
       }
     } catch {
       // ignore
@@ -335,21 +333,29 @@ export default function CalibrateScreen() {
     }
   };
 
+  const selectLocationResult = (loc: GeocodedLocation) => {
+    setLatitude(loc.lat);
+    setLongitude(loc.lng);
+    setAccuracy(10);
+    setLocationName(loc.displayName || loc.name);
+    setAddressSearchQuery(loc.name || loc.displayName);
+    setShowSearchResults(false);
+    toast.success(`Pinned: ${loc.name}`);
+  };
+
   // Search address/venue and fly map to located position
   const handleSearchAddress = async () => {
     if (!addressSearchQuery.trim()) return;
     setIsSearchingAddress(true);
+    Keyboard.dismiss();
     try {
-      const results = await Location.geocodeAsync(addressSearchQuery.trim());
+      const results = await searchGlobalLocations(addressSearchQuery.trim());
       if (results && results.length > 0) {
-        const first = results[0];
-        const lat = parseFloat(first.latitude.toFixed(6));
-        const lng = parseFloat(first.longitude.toFixed(6));
-        setLatitude(lat);
-        setLongitude(lng);
-        setAccuracy(10);
-        setLocationName(addressSearchQuery.trim());
-        reverseGeocode(lat, lng);
+        setSearchResults(results);
+        selectLocationResult(results[0]);
+        if (results.length > 1 && results[0].category !== "coordinates") {
+          setShowSearchResults(true);
+        }
       } else {
         toast.warn(
           "Address not found. Please try another search or drag the pin on the map.",
@@ -1224,7 +1230,10 @@ export default function CalibrateScreen() {
                 <TextInput
                   style={styles.venueSearchInput}
                   value={addressSearchQuery}
-                  onChangeText={setAddressSearchQuery}
+                  onChangeText={(text) => {
+                    setAddressSearchQuery(text);
+                    if (showSearchResults) setShowSearchResults(false);
+                  }}
                   placeholder="Search venue or address (e.g. Calabar)..."
                   placeholderTextColor="#94A3B8"
                   onSubmitEditing={handleSearchAddress}
@@ -1243,6 +1252,37 @@ export default function CalibrateScreen() {
                 </TouchableOpacity>
               </View>
 
+              {/* Autocomplete / Search Suggestions Dropdown */}
+              {showSearchResults && searchResults.length > 1 && (
+                <View style={styles.searchDropdown}>
+                  <View style={styles.searchDropdownHeader}>
+                    <Text style={styles.searchDropdownTitle}>
+                      Matching Locations ({searchResults.length})
+                    </Text>
+                    <TouchableOpacity onPress={() => setShowSearchResults(false)}>
+                      <Ionicons name="close" size={16} color="#64748B" />
+                    </TouchableOpacity>
+                  </View>
+                  {searchResults.slice(0, 4).map((item) => (
+                    <TouchableOpacity
+                      key={item.id}
+                      style={styles.searchResultItem}
+                      onPress={() => selectLocationResult(item)}
+                    >
+                      <Ionicons name="location" size={15} color="#0284C7" />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.searchResultName} numberOfLines={1}>
+                          {item.name}
+                        </Text>
+                        <Text style={styles.searchResultSub} numberOfLines={1}>
+                          {item.sub || item.displayName}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+
               {/* Coordinates and Location Readout */}
               <View style={styles.gpsReadoutCard}>
                 <View style={styles.gpsReadoutTop}>
@@ -1253,11 +1293,11 @@ export default function CalibrateScreen() {
                     <Text style={styles.gpsReadoutCoords}>
                       {latitude.toFixed(6)}, {longitude.toFixed(6)}
                     </Text>
-                    {/* {locationName ? (
+                    {locationName ? (
                       <Text style={styles.gpsReadoutAddress} numberOfLines={2}>
                         📍 {locationName}
                       </Text>
-                    ) : null} */}
+                    ) : null}
                   </View>
                   {accuracy !== null && (
                     <View style={styles.accuracyPill}>
@@ -1948,6 +1988,55 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 12,
     fontWeight: "700",
+  },
+  searchDropdown: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    marginTop: 6,
+    overflow: "hidden",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  searchDropdownHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: "#F8FAFC",
+    borderBottomWidth: 1,
+    borderBottomColor: "#E2E8F0",
+  },
+  searchDropdownTitle: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#64748B",
+    textTransform: "uppercase",
+    letterSpacing: 0.4,
+  },
+  searchResultItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F1F5F9",
+    gap: 8,
+  },
+  searchResultName: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#0F172A",
+  },
+  searchResultSub: {
+    fontSize: 11,
+    color: "#64748B",
+    marginTop: 1,
   },
   gpsReadoutCard: {
     backgroundColor: "#F8FAFC",

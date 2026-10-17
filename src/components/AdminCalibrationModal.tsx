@@ -17,6 +17,11 @@ import * as Location from "expo-location";
 import { doc, updateDoc, setDoc } from "firebase/firestore";
 import { db } from "../config/firebase";
 import { PresenceMapMobile } from "./PresenceMapMobile";
+import {
+  searchGlobalLocations,
+  reverseGeocodeCoords,
+  GeocodedLocation,
+} from "../services/geocodingService";
 
 interface CalibrationPayload {
   type: string;
@@ -93,11 +98,9 @@ export const AdminCalibrationModal: React.FC<AdminCalibrationModalProps> = ({
   // Reverse geocode lat/lng into human readable venue name
   const reverseGeocode = async (lat: number, lng: number) => {
     try {
-      const results = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
-      if (results && results.length > 0) {
-        const item = results[0];
-        const parts = [item.name, item.street, item.city || item.subregion, item.region].filter(Boolean);
-        setLocationName(parts.join(", "));
+      const info = await reverseGeocodeCoords(lat, lng);
+      if (info && info.displayName) {
+        setLocationName(info.displayName);
       }
     } catch (e) {
       console.warn("Reverse geocode failed:", e);
@@ -109,17 +112,14 @@ export const AdminCalibrationModal: React.FC<AdminCalibrationModalProps> = ({
     if (!addressSearchQuery.trim()) return;
     setIsSearchingAddress(true);
     try {
-      const results = await Location.geocodeAsync(addressSearchQuery.trim());
+      const results = await searchGlobalLocations(addressSearchQuery.trim());
       if (results && results.length > 0) {
         const first = results[0];
-        const lat = parseFloat(first.latitude.toFixed(6));
-        const lng = parseFloat(first.longitude.toFixed(6));
-        setLatitude(lat);
-        setLongitude(lng);
+        setLatitude(first.lat);
+        setLongitude(first.lng);
         setAccuracy(10);
-        setLocationName(addressSearchQuery.trim());
-        reverseGeocode(lat, lng);
-        Alert.alert("Venue Located", `Pinned: ${addressSearchQuery.trim()}\n(${lat}, ${lng})`);
+        setLocationName(first.displayName || first.name);
+        Alert.alert("Venue Located", `Pinned: ${first.name}\n(${first.lat}, ${first.lng})`);
       } else {
         Alert.alert("Address Not Found", "Could not locate this address or venue. Please try another search or acquire current GPS.");
       }
