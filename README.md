@@ -17,6 +17,8 @@
 - **Hardware Isolation (Secure Enclave / Android StrongBox):** Interacts directly with native OS security modules via `expo-local-authentication`. Biometric ridge scans and facial geometry never leave device silicon.
 - **Strict Biometric Enforcement (`disableDeviceFallback: true`):** On devices equipped with Fingerprint or Face ID hardware, the OS is strictly prevented from offering device passcode/PIN fallback. This closes the loophole where Worker A gives their unlocked phone and PIN to Worker B to punch in for them.
 - **Graceful Budget Device Fallback:** If a worker's phone lacks biometric hardware entirely, the app seamlessly falls back to device lockscreen credentials (PIN/Pattern/Password).
+- **Clear Actionable Guidance:** Workers are never left with ambiguous error messages. If a scan is cancelled or not recognized, the app explicitly instructs them how to place their finger and retry.
+- **Direct "Go to Settings" Deep Link:** If a worker's device has not yet enrolled a fingerprint, Face ID, or screen lock, an interactive alert provides a one-tap **"Go to Settings"** button that automatically opens the device's **Security & Biometrics Settings**.
 
 ### 2. Instant Clock-In Timestamp Trapping
 - **Zero-Latency Timestamp Capture:** Captures the exact sub-second timestamp the millisecond the worker taps **"Tap to Clock In"**.
@@ -41,6 +43,9 @@ The mobile application dynamically reads the organization's calibrated architect
 - **Secret 5-Second Logo Gesture:** The calibration mode is completely invisible to regular workers. Administrators access it by pressing and holding the Presenti logo on the sign-in screen or header for 5 seconds.
 - **QR Code Pairing Gateway:** Administrators scan a live session QR code displayed on the Admin Web Portal to pair their phone.
 - **Instant Camera Dismissal:** The camera scanner unmounts the millisecond the QR payload is verified, revealing the interactive calibration screen.
+- **Multi-Tiered Geocoding Engine:** Global and local venue search powered by OpenStreetMap Nominatim and Photon (Komoot), with coordinate parsing and Google Maps share link detection.
+- **Interactive Search Suggestions Dropdown:** Displays instant matching locations and landmarks below the search bar with one-tap pinning.
+- **Smooth Satellite Map Fly-To:** Automatically glides the Leaflet satellite view directly to the selected venue or coordinates.
 - **Physical Spectrum Scanner:** Discovers nearby Wi-Fi access points, signal strength (RSSI), and exact router BSSID MAC addresses for binding.
 - **Fast GPS Lock:** High-accuracy GPS sampling captures satellite coordinates for geofence anchoring.
 - **Clean Disconnect Handling:** Tagged disconnect origins (`source: "MOBILE_APP"`) ensure exiting calibration from the phone never triggers false "session ended by web admin" toasts.
@@ -48,7 +53,7 @@ The mobile application dynamically reads the organization's calibrated architect
 ### 6. Streamlined Worker Onboarding & Google Sign-In
 - **Native Google SSO:** Single sign-on powered by `@react-native-google-signin/google-signin` on Android/iOS and Firebase Auth.
 - **Clean Root Navigation:** Dynamic full-screen initial boot flow ensuring zero split-screen or layout glitches.
-- **Automated Organization Code Formatting:** Auto-inserts hyphens as workers type their organization code (`XX-XXX-XXX`, e.g., `TO-CRR-656`).
+- **Automated Organization Code Formatting:** Auto-inserts hyphens as workers type their organization code (`XX-XXX-XXX`, e.g., `KW-RTX-482`).
 - **Dynamic Department Enrollment:** Dynamically loads department listings from the organization's cloud profile.
 
 ---
