@@ -31,6 +31,7 @@ import {
   type WindowEvaluationResult,
 } from "../utils/timePolicy";
 import { verifyPresenceAnchors } from "../services/presenceVerificationService";
+import { verifyIdentityForClockIn } from "../services/biometricAuthService";
 import type { TodayPunchRecord } from "../types";
 import { AdminCalibrationModal } from "../components/AdminCalibrationModal";
 
@@ -222,7 +223,17 @@ export default function DashboardScreen() {
       return;
     }
 
-    // 3. INSTANT TIME TRAPPING: Lock exact timestamp right at button press
+    // 3. MANDATORY BIOMETRIC VERIFICATION (Anti-Proxy Identity Check)
+    const biometricAuth = await verifyIdentityForClockIn();
+    if (!biometricAuth.success) {
+      toast.warn(
+        biometricAuth.error || "Biometric authentication required to confirm physical attendance.",
+        { title: "Identity Required", duration: 5000 },
+      );
+      return;
+    }
+
+    // 4. INSTANT TIME TRAPPING: Lock exact timestamp right at button press
     const punchedDate = new Date();
     const punchedAtISO = punchedDate.toISOString();
     const timeDisplay = punchedDate.toLocaleTimeString([], {
@@ -306,6 +317,11 @@ export default function DashboardScreen() {
       status: "SYNCING",
       verificationMethod: presence.method,
       bssidDetected: presence.bssidDetected,
+      biometricVerification: {
+        verified: true,
+        method: biometricAuth.method,
+        biometricType: biometricAuth.biometricType,
+      },
     };
 
     setTodayPunch(initialRecord);
@@ -330,6 +346,11 @@ export default function DashboardScreen() {
         syncedAt: new Date().toISOString(),
         verificationMethod: presence.method,
         deviceId,
+        biometricVerification: {
+          verified: true,
+          method: biometricAuth.method,
+          biometricType: biometricAuth.biometricType,
+        },
         ...(presence.bssidDetected
           ? { bssidDetected: presence.bssidDetected }
           : {}),

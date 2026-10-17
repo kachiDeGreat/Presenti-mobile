@@ -39,6 +39,11 @@ export interface TodayPunchRecord {
   status: 'SYNCING' | 'SYNCED' | 'OFFLINE_CACHED';
   verificationMethod: 'WIFI_BSSID' | 'GEO_FALLBACK';
   bssidDetected?: string;
+  biometricVerification?: {
+    verified: boolean;
+    method: 'BIOMETRIC' | 'DEVICE_PASSCODE';
+    biometricType?: string;
+  };
 }
 
 export interface CachedAnchors {
@@ -90,5 +95,10 @@ export interface AttendanceRecordInput {
     latitude: number;
     longitude: number;
     accuracy?: number;
+  };
+  biometricVerification?: {
+    verified: boolean;
+    method: 'BIOMETRIC' | 'DEVICE_PASSCODE';
+    biometricType?: string;
   };
 }
