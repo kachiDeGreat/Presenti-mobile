@@ -11,6 +11,7 @@ import {
   RefreshControl,
   AppState,
   Vibration,
+  Alert,
 } from "react-native";
 import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -226,10 +227,22 @@ export default function DashboardScreen() {
     // 3. MANDATORY BIOMETRIC VERIFICATION (Anti-Proxy Identity Check)
     const biometricAuth = await verifyIdentityForClockIn();
     if (!biometricAuth.success) {
-      toast.warn(
-        biometricAuth.error || "Biometric authentication required to confirm physical attendance.",
-        { title: "Identity Required", duration: 5000 },
-      );
+      if (biometricAuth.needsSetup) {
+        Alert.alert(
+          biometricAuth.errorTitle || "Security Setup Required",
+          `${biometricAuth.error}\n\nWhat to do:\n${biometricAuth.instruction}`,
+          [{ text: "Understood", style: "default" }],
+        );
+      } else {
+        const fullMessage = biometricAuth.instruction
+          ? `${biometricAuth.error} ${biometricAuth.instruction}`
+          : (biometricAuth.error || "Please tap 'Tap to Clock In' again and scan your registered finger or face.");
+
+        toast.warn(fullMessage, {
+          title: biometricAuth.errorTitle || "Biometric Verification Required",
+          duration: 6500,
+        });
+      }
       return;
     }
 
