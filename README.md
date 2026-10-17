@@ -12,26 +12,32 @@
 
 ## Core Capabilities & Features
 
-### 1. Instant Clock-In Timestamp Trapping
+### 1. Zero-Proxy Mandatory Biometric Verification (Anti-Buddy Punching)
+- **Built-In & Non-Optional:** Biometric identity verification is mandatory by default for all workers on every punch-in. It cannot be disabled, guaranteeing that the registered employee is physically present holding their device.
+- **Hardware Isolation (Secure Enclave / Android StrongBox):** Interacts directly with native OS security modules via `expo-local-authentication`. Biometric ridge scans and facial geometry never leave device silicon.
+- **Strict Biometric Enforcement (`disableDeviceFallback: true`):** On devices equipped with Fingerprint or Face ID hardware, the OS is strictly prevented from offering device passcode/PIN fallback. This closes the loophole where Worker A gives their unlocked phone and PIN to Worker B to punch in for them.
+- **Graceful Budget Device Fallback:** If a worker's phone lacks biometric hardware entirely, the app seamlessly falls back to device lockscreen credentials (PIN/Pattern/Password).
+
+### 2. Instant Clock-In Timestamp Trapping
 - **Zero-Latency Timestamp Capture:** Captures the exact sub-second timestamp the millisecond the worker taps **"Tap to Clock In"**.
 - **Tamper-Resistant Clock:** Trapped arrival timestamps are stored locally before background network verification starts. Workers are never penalized for slow cellular networks or brief connectivity drops.
 
-### 2. Dual-Mode Physical Presence Engine
+### 3. Dual-Mode Physical Presence Engine
 The mobile application dynamically reads the organization's calibrated architecture:
-- **Mode A: Hybrid Verification (Office Router + GPS Geofence):**
+- **Mode 1: Router-Free Satellite GPS Geofence (Default & Recommended):**
+  - Completely bypasses physical router scanning for modern offices, field teams, pop-up events, and mobile workspaces.
+  - Verifies presence directly against high-accuracy satellite GPS coordinates with sub-second response times.
+- **Mode 2: Hybrid Physical Office Router (Optional Dual-Tier):**
   - **Tier 1 — Hardware Wi-Fi Anchor (BSSID):** Scans the device's physical Wi-Fi radio for the organization's calibrated router MAC address (`targetBssid`). This prevents clock-ins outside premises via fake SSIDs or mobile hotspot tethering.
   - **20-Second Hardware Scan Timeout:** If physical Wi-Fi scanning times out, the app automatically fails over to Tier 2 geofencing.
   - **Tier 2 — GPS Perimeter Geofencing:** Calculates distance from calibrated coordinates using high-accuracy native GPS (`expo-location`). Clock-in is approved only if within the calibrated perimeter (10m to 100m).
-- **Mode B: Router-Free (Satellite GPS Geofence Only):**
-  - Completely bypasses physical router scanning for field teams, pop-up events, and mobile workspaces.
-  - Verifies presence directly against high-accuracy satellite GPS coordinates with sub-second response times.
 - **Offline Attendance Trapping:** If the venue loses internet connectivity, punch records are cryptographically tagged, stored in local cache (`AsyncStorage`), and automatically pushed to Cloud Firestore once connectivity resumes.
 
-### 3. Hardware Device Binding (Anti-Buddy Punching)
+### 4. Hardware Device Binding
 - **One Worker, One Device:** Upon onboarding, the worker's account is permanently bound to their smartphone's unique hardware identifier.
 - **Account Sharing Prevention:** Signing in from another person's device is rejected, eliminating proxy clock-ins.
 
-### 4. Administrator Premises Calibration Suite
+### 5. Administrator Premises Calibration Suite
 - **Secret 5-Second Logo Gesture:** The calibration mode is completely invisible to regular workers. Administrators access it by pressing and holding the Presenti logo on the sign-in screen or header for 5 seconds.
 - **QR Code Pairing Gateway:** Administrators scan a live session QR code displayed on the Admin Web Portal to pair their phone.
 - **Instant Camera Dismissal:** The camera scanner unmounts the millisecond the QR payload is verified, revealing the interactive calibration screen.
@@ -39,7 +45,7 @@ The mobile application dynamically reads the organization's calibrated architect
 - **Fast GPS Lock:** High-accuracy GPS sampling captures satellite coordinates for geofence anchoring.
 - **Clean Disconnect Handling:** Tagged disconnect origins (`source: "MOBILE_APP"`) ensure exiting calibration from the phone never triggers false "session ended by web admin" toasts.
 
-### 5. Streamlined Worker Onboarding & Google Sign-In
+### 6. Streamlined Worker Onboarding & Google Sign-In
 - **Native Google SSO:** Single sign-on powered by `@react-native-google-signin/google-signin` on Android/iOS and Firebase Auth.
 - **Clean Root Navigation:** Dynamic full-screen initial boot flow ensuring zero split-screen or layout glitches.
 - **Automated Organization Code Formatting:** Auto-inserts hyphens as workers type their organization code (`XX-XXX-XXX`, e.g., `TO-CRR-656`).
@@ -53,28 +59,36 @@ The mobile application dynamically reads the organization's calibrated architect
 sequenceDiagram
     actor Worker
     participant Mobile as Presenti Mobile
+    participant NativeSec as Android / iOS Biometrics
     participant Radios as Wi-Fi & GPS Radios
     participant Cloud as Cloud Firestore
 
     Worker->>Mobile: Tap "Tap to Clock In"
     Mobile->>Mobile: 1. Trap local timestamp immediately
-    alt Organization Mode: GEOFENCE_ONLY
-        Mobile->>Radios: Query high-accuracy GPS coordinates
-        Mobile->>Mobile: Evaluate distance vs. Geofence perimeter
-    else Organization Mode: HYBRID
-        Mobile->>Radios: Scan physical Wi-Fi BSSID (20s timeout)
-        alt Wi-Fi BSSID Matches Anchor
-            Mobile->>Cloud: Record Attendance (Method: WIFI_BSSID)
-        else Wi-Fi Unavailable / Timeout
+    Mobile->>NativeSec: 2. Request native biometric verification (Fingerprint / Face ID)
+    alt Biometrics Failed or Cancelled
+        NativeSec-->>Mobile: Authentication Denied
+        Mobile-->>Worker: Block Clock-In ("Identity Verification Required")
+    else Biometrics Approved
+        NativeSec-->>Mobile: Identity Verified (Hardware Confirmed)
+        alt Organization Mode: GEOFENCE_ONLY (Default)
             Mobile->>Radios: Query high-accuracy GPS coordinates
             Mobile->>Mobile: Evaluate distance vs. Geofence perimeter
+        else Organization Mode: HYBRID
+            Mobile->>Radios: Scan physical Wi-Fi BSSID (20s timeout)
+            alt Wi-Fi BSSID Matches Anchor
+                Mobile->>Cloud: Record Attendance (Method: WIFI_BSSID, Biometric: Verified)
+            else Wi-Fi Unavailable / Timeout
+                Mobile->>Radios: Query high-accuracy GPS coordinates
+                Mobile->>Mobile: Evaluate distance vs. Geofence perimeter
+            end
         end
-    end
-    alt Inside Premises Perimeter
-        Mobile->>Cloud: Record Attendance (Method: GEO_FALLBACK)
-        Cloud-->>Mobile: Sync Confirmed
-    else Outside Premises Perimeter
-        Mobile-->>Worker: Block Clock-In ("Not On-Premise")
+        alt Inside Premises Perimeter
+            Mobile->>Cloud: Record Attendance (Method: GEO_FALLBACK, Biometric: Verified)
+            Cloud-->>Mobile: Sync Confirmed
+        else Outside Premises Perimeter
+            Mobile-->>Worker: Block Clock-In ("Not On-Premise")
+        end
     end
 ```
 
@@ -87,6 +101,7 @@ sequenceDiagram
 | **Framework** | React Native (Expo SDK 52) |
 | **Routing** | Expo Router (File-based navigation) |
 | **Language** | TypeScript 5.6 |
+| **Biometric Security** | `expo-local-authentication` (Android BiometricPrompt & iOS LocalAuthentication) |
 | **Authentication** | Google Sign-In Native SDK (`@react-native-google-signin/google-signin` 16.1.5) + Firebase Auth |
 | **Database** | Firebase Firestore (Real-time snapshots & offline cache) |
 | **Wi-Fi Hardware Scanner** | `react-native-wifi-reborn` / Native Network APIs |
@@ -132,16 +147,25 @@ sequenceDiagram
 4. Ensure `google-services.json` is present in the project root:
    - Required by EAS and Android build tools for native Firebase and Google Play Services.
 
-5. Start the Development Server:
+### Building & Running
+
+#### Option A: Development Build (Live Coding & Fast Refresh)
+1. Build the custom Development Client APK (required once or when adding native libraries):
+   ```bash
+   npx eas-cli build -p android --profile development
+   ```
+2. Install the generated `.apk` on your test device.
+3. Start the Expo development server:
    ```bash
    npx expo start --dev-client
    ```
+4. Scan the metro QR code using the installed development build to enjoy live hot-reloading.
 
-6. Building a Standalone Preview APK:
-   To generate a shareable test APK without code signing requirements:
-   ```bash
-   eas build -p android --profile preview
-   ```
+#### Option B: Standalone Preview APK (Direct On-Device Testing)
+To generate an independent, shareable test APK without needing a running computer:
+```bash
+npx eas-cli build -p android --profile preview
+```
 
 ---
 
