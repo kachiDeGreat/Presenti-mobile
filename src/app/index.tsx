@@ -22,6 +22,8 @@ import { useToast } from "../context/ToastContext";
 import { LoadingIndicator } from "../components/LoadingIndicator";
 import {
   recordAttendance,
+  recordSignOut,
+  flushPendingAttendanceQueue,
   getTodayPunchRecord,
   saveTodayPunchRecord,
   fetchTodayMemberAttendance,
@@ -60,6 +62,7 @@ export default function DashboardScreen() {
   // Today's trapped punch record (local or cloud)
   const [todayPunch, setTodayPunch] = useState<TodayPunchRecord | null>(null);
   const [isSyncingToCloud, setIsSyncingToCloud] = useState(false);
+  const [isSyncingSignOut, setIsSyncingSignOut] = useState(false);
   const [hasCheckedToday, setHasCheckedToday] = useState(false);
 
   // Ticking interval
@@ -77,8 +80,8 @@ export default function DashboardScreen() {
 
   // Evaluate policy window in real-time
   const windowEval: WindowEvaluationResult = useMemo(() => {
-    return evaluateAttendanceWindow(organization?.policySettings, currentTime);
-  }, [organization?.policySettings, currentTime]);
+    return evaluateAttendanceWindow(organization?.policySettings, currentTime, todayPunch);
+  }, [organization?.policySettings, currentTime, todayPunch]);
 
   // Load existing punch on mount
   useEffect(() => {
@@ -91,6 +94,11 @@ export default function DashboardScreen() {
         const local = await getTodayPunchRecord(member.id, todayServiceDate);
         if (local && isMounted) {
           setTodayPunch(local);
+        }
+
+        // Auto-flush any pending offline punches to cloud before session progresses
+        if (organization.id) {
+          flushPendingAttendanceQueue(organization.id).catch(() => {});
         }
 
         // 2. Check cloud firestore if not found or to confirm sync
@@ -112,8 +120,13 @@ export default function DashboardScreen() {
             }),
             serviceDate: todayServiceDate,
             status: "SYNCED",
+            attendanceStatus: cloudDoc.status || (local?.attendanceStatus ?? "ON_TIME"),
             verificationMethod: cloudDoc.verificationMethod || "WIFI_BSSID",
             bssidDetected: cloudDoc.bssidDetected,
+            attendanceDocId: cloudDoc.id,
+            signedOutAt: cloudDoc.signedOutAt,
+            signOutDisplayTime: cloudDoc.signOutDisplayTime,
+            signOutStatus: cloudDoc.signedOutAt ? "SYNCED" : undefined,
           };
           setTodayPunch(cloudRecord);
           await saveTodayPunchRecord(cloudRecord);
@@ -138,21 +151,27 @@ export default function DashboardScreen() {
     refreshOrganization().catch(() => {});
   }, [refreshOrganization]);
 
-  // Sync when app returns to foreground from background
+  // Sync when app returns to foreground from background & flush queue
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (nextAppState) => {
       if (nextAppState === "active") {
         refreshOrganization().catch(() => {});
+        if (organization?.id) {
+          flushPendingAttendanceQueue(organization.id).catch(() => {});
+        }
       }
     });
     return () => subscription.remove();
-  }, [refreshOrganization]);
+  }, [refreshOrganization, organization?.id]);
 
   // Pull-to-refresh handler
   const handleRefresh = useCallback(async () => {
     setRefreshing(true);
     try {
       await refreshOrganization();
+      if (organization?.id) {
+        await flushPendingAttendanceQueue(organization.id);
+      }
       if (member && organization) {
         const cloudDoc = await fetchTodayMemberAttendance(
           organization.id,
@@ -172,8 +191,13 @@ export default function DashboardScreen() {
             }),
             serviceDate: todayServiceDate,
             status: "SYNCED",
+            attendanceStatus: cloudDoc.status || "ON_TIME",
             verificationMethod: cloudDoc.verificationMethod || "WIFI_BSSID",
             bssidDetected: cloudDoc.bssidDetected,
+            attendanceDocId: cloudDoc.id,
+            signedOutAt: cloudDoc.signedOutAt,
+            signOutDisplayTime: cloudDoc.signOutDisplayTime,
+            signOutStatus: cloudDoc.signedOutAt ? "SYNCED" : undefined,
           };
           setTodayPunch(cloudRecord);
           await saveTodayPunchRecord(cloudRecord);
@@ -344,6 +368,7 @@ export default function DashboardScreen() {
       displayTime: timeDisplay,
       serviceDate: todayServiceDate,
       status: "SYNCING",
+      attendanceStatus: windowEval.attendanceStatus,
       verificationMethod: presence.method,
       bssidDetected: presence.bssidDetected,
       biometricVerification: {
@@ -365,7 +390,7 @@ export default function DashboardScreen() {
 
     // 7. Asynchronous Cloud Persistence
     try {
-      await recordAttendance(organization.id, {
+      const docId = await recordAttendance(organization.id, {
         memberId: member.id,
         memberName: member.fullName,
         department: member.department,
@@ -374,6 +399,7 @@ export default function DashboardScreen() {
         punchedAt: punchedAtISO,
         syncedAt: new Date().toISOString(),
         verificationMethod: presence.method,
+        status: windowEval.attendanceStatus,
         deviceId,
         biometricVerification: {
           verified: true,
@@ -404,13 +430,18 @@ export default function DashboardScreen() {
       const syncedRecord: TodayPunchRecord = {
         ...initialRecord,
         status: "SYNCED",
+        attendanceDocId: docId,
       };
       setTodayPunch(syncedRecord);
       await saveTodayPunchRecord(syncedRecord);
 
+      const statusTag = windowEval.attendanceStatus === "LATE" ? " (Marked Late)" : " (On Time)";
       toast.success(
-        `Verified on-premise (${presence.method === "GEO_FALLBACK" ? "GPS Geofence" : "Wi-Fi Anchor"})! Attendance synced at ${timeDisplay}.`,
-        { title: "Check-In Confirmed", duration: 4000 },
+        `Verified on-premise (${presence.method === "GEO_FALLBACK" ? "GPS Geofence" : "Wi-Fi Anchor"})! Attendance synced at ${timeDisplay}${statusTag}.`,
+        {
+          title: windowEval.attendanceStatus === "LATE" ? "Late Check-In Confirmed" : "Check-In Confirmed",
+          duration: 4000,
+        },
       );
     } catch (err: any) {
       console.warn("Cloud sync error, kept in local queue:", err);
@@ -427,6 +458,130 @@ export default function DashboardScreen() {
       );
     } finally {
       setIsSyncingToCloud(false);
+    }
+  };
+
+  // --- Sign Out Execution (Traps Sign-Out Timestamp + Biometric Check + Updates Cloud) ---
+  const handleSignOut = async () => {
+    if (!todayPunch) {
+      toast.error("You must sign in for today first before signing out.", {
+        title: "Sign-In Required",
+      });
+      return;
+    }
+
+    if (todayPunch.signedOutAt) {
+      toast.info(`Already signed out today at ${todayPunch.signOutDisplayTime || "earlier"}.`);
+      return;
+    }
+
+    if (!windowEval.canSignOut) {
+      toast.warn(
+        `Sign-out opens at ${windowEval.signOutTimeFormatted || "the scheduled departure time"}. You cannot sign out yet.`,
+        { title: "Sign-Out Not Open", duration: 4500 }
+      );
+      return;
+    }
+
+    // MANDATORY BIOMETRIC VERIFICATION (Anti-Proxy Identity Check)
+    const biometricAuth = await verifyIdentityForClockIn();
+    if (!biometricAuth.success) {
+      if (biometricAuth.needsSetup) {
+        Alert.alert(
+          biometricAuth.errorTitle || "Security Setup Required",
+          `${biometricAuth.error}\n\nWhat to do:\n${biometricAuth.instruction}`,
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Go to Settings",
+              style: "default",
+              onPress: () => {
+                if (Platform.OS === "android") {
+                  Linking.sendIntent("android.settings.SECURITY_SETTINGS").catch(() => {
+                    Linking.openSettings().catch(() => {});
+                  });
+                } else {
+                  Linking.openSettings().catch(() => {});
+                }
+              },
+            },
+          ],
+        );
+      } else {
+        const fullMessage = biometricAuth.instruction
+          ? `${biometricAuth.error} ${biometricAuth.instruction}`
+          : (biometricAuth.error || "Please scan your registered finger or face to confirm sign out.");
+
+        toast.warn(fullMessage, {
+          title: biometricAuth.errorTitle || "Biometric Verification Required",
+          duration: 6500,
+        });
+      }
+      return;
+    }
+
+    // INSTANT TIME TRAPPING
+    const signDate = new Date();
+    const signOutAtISO = signDate.toISOString();
+    const signOutTimeDisplay = signDate.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+
+    setIsSyncingSignOut(true);
+
+    const updatedPunch: TodayPunchRecord = {
+      ...todayPunch,
+      signedOutAt: signOutAtISO,
+      signOutDisplayTime: signOutTimeDisplay,
+      signOutStatus: "SYNCING",
+    };
+
+    setTodayPunch(updatedPunch);
+    await saveTodayPunchRecord(updatedPunch);
+
+    try {
+      await recordSignOut(
+        organization.id,
+        member.id,
+        todayServiceDate,
+        {
+          signedOutAt: signOutAtISO,
+          signOutDisplayTime: signOutTimeDisplay,
+        },
+        todayPunch.attendanceDocId
+      );
+
+      const finalRecord: TodayPunchRecord = {
+        ...updatedPunch,
+        signOutStatus: "SYNCED",
+      };
+      setTodayPunch(finalRecord);
+      await saveTodayPunchRecord(finalRecord);
+
+      toast.success(
+        `Sign-out confirmed at ${signOutTimeDisplay}. Have a great rest of your day!`,
+        {
+          title: "Signed Out Successfully",
+          duration: 4000,
+        }
+      );
+    } catch (err) {
+      console.warn("Could not sync sign-out immediately, stored locally:", err);
+      const offlineRecord: TodayPunchRecord = {
+        ...updatedPunch,
+        signOutStatus: "OFFLINE_CACHED",
+      };
+      setTodayPunch(offlineRecord);
+      await saveTodayPunchRecord(offlineRecord);
+
+      toast.warn(
+        `Sign-out recorded at ${signOutTimeDisplay}. Will sync to cloud once connection is stable.`,
+        { title: "Sign-Out Trapped Locally", duration: 4500 }
+      );
+    } finally {
+      setIsSyncingSignOut(false);
     }
   };
 
@@ -590,71 +745,233 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* Primary Action / Signed-In Status Card */}
+        {/* Primary Action / Attendance Status & Sign-Out Section */}
         <View style={styles.actionSection}>
           {todayPunch ? (
             /* --- STATE: ALREADY SIGNED IN TODAY --- */
-            <View style={styles.signedInCard}>
-              <View style={styles.signedInTopRow}>
-                <View style={styles.checkCircle}>
-                  <Ionicons name="checkmark-sharp" size={24} color="#FFFFFF" />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.signedInHeading}>
-                    Signed In For Today
-                  </Text>
-                  <Text style={styles.signedInSubheading}>
-                    Arrival trapped at {todayPunch.displayTime}
-                  </Text>
-                </View>
-                <View style={styles.onTimePill}>
-                  <Text style={styles.onTimePillText}>ON TIME</Text>
-                </View>
-              </View>
-
-              <View style={styles.signedInDivider} />
-
-              <View style={styles.syncStatusRow}>
-                {todayPunch.status === "SYNCING" || isSyncingToCloud ? (
-                  <View style={styles.syncRowContent}>
-                    <ActivityIndicator size="small" color="#2563EB" />
-                    <Text style={styles.syncStatusLabel}>
-                      Syncing to admin dashboard...
+            <View style={{ gap: 12 }}>
+              <View
+                style={[
+                  styles.signedInCard,
+                  todayPunch.attendanceStatus === "LATE" && styles.signedInCardLate,
+                ]}
+              >
+                <View style={styles.signedInTopRow}>
+                  <View
+                    style={[
+                      styles.checkCircle,
+                      todayPunch.attendanceStatus === "LATE" && styles.checkCircleLate,
+                    ]}
+                  >
+                    <Ionicons
+                      name={
+                        todayPunch.attendanceStatus === "LATE"
+                          ? "alert-circle"
+                          : "checkmark-sharp"
+                      }
+                      size={24}
+                      color="#FFFFFF"
+                    />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text
+                      style={[
+                        styles.signedInHeading,
+                        todayPunch.attendanceStatus === "LATE" && styles.signedInHeadingLate,
+                      ]}
+                    >
+                      {todayPunch.attendanceStatus === "LATE"
+                        ? "Signed In (Late)"
+                        : "Signed In For Today"}
+                    </Text>
+                    <Text
+                      style={[
+                        styles.signedInSubheading,
+                        todayPunch.attendanceStatus === "LATE" && styles.signedInSubheadingLate,
+                      ]}
+                    >
+                      Arrival trapped at {todayPunch.displayTime}
                     </Text>
                   </View>
-                ) : todayPunch.status === "SYNCED" ? (
-                  <View style={styles.syncRowContent}>
-                    <Ionicons name="cloud-done" size={16} color="#059669" />
-                    <Text style={styles.syncDoneLabel}>
-                      Verified & synced with admin cloud
+                  <View
+                    style={
+                      todayPunch.attendanceStatus === "LATE"
+                        ? styles.latePill
+                        : styles.onTimePill
+                    }
+                  >
+                    <Text
+                      style={
+                        todayPunch.attendanceStatus === "LATE"
+                          ? styles.latePillText
+                          : styles.onTimePillText
+                      }
+                    >
+                      {todayPunch.attendanceStatus === "LATE" ? "LATE" : "ON TIME"}
                     </Text>
                   </View>
-                ) : (
-                  <View style={styles.syncRowContent}>
-                    <Ionicons name="cloud-offline" size={16} color="#D97706" />
-                    <Text style={styles.syncOfflineLabel}>
-                      Cached locally • Will sync automatically
-                    </Text>
-                  </View>
-                )}
-              </View>
+                </View>
 
-              <View style={styles.anchorDetailRow}>
-                <Ionicons
-                  name={
-                    todayPunch.verificationMethod === "GEO_FALLBACK"
-                      ? "navigate-circle"
-                      : "wifi"
-                  }
-                  size={15}
-                  color="#059669"
+                <View
+                  style={[
+                    styles.signedInDivider,
+                    todayPunch.attendanceStatus === "LATE" && styles.signedInDividerLate,
+                  ]}
                 />
-                <Text style={styles.anchorDetailText}>
-                  {todayPunch.verificationMethod === "GEO_FALLBACK"
-                    ? "Verified via GPS Geofence Perimeter"
-                    : `Verified via Wi-Fi Anchor (${cachedAnchors?.targetBssid || "Premises Router"})`}
-                </Text>
+
+                <View style={styles.syncStatusRow}>
+                  {todayPunch.status === "SYNCING" || isSyncingToCloud ? (
+                    <View style={styles.syncRowContent}>
+                      <ActivityIndicator size="small" color="#2563EB" />
+                      <Text style={styles.syncStatusLabel}>
+                        Syncing to admin dashboard...
+                      </Text>
+                    </View>
+                  ) : todayPunch.status === "SYNCED" ? (
+                    <View style={styles.syncRowContent}>
+                      <Ionicons name="cloud-done" size={16} color="#059669" />
+                      <Text style={styles.syncDoneLabel}>
+                        Verified & synced with admin cloud
+                      </Text>
+                    </View>
+                  ) : (
+                    <View style={styles.syncRowContent}>
+                      <Ionicons name="cloud-offline" size={16} color="#D97706" />
+                      <Text style={styles.syncOfflineLabel}>
+                        Cached locally • Will sync automatically
+                      </Text>
+                    </View>
+                  )}
+                </View>
+
+                <View
+                  style={[
+                    styles.anchorDetailRow,
+                    todayPunch.attendanceStatus === "LATE" && styles.anchorDetailRowLate,
+                  ]}
+                >
+                  <Ionicons
+                    name={
+                      todayPunch.verificationMethod === "GEO_FALLBACK"
+                        ? "navigate-circle"
+                        : "wifi"
+                    }
+                    size={15}
+                    color={todayPunch.attendanceStatus === "LATE" ? "#B45309" : "#059669"}
+                  />
+                  <Text
+                    style={[
+                      styles.anchorDetailText,
+                      todayPunch.attendanceStatus === "LATE" && styles.anchorDetailTextLate,
+                    ]}
+                  >
+                    {todayPunch.verificationMethod === "GEO_FALLBACK"
+                      ? "Verified via GPS Geofence Perimeter"
+                      : `Verified via Wi-Fi Anchor (${cachedAnchors?.targetBssid || "Premises Router"})`}
+                  </Text>
+                </View>
               </View>
+
+              {/* Sign-Out Feature (If enabled by Organization Policy) */}
+              {organization.policySettings?.enableSignOut && (
+                <View style={styles.signOutWrapper}>
+                  {todayPunch.signedOutAt ? (
+                    /* STATE: ALREADY SIGNED OUT */
+                    <View style={styles.signedOutDoneCard}>
+                      <View style={styles.signedOutDoneTopRow}>
+                        <View style={styles.signedOutDoneIcon}>
+                          <Ionicons name="log-out" size={18} color="#FFFFFF" />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.signedOutDoneTitle}>
+                            Signed Out For Today
+                          </Text>
+                          <Text style={styles.signedOutDoneSub}>
+                            Departure logged at {todayPunch.signOutDisplayTime}
+                          </Text>
+                        </View>
+                        <View style={styles.signedOutPill}>
+                          <Text style={styles.signedOutPillText}>COMPLETED</Text>
+                        </View>
+                      </View>
+
+                      <View style={styles.syncStatusRow}>
+                        {todayPunch.signOutStatus === "SYNCING" || isSyncingSignOut ? (
+                          <View style={styles.syncRowContent}>
+                            <ActivityIndicator size="small" color="#2563EB" />
+                            <Text style={styles.syncStatusLabel}>
+                              Syncing departure to cloud...
+                            </Text>
+                          </View>
+                        ) : todayPunch.signOutStatus === "SYNCED" ? (
+                          <View style={styles.syncRowContent}>
+                            <Ionicons name="cloud-done" size={15} color="#059669" />
+                            <Text style={styles.syncDoneLabel}>
+                              Departure verified & synced with admin cloud
+                            </Text>
+                          </View>
+                        ) : (
+                          <View style={styles.syncRowContent}>
+                            <Ionicons name="cloud-offline" size={15} color="#D97706" />
+                            <Text style={styles.syncOfflineLabel}>
+                              Cached locally • Will sync automatically
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                    </View>
+                  ) : windowEval.canSignOut ? (
+                    /* STATE: READY TO SIGN OUT (After Departure Time) */
+                    <TouchableOpacity
+                      style={[
+                        styles.signOutActionButton,
+                        isSyncingSignOut && styles.buttonDisabled,
+                      ]}
+                      onPress={handleSignOut}
+                      disabled={isSyncingSignOut}
+                      activeOpacity={0.85}
+                    >
+                      <View style={styles.buttonInnerRow}>
+                        <View style={styles.signOutIconCircle}>
+                          {isSyncingSignOut ? (
+                            <ActivityIndicator size="small" color="#FFFFFF" />
+                          ) : (
+                            <Ionicons name="log-out-outline" size={24} color="#FFFFFF" />
+                          )}
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.signOutActionTitle}>
+                            {isSyncingSignOut
+                              ? "Verifying Presence & Syncing..."
+                              : "Tap to Sign Out"}
+                          </Text>
+                          <Text style={styles.signOutActionSubtitle}>
+                            {isSyncingSignOut
+                              ? "Scanning biometric & recording departure"
+                              : `Departure open (started ${windowEval.signOutTimeFormatted})`}
+                          </Text>
+                        </View>
+                        {!isSyncingSignOut && (
+                          <Ionicons name="arrow-forward" size={20} color="#CBD5E1" />
+                        )}
+                      </View>
+                    </TouchableOpacity>
+                  ) : (
+                    /* STATE: SIGN-OUT LOCKED (Before Departure Time) */
+                    <View style={styles.signOutLockedCard}>
+                      <Ionicons name="time-outline" size={18} color="#64748B" />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.signOutLockedTitle}>
+                          Sign-Out Opens at {windowEval.signOutTimeFormatted || "Departure Time"}
+                        </Text>
+                        <Text style={styles.signOutLockedSubtitle}>
+                          Sign-out has no closing cutoff. You can sign out any time after {windowEval.signOutTimeFormatted || "this time"}.
+                        </Text>
+                      </View>
+                    </View>
+                  )}
+                </View>
+              )}
             </View>
           ) : !windowEval.isAllowed ? (
             /* --- STATE: WINDOW CLOSED / BLOCKED (LATE OR NOT SESSION DAY) --- */
@@ -700,8 +1017,45 @@ export default function DashboardScreen() {
                 </Text>
               </TouchableOpacity>
             </View>
+          ) : windowEval.status === "WINDOW_OPEN_LATE" ? (
+            /* --- STATE: LATE SIGN-IN WINDOW OPEN (WITH LATE TAG) --- */
+            <TouchableOpacity
+              style={[
+                styles.clockInPrimaryButton,
+                styles.clockInLateButton,
+                isSyncingToCloud && styles.buttonDisabled,
+              ]}
+              onPress={handleClockIn}
+              disabled={isSyncingToCloud}
+              activeOpacity={0.85}
+            >
+              <View style={styles.buttonInnerRow}>
+                <View style={[styles.fingerprintCircle, styles.fingerprintCircleLate]}>
+                  {isSyncingToCloud ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <Ionicons name="alert-circle" size={26} color="#FFFFFF" />
+                  )}
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.clockInPrimaryTitle}>
+                    {isSyncingToCloud
+                      ? "Verifying Presence & Syncing..."
+                      : "Tap to Clock In (Late)"}
+                  </Text>
+                  <Text style={[styles.clockInPrimarySubtitle, styles.clockInSubtitleLate]}>
+                    {isSyncingToCloud
+                      ? "Scanning Wi-Fi anchor & GPS geofence"
+                      : `Closed at ${windowEval.closeTimeFormatted} • Stamped with LATE tag`}
+                  </Text>
+                </View>
+                {!isSyncingToCloud && (
+                  <Ionicons name="arrow-forward" size={20} color="#FED7AA" />
+                )}
+              </View>
+            </TouchableOpacity>
           ) : (
-            /* --- STATE: WINDOW OPEN (READY TO CLOCK IN) --- */
+            /* --- STATE: WINDOW OPEN (ON-TIME CLOCK IN) --- */
             <TouchableOpacity
               style={[
                 styles.clockInPrimaryButton,
@@ -1098,6 +1452,16 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     marginTop: 2,
   },
+  clockInLateButton: {
+    backgroundColor: "#D97706",
+    shadowColor: "#D97706",
+  },
+  fingerprintCircleLate: {
+    backgroundColor: "rgba(255, 255, 255, 0.25)",
+  },
+  clockInSubtitleLate: {
+    color: "#FEF3C7",
+  },
   buttonDisabled: {
     opacity: 0.65,
   },
@@ -1116,6 +1480,11 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 3,
   },
+  signedInCardLate: {
+    backgroundColor: "#FFFBEB",
+    borderColor: "#FCD34D",
+    shadowColor: "#D97706",
+  },
   signedInTopRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1129,16 +1498,25 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  checkCircleLate: {
+    backgroundColor: "#F59E0B",
+  },
   signedInHeading: {
     fontSize: 16,
     fontWeight: "800",
     color: "#065F46",
+  },
+  signedInHeadingLate: {
+    color: "#92400E",
   },
   signedInSubheading: {
     fontSize: 12,
     fontWeight: "600",
     color: "#047857",
     marginTop: 2,
+  },
+  signedInSubheadingLate: {
+    color: "#B45309",
   },
   onTimePill: {
     backgroundColor: "#DCFCE7",
@@ -1154,9 +1532,26 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     letterSpacing: 0.5,
   },
+  latePill: {
+    backgroundColor: "#FEF3C7",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: "#FCD34D",
+  },
+  latePillText: {
+    color: "#B45309",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
   signedInDivider: {
     height: 1,
     backgroundColor: "#BBF7D0",
+  },
+  signedInDividerLate: {
+    backgroundColor: "#FDE68A",
   },
   syncStatusRow: {
     flexDirection: "row",
@@ -1191,10 +1586,116 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 8,
   },
+  anchorDetailRowLate: {
+    backgroundColor: "#FEF3C7",
+  },
   anchorDetailText: {
     fontSize: 11,
     fontWeight: "600",
     color: "#166534",
+  },
+  anchorDetailTextLate: {
+    color: "#B45309",
+  },
+
+  // Sign-Out UI Elements
+  signOutWrapper: {
+    marginTop: 4,
+  },
+  signOutActionButton: {
+    backgroundColor: "#0F172A",
+    borderRadius: 14,
+    padding: 16,
+    shadowColor: "#0F172A",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  signOutIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(255, 255, 255, 0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  signOutActionTitle: {
+    color: "#FFFFFF",
+    fontSize: 16,
+    fontWeight: "800",
+    letterSpacing: -0.2,
+  },
+  signOutActionSubtitle: {
+    color: "#94A3B8",
+    fontSize: 12,
+    fontWeight: "500",
+    marginTop: 2,
+  },
+  signOutLockedCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    borderRadius: 12,
+    padding: 14,
+  },
+  signOutLockedTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#334155",
+  },
+  signOutLockedSubtitle: {
+    fontSize: 11,
+    color: "#64748B",
+    marginTop: 2,
+    lineHeight: 15,
+  },
+  signedOutDoneCard: {
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1.5,
+    borderColor: "#CBD5E1",
+    borderRadius: 14,
+    padding: 14,
+    gap: 10,
+  },
+  signedOutDoneTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  signedOutDoneIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#334155",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  signedOutDoneTitle: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  signedOutDoneSub: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#475569",
+    marginTop: 1,
+  },
+  signedOutPill: {
+    backgroundColor: "#E2E8F0",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  signedOutPillText: {
+    color: "#334155",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.5,
   },
 
   // Blocked Card (Late / Closed)

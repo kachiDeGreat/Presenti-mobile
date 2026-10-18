@@ -24,7 +24,21 @@
 - **Zero-Latency Timestamp Capture:** Captures the exact sub-second timestamp the millisecond the worker taps **"Tap to Clock In"**.
 - **Tamper-Resistant Clock:** Trapped arrival timestamps are stored locally before background network verification starts. Workers are never penalized for slow cellular networks or brief connectivity drops.
 
-### 3. Dual-Mode Physical Presence Engine
+### 3. Smart Policy Enforcement, Late Tagging & Biometric Sign-Out
+- **Window Open & Close Enforcement:** Displays a real-time countdown to window open time (`arrivalCutoff`) and closing time (`lateTolerance`).
+- **Late Sign-In Tagging (`allowLateSignIn`):**
+  - If the organization enables late tolerance, workers who arrive after the deadline see an amber **"Tap to Clock In (Late)"** action button.
+  - Submitting stamps their record with an immutable **`LATE`** status tag displayed directly on their celebration card and synchronized to the admin dashboard.
+  - If late tolerance is disabled, attendance strictly locks down once the window passes.
+- **Biometric Departure Sign-Out (`enableSignOut`):**
+  - When enabled, workers can clock out at the end of their shift.
+  - **No Closing Cutoff & No Late Penalty:** Sign-out unlocks from the configured departure time (`signOutTime`, e.g., 05:00 PM) and remains available indefinitely until the next service day.
+  - **Anti-Proxy Identity Check:** Workers must authenticate via their native fingerprint or Face ID before departure is recorded, preventing proxy clock-outs.
+- **Automatic Queue Flushing (Zero Sync Cutoff Overhead):**
+  - Daily cloud sync cutoffs are completely eliminated.
+  - The app automatically buffers punches locally in `AsyncStorage` and flushes all pending records to Cloud Firestore on app mount, on foreground resume (`AppState === 'active'`), and upon manual pull-to-refresh—guaranteeing no offline attendance is left behind before the next working day.
+
+### 4. Dual-Mode Physical Presence Engine
 The mobile application dynamically reads the organization's calibrated architecture:
 - **Mode 1: Router-Free Satellite GPS Geofence (Default & Recommended):**
   - Completely bypasses physical router scanning for modern offices, field teams, pop-up events, and mobile workspaces.
@@ -35,11 +49,11 @@ The mobile application dynamically reads the organization's calibrated architect
   - **Tier 2 — GPS Perimeter Geofencing:** Calculates distance from calibrated coordinates using high-accuracy native GPS (`expo-location`). Clock-in is approved only if within the calibrated perimeter (10m to 100m).
 - **Offline Attendance Trapping:** If the venue loses internet connectivity, punch records are cryptographically tagged, stored in local cache (`AsyncStorage`), and automatically pushed to Cloud Firestore once connectivity resumes.
 
-### 4. Hardware Device Binding
+### 5. Hardware Device Binding
 - **One Worker, One Device:** Upon onboarding, the worker's account is permanently bound to their smartphone's unique hardware identifier.
 - **Account Sharing Prevention:** Signing in from another person's device is rejected, eliminating proxy clock-ins.
 
-### 5. Administrator Premises Calibration Suite
+### 6. Administrator Premises Calibration Suite
 - **Secret 5-Second Logo Gesture:** The calibration mode is completely invisible to regular workers. Administrators access it by pressing and holding the Presenti logo on the sign-in screen or header for 5 seconds.
 - **QR Code Pairing Gateway:** Administrators scan a live session QR code displayed on the Admin Web Portal to pair their phone.
 - **Instant Camera Dismissal:** The camera scanner unmounts the millisecond the QR payload is verified, revealing the interactive calibration screen.
@@ -50,7 +64,7 @@ The mobile application dynamically reads the organization's calibrated architect
 - **Fast GPS Lock:** High-accuracy GPS sampling captures satellite coordinates for geofence anchoring.
 - **Clean Disconnect Handling:** Tagged disconnect origins (`source: "MOBILE_APP"`) ensure exiting calibration from the phone never triggers false "session ended by web admin" toasts.
 
-### 6. Streamlined Worker Onboarding & Google Sign-In
+### 7. Streamlined Worker Onboarding & Google Sign-In
 - **Native Google SSO:** Single sign-on powered by `@react-native-google-signin/google-signin` on Android/iOS and Firebase Auth.
 - **Clean Root Navigation:** Dynamic full-screen initial boot flow ensuring zero split-screen or layout glitches.
 - **Automated Organization Code Formatting:** Auto-inserts hyphens as workers type their organization code (`XX-XXX-XXX`, e.g., `KW-RTX-482`).

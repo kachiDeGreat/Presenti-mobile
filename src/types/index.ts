@@ -26,9 +26,12 @@ export interface Organization {
 
 export interface PolicySettings {
   serviceDays?: (number | string)[];
-  arrivalCutoff?: string; // e.g. "08:00" (Window Open Time)
-  lateTolerance?: string; // e.g. "09:00" (Window Close Time)
-  syncCutoff?: string;    // e.g. "12:00"
+  arrivalCutoff?: string; // e.g. "07:00" (Window Open Time)
+  lateTolerance?: string; // e.g. "07:30" (Window Close Time)
+  allowLateSignIn?: boolean; // If true, workers can sign in after close time marked LATE
+  enableSignOut?: boolean; // If true, workers can/must sign out
+  signOutTime?: string; // e.g. "17:00" (Sign-out starts from this time; no close cutoff)
+  syncCutoff?: string;    // Deprecated/optional
 }
 
 export interface TodayPunchRecord {
@@ -37,6 +40,7 @@ export interface TodayPunchRecord {
   displayTime: string;     // e.g. "08:24:15 AM"
   serviceDate: string;     // YYYY-MM-DD
   status: 'SYNCING' | 'SYNCED' | 'OFFLINE_CACHED';
+  attendanceStatus?: 'ON_TIME' | 'LATE';
   verificationMethod: 'WIFI_BSSID' | 'GEO_FALLBACK';
   bssidDetected?: string;
   biometricVerification?: {
@@ -44,6 +48,10 @@ export interface TodayPunchRecord {
     method: 'BIOMETRIC' | 'DEVICE_PASSCODE';
     biometricType?: string;
   };
+  signedOutAt?: string;
+  signOutDisplayTime?: string;
+  signOutStatus?: 'SYNCING' | 'SYNCED' | 'OFFLINE_CACHED';
+  attendanceDocId?: string; // Firestore document ID if synced
 }
 
 export interface CachedAnchors {
@@ -89,6 +97,8 @@ export interface AttendanceRecordInput {
   syncedAt: string;
   verificationMethod: 'WIFI_BSSID' | 'GEO_FALLBACK';
   status?: 'ON_TIME' | 'LATE';
+  signedOutAt?: string;
+  signOutDisplayTime?: string;
   deviceId: string;
   bssidDetected?: string;
   coordinatesDetected?: {

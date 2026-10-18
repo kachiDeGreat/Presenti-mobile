@@ -560,6 +560,110 @@ export async function recordAttendance(orgId: string, input: AttendanceRecordInp
   }
 }
 
+/**
+ * Updates an attendance record with worker's sign-out timestamp and display string.
+ */
+export async function recordSignOut(
+  orgId: string,
+  memberId: string,
+  serviceDate: string,
+  payload: { signedOutAt: string; signOutDisplayTime: string },
+  attendanceDocId?: string
+): Promise<boolean> {
+  try {
+    const clean = cleanFirestorePayload(payload);
+    if (attendanceDocId) {
+      await updateDoc(doc(db, 'churches', orgId, 'attendance', attendanceDocId), clean);
+      return true;
+    }
+
+    const attRef = collection(db, 'churches', orgId, 'attendance');
+    const q = query(
+      attRef,
+      where('memberId', '==', memberId),
+      where('serviceDate', '==', serviceDate),
+      limit(1)
+    );
+    const snap = await getDocs(q);
+    if (!snap.empty) {
+      await updateDoc(doc(db, 'churches', orgId, 'attendance', snap.docs[0].id), clean);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.warn('Error recording sign out in cloud:', error);
+    throw error;
+  }
+}
+
+/**
+ * Flushes all offline-cached punches or sign-outs to the cloud backend.
+ * Guarantees that any attendance logged offline is synchronized before the next working day.
+ */
+export async function flushPendingAttendanceQueue(orgId: string): Promise<number> {
+  try {
+    const allKeys = await AsyncStorage.getAllKeys();
+    const punchKeys = allKeys.filter((k) => k.startsWith('@sanctuary_punch_'));
+    let syncedCount = 0;
+
+    for (const key of punchKeys) {
+      try {
+        const raw = await AsyncStorage.getItem(key);
+        if (!raw) continue;
+        const punch: import('../types').TodayPunchRecord = JSON.parse(raw);
+
+        // 1. If punch clock-in was cached offline, push clock-in
+        if (punch.status === 'OFFLINE_CACHED') {
+          const docId = await recordAttendance(orgId, {
+            memberId: punch.memberId,
+            memberName: 'Team Member',
+            department: 'General Workforce',
+            serviceDate: punch.serviceDate,
+            timestamp: punch.punchedAt,
+            punchedAt: punch.punchedAt,
+            syncedAt: new Date().toISOString(),
+            verificationMethod: punch.verificationMethod || 'WIFI_BSSID',
+            status: punch.attendanceStatus || 'ON_TIME',
+            deviceId: '',
+            ...(punch.signedOutAt ? { signedOutAt: punch.signedOutAt, signOutDisplayTime: punch.signOutDisplayTime } : {}),
+            ...(punch.bssidDetected ? { bssidDetected: punch.bssidDetected } : {}),
+          });
+
+          punch.status = 'SYNCED';
+          punch.attendanceDocId = docId;
+          if (punch.signedOutAt) {
+            punch.signOutStatus = 'SYNCED';
+          }
+          await AsyncStorage.setItem(key, JSON.stringify(punch));
+          syncedCount++;
+        }
+        // 2. If clock-in was synced but sign-out was cached offline, push sign-out
+        else if (punch.signOutStatus === 'OFFLINE_CACHED' && punch.signedOutAt) {
+          await recordSignOut(
+            orgId,
+            punch.memberId,
+            punch.serviceDate,
+            {
+              signedOutAt: punch.signedOutAt,
+              signOutDisplayTime: punch.signOutDisplayTime || '',
+            },
+            punch.attendanceDocId
+          );
+          punch.signOutStatus = 'SYNCED';
+          await AsyncStorage.setItem(key, JSON.stringify(punch));
+          syncedCount++;
+        }
+      } catch (itemErr) {
+        console.warn('Could not sync queued punch item:', key, itemErr);
+      }
+    }
+    return syncedCount;
+  } catch (err) {
+    console.warn('flushPendingAttendanceQueue failed:', err);
+    return 0;
+  }
+}
+
 export async function getTodayPunchRecord(
   memberId: string,
   serviceDate: string

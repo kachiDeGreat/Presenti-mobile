@@ -1,4 +1,4 @@
-import type { PolicySettings } from '../types';
+import type { PolicySettings, TodayPunchRecord } from '../types';
 
 export const TIME_REGEX = /^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?$/i;
 
@@ -14,12 +14,22 @@ export const DAY_NAMES = [
 
 export interface WindowEvaluationResult {
   isAllowed: boolean;
-  status: 'WINDOW_OPEN' | 'BEFORE_WINDOW' | 'PAST_WINDOW' | 'NOT_SCHEDULED_DAY' | 'UNRESTRICTED';
+  status:
+    | 'WINDOW_OPEN'
+    | 'WINDOW_OPEN_LATE'
+    | 'BEFORE_WINDOW'
+    | 'PAST_WINDOW'
+    | 'NOT_SCHEDULED_DAY'
+    | 'UNRESTRICTED';
+  attendanceStatus: 'ON_TIME' | 'LATE';
   badgeLabel: string;
   badgeType: 'active' | 'warning' | 'error' | 'neutral';
   summary: string;
   openTimeFormatted: string;
   closeTimeFormatted: string;
+  enableSignOut: boolean;
+  signOutTimeFormatted?: string;
+  canSignOut: boolean;
   minutesRemaining?: number;
   rejectionReason?: string;
 }
@@ -65,22 +75,33 @@ export function formatCurrentTime(date: Date = new Date()): string {
 
 export function evaluateAttendanceWindow(
   policy?: PolicySettings,
-  now: Date = new Date()
+  now: Date = new Date(),
+  todayPunch?: TodayPunchRecord | null
 ): WindowEvaluationResult {
   const currentDay = now.getDay();
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
   const currentTime12 = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  const enableSignOut = !!policy?.enableSignOut;
+  const signOutTime = policy?.signOutTime || '17:00';
+  const signOutMinutes = parseTimeToMinutes(signOutTime) ?? 1020;
+  const signOutTimeFormatted = format12Hour(signOutTime);
+  const canSignOut = enableSignOut && currentMinutes >= signOutMinutes;
 
   // 1. If no policy configured at all, allow sign-in
   if (!policy || (!policy.arrivalCutoff && !policy.lateTolerance && !policy.serviceDays?.length)) {
     return {
       isAllowed: true,
       status: 'UNRESTRICTED',
+      attendanceStatus: 'ON_TIME',
       badgeLabel: 'Window Active',
       badgeType: 'active',
       summary: 'Attendance window is unrestricted today.',
       openTimeFormatted: 'Open All Day',
       closeTimeFormatted: 'No Cutoff',
+      enableSignOut,
+      signOutTimeFormatted,
+      canSignOut,
     };
   }
 
@@ -96,19 +117,24 @@ export function evaluateAttendanceWindow(
       return {
         isAllowed: false,
         status: 'NOT_SCHEDULED_DAY',
+        attendanceStatus: 'ON_TIME',
         badgeLabel: 'No Session Scheduled',
         badgeType: 'neutral',
         summary: `Today (${DAY_NAMES[currentDay]}) is not an active attendance day.`,
         openTimeFormatted: '--',
         closeTimeFormatted: '--',
+        enableSignOut,
+        signOutTimeFormatted,
+        canSignOut: false,
         rejectionReason: `No attendance session scheduled for today. Scheduled operating days: ${scheduledNames || 'None'}.`,
       };
     }
   }
 
-  // 3. Check time windows
-  const openTime = policy.arrivalCutoff || '00:00';
-  const closeTime = policy.lateTolerance || policy.syncCutoff || '23:59';
+  // 3. Time windows
+  const openTime = policy.arrivalCutoff || '07:00';
+  const closeTime = policy.lateTolerance || '07:30';
+  const allowLate = policy.allowLateSignIn !== false;
 
   const openMinutes = parseTimeToMinutes(openTime) ?? 0;
   const closeMinutes = parseTimeToMinutes(closeTime) ?? 1439;
@@ -122,40 +148,70 @@ export function evaluateAttendanceWindow(
     return {
       isAllowed: false,
       status: 'BEFORE_WINDOW',
+      attendanceStatus: 'ON_TIME',
       badgeLabel: `Opens at ${formattedOpen}`,
       badgeType: 'warning',
       summary: `Sign-in opens at ${formattedOpen} (in ${diff} min${diff > 1 ? 's' : ''}).`,
       openTimeFormatted: formattedOpen,
       closeTimeFormatted: formattedClose,
+      enableSignOut,
+      signOutTimeFormatted,
+      canSignOut: false,
       minutesRemaining: diff,
       rejectionReason: `Sign-in window is not yet open. It begins at ${formattedOpen}. Current time is ${currentTime12}.`,
     };
   }
 
-  // If past window close (LATE) - Strict cutoff
-  if (currentMinutes > closeMinutes) {
+  // Within regular active window (ON TIME)
+  if (currentMinutes <= closeMinutes) {
+    const remaining = closeMinutes - currentMinutes;
     return {
-      isAllowed: false,
-      status: 'PAST_WINDOW',
-      badgeLabel: 'Window Closed (Late)',
-      badgeType: 'error',
-      summary: `Attendance window closed at ${formattedClose}.`,
+      isAllowed: true,
+      status: 'WINDOW_OPEN',
+      attendanceStatus: 'ON_TIME',
+      badgeLabel: `Window Open • ${remaining}m left`,
+      badgeType: 'active',
+      summary: `Active until ${formattedClose} (${remaining} min${remaining > 1 ? 's' : ''} left).`,
       openTimeFormatted: formattedOpen,
       closeTimeFormatted: formattedClose,
-      rejectionReason: `The sign-in window closed at ${formattedClose}. Attendance is currently closed.`,
+      enableSignOut,
+      signOutTimeFormatted,
+      canSignOut,
+      minutesRemaining: remaining,
     };
   }
 
-  // Within active window (ON TIME)
-  const remaining = closeMinutes - currentMinutes;
+  // Past window close
+  if (allowLate) {
+    // Late check-in is permitted, marked LATE
+    return {
+      isAllowed: true,
+      status: 'WINDOW_OPEN_LATE',
+      attendanceStatus: 'LATE',
+      badgeLabel: 'Late Sign-In Active',
+      badgeType: 'warning',
+      summary: `Official arrival deadline was ${formattedClose}. Clock-in permitted with LATE tag.`,
+      openTimeFormatted: formattedOpen,
+      closeTimeFormatted: formattedClose,
+      enableSignOut,
+      signOutTimeFormatted,
+      canSignOut,
+    };
+  }
+
+  // Strict cutoff without late tolerance
   return {
-    isAllowed: true,
-    status: 'WINDOW_OPEN',
-    badgeLabel: `Window Open • ${remaining}m left`,
-    badgeType: 'active',
-    summary: `Active until ${formattedClose} (${remaining} min${remaining > 1 ? 's' : ''} left).`,
+    isAllowed: false,
+    status: 'PAST_WINDOW',
+    attendanceStatus: 'LATE',
+    badgeLabel: 'Window Closed (Late)',
+    badgeType: 'error',
+    summary: `Attendance window closed at ${formattedClose}.`,
     openTimeFormatted: formattedOpen,
     closeTimeFormatted: formattedClose,
-    minutesRemaining: remaining,
+    enableSignOut,
+    signOutTimeFormatted,
+    canSignOut,
+    rejectionReason: `The sign-in window closed at ${formattedClose}. Late sign-in is not permitted.`,
   };
 }
