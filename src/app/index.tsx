@@ -737,8 +737,7 @@ export default function DashboardScreen() {
               }
             />
             <Text style={styles.policySummaryText}>
-              {organization.policySettings?.arrivalCutoff &&
-              organization.policySettings?.lateTolerance
+              {windowEval.openTimeFormatted && windowEval.closeTimeFormatted && windowEval.openTimeFormatted !== "--"
                 ? `Window: ${windowEval.openTimeFormatted} - ${windowEval.closeTimeFormatted} • ${windowEval.summary}`
                 : windowEval.summary}
             </Text>
@@ -872,8 +871,8 @@ export default function DashboardScreen() {
                 </View>
               </View>
 
-              {/* Sign-Out Feature (If enabled by Organization Policy) */}
-              {organization.policySettings?.enableSignOut && (
+              {/* Sign-Out Feature (If enabled by Organization Policy for today) */}
+              {windowEval.enableSignOut && (
                 <View style={styles.signOutWrapper}>
                   {todayPunch.signedOutAt ? (
                     /* STATE: ALREADY SIGNED OUT */

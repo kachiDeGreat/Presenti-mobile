@@ -25,6 +25,10 @@
 - **Tamper-Resistant Clock:** Trapped arrival timestamps are stored locally before background network verification starts. Workers are never penalized for slow cellular networks or brief connectivity drops.
 
 ### 3. Smart Policy Enforcement, Late Tagging & Biometric Sign-Out
+- **Dynamic Day-Specific vs. Unified Schedules:**
+  - Evaluates today's operating rules dynamically using `evaluateAttendanceWindow`.
+  - When the organization uses **Different Times per Day (`PER_DAY`)**, the app automatically resolves today's specific day-of-week settings (`arrivalCutoff`, `lateTolerance`, `allowLateSignIn`, `enableSignOut`, and `signOutTime`) from `policySettings.daySchedules?.[currentDay]`.
+  - Seamlessly falls back to unified default policy settings for backwards compatibility or when operating in unified mode.
 - **Window Open & Close Enforcement:** Displays a real-time countdown to window open time (`arrivalCutoff`) and closing time (`lateTolerance`).
 - **Late Sign-In Tagging (`allowLateSignIn`):**
   - If the organization enables late tolerance, workers who arrive after the deadline see an amber **"Tap to Clock In (Late)"** action button.

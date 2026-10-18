@@ -82,14 +82,22 @@ export function evaluateAttendanceWindow(
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
   const currentTime12 = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-  const enableSignOut = !!policy?.enableSignOut;
-  const signOutTime = policy?.signOutTime || '17:00';
+  // Check if a day-specific schedule exists for today (e.g. Sunday vs Wednesday hours)
+  const isPerDayMode = policy?.scheduleMode === 'PER_DAY';
+  const daySchedule = (isPerDayMode || policy?.daySchedules?.[currentDay])
+    ? policy?.daySchedules?.[currentDay]
+    : undefined;
+
+  const enableSignOut = daySchedule?.enableSignOut !== undefined
+    ? !!daySchedule.enableSignOut
+    : !!policy?.enableSignOut;
+  const signOutTime = daySchedule?.signOutTime || policy?.signOutTime || '17:00';
   const signOutMinutes = parseTimeToMinutes(signOutTime) ?? 1020;
   const signOutTimeFormatted = format12Hour(signOutTime);
   const canSignOut = enableSignOut && currentMinutes >= signOutMinutes;
 
   // 1. If no policy configured at all, allow sign-in
-  if (!policy || (!policy.arrivalCutoff && !policy.lateTolerance && !policy.serviceDays?.length)) {
+  if (!policy || (!policy.arrivalCutoff && !policy.lateTolerance && !policy.serviceDays?.length && !policy.daySchedules)) {
     return {
       isAllowed: true,
       status: 'UNRESTRICTED',
@@ -131,10 +139,12 @@ export function evaluateAttendanceWindow(
     }
   }
 
-  // 3. Time windows
-  const openTime = policy.arrivalCutoff || '07:00';
-  const closeTime = policy.lateTolerance || '07:30';
-  const allowLate = policy.allowLateSignIn !== false;
+  // 3. Time windows (Resolving day-specific schedule if configured)
+  const openTime = daySchedule?.arrivalCutoff || policy.arrivalCutoff || '07:00';
+  const closeTime = daySchedule?.lateTolerance || policy.lateTolerance || '07:30';
+  const allowLate = daySchedule?.allowLateSignIn !== undefined
+    ? daySchedule.allowLateSignIn !== false
+    : policy.allowLateSignIn !== false;
 
   const openMinutes = parseTimeToMinutes(openTime) ?? 0;
   const closeMinutes = parseTimeToMinutes(closeTime) ?? 1439;
