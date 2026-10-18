@@ -9,6 +9,7 @@
     "@react-native-google-signin/google-signin": "^16.1.5",
     "expo": "~57.0.27",
     "expo-auth-session": "~57.0.14",
+    "expo-build-properties": "~57.0.22",
     "expo-camera": "~57.0.6",
     "expo-clipboard": "~57.0.2",
     "expo-constants": "~57.0.21",

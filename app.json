@@ -65,7 +65,17 @@
           "cameraPermission": "Allow Presenti to access camera to scan premises calibration QR codes."
         }
       ],
-      "react-native-wifi-reborn"
+      "react-native-wifi-reborn",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "buildArchs": ["arm64-v8a", "armeabi-v7a"],
+            "enableMinifyInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true
+          }
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
