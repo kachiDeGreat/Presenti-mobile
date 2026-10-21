@@ -28,8 +28,14 @@ const GOOGLE_CLIENT_ID =
   "75234088565-1544l2u164o869tt1ddafo5h2vjijoed.apps.googleusercontent.com";
 
 export default function LoginScreen() {
-  const { user, organization, member, isAdmin, signInWithGoogle, signInWithGoogleCredential } =
-    useAuth();
+  const {
+    user,
+    organization,
+    member,
+    isAdmin,
+    signInWithGoogle,
+    signInWithGoogleCredential,
+  } = useAuth();
   const toast = useToast();
 
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -63,7 +69,9 @@ export default function LoginScreen() {
       return;
     }
     if (result.organization && result.member) {
-      toast.success(`Welcome back, ${result.member.fullName || result.user.displayName}!`);
+      toast.success(
+        `Welcome back, ${result.member.fullName || result.user.displayName}!`,
+      );
       router.replace("/");
     } else {
       toast.success("Successfully authenticated with Google.");
@@ -85,8 +93,10 @@ export default function LoginScreen() {
         });
         const response = await GoogleSignin.signIn();
 
-        const idToken = (response as any)?.data?.idToken || (response as any)?.idToken;
-        const userObj = (response as any)?.data?.user || (response as any)?.user;
+        const idToken =
+          (response as any)?.data?.idToken || (response as any)?.idToken;
+        const userObj =
+          (response as any)?.data?.user || (response as any)?.user;
 
         if (idToken) {
           const profileHint = {
@@ -129,7 +139,7 @@ export default function LoginScreen() {
       if (err?.message?.includes("DEVELOPER_ERROR")) {
         toast.error(
           "Please add your EAS SHA-1 fingerprint to Firebase Console (Project Settings -> Android app).",
-          { title: "Firebase SHA-1 Required" }
+          { title: "Firebase SHA-1 Required" },
         );
         return;
       }
@@ -138,11 +148,7 @@ export default function LoginScreen() {
         const msg = err?.message || "Failed to complete Google authentication.";
         toast.error(msg);
         if (msg.includes("administrator on the web portal")) {
-          Alert.alert(
-            "Administrator Account",
-            msg,
-            [{ text: "Understood" }]
-          );
+          Alert.alert("Administrator Account", msg, [{ text: "Understood" }]);
         }
       }
     } finally {
@@ -171,13 +177,13 @@ export default function LoginScreen() {
             />
           </TouchableOpacity>
           <View style={styles.brandBadge}>
-            <Ionicons name="shield-checkmark" size={13} color="#2563EB" />
+            <View style={styles.brandBadgeDot} />
             <Text style={styles.brandTag}>PRESENTI • PROOF OF PRESENCE</Text>
           </View>
           <Text style={styles.title}>Sign in to Presenti</Text>
           <Text style={styles.subtitle}>
-            Proof of presence, made simple. Sign in with your Google account to record
-            verified on-premise attendance.
+            Proof of presence, made simple. Sign in with your Google account to
+            record verified on-premise attendance.
           </Text>
         </View>
 
@@ -190,22 +196,30 @@ export default function LoginScreen() {
             activeOpacity={0.85}
           >
             {isSubmitting ? (
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                <ActivityIndicator color="#0F2042" size="small" />
-                <Text style={styles.googleButtonText}>Connecting to Google...</Text>
+              <View style={styles.buttonLoaderRow}>
+                <ActivityIndicator color="#f2f1ee" size="small" />
+                <Text style={styles.googleButtonText}>
+                  CONNECTING TO GOOGLE...
+                </Text>
               </View>
             ) : (
               <>
-                <View style={styles.googleIconContainer}>
-                  <Ionicons name="logo-google" size={20} color="#4285F4" />
-                </View>
+                <Ionicons name="logo-google" size={18} color="#f2f1ee" />
                 <Text style={styles.googleButtonText}>
-                  Continue with Google
+                  CONTINUE WITH GOOGLE
                 </Text>
               </>
             )}
           </TouchableOpacity>
         </View>
+
+        {/* Admin Calibration Quick Note */}
+        {/* <View style={styles.adminHintCard}>
+          <Text style={styles.adminHintTag}>ADMINISTRATOR ACCESS</Text>
+          <Text style={styles.adminHintText}>
+            Premises administrators: long-press the app icon above or sign in with an admin Google account to open hardware beacon calibration.
+          </Text>
+        </View> */}
       </ScrollView>
     </SafeAreaView>
   );
@@ -214,176 +228,118 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: "#F8FAFC",
+    backgroundColor: "#f2f1ee",
   },
   scrollContent: {
     padding: 24,
     justifyContent: "center",
     flexGrow: 1,
+    maxWidth: 520,
+    width: "100%",
+    alignSelf: "center",
   },
   header: {
-    marginBottom: 28,
+    marginBottom: 32,
   },
   brandIconImage: {
-    width: 60,
-    height: 60,
-    borderRadius: 15,
-    marginBottom: 16,
+    width: 64,
+    height: 64,
+    borderRadius: 0,
+    marginBottom: 20,
   },
   brandBadge: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    backgroundColor: "#EFF6FF",
+    gap: 8,
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
     paddingHorizontal: 10,
     paddingVertical: 5,
-    borderRadius: 6,
+    borderRadius: 0,
     alignSelf: "flex-start",
-    marginBottom: 12,
+    marginBottom: 16,
+  },
+  brandBadgeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "#2d81ff",
   },
   brandTag: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: "700",
-    color: "#2563EB",
+    color: "#142748",
     letterSpacing: 0.8,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
   title: {
-    fontSize: 26,
+    fontSize: 32,
     fontWeight: "800",
-    color: "#0F172A",
-    letterSpacing: -0.5,
-    marginBottom: 8,
+    color: "#142748",
+    letterSpacing: -0.8,
+    marginBottom: 10,
+    lineHeight: 38,
   },
   subtitle: {
-    fontSize: 14,
-    color: "#64748B",
-    lineHeight: 20,
+    fontSize: 15,
+    color: "#52525b",
+    lineHeight: 24,
+    fontWeight: "400",
   },
   actionContainer: {
     marginBottom: 24,
   },
   googleButton: {
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1.5,
-    borderColor: "#CBD5E1",
-    borderRadius: 12,
+    backgroundColor: "#142748",
+    borderWidth: 1,
+    borderColor: "#142748",
+    borderRadius: 0,
+    minHeight: 48,
     paddingVertical: 14,
-    paddingHorizontal: 20,
+    paddingHorizontal: 24,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 12,
-    shadowColor: "#0F172A",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 4,
-    elevation: 2,
+    elevation: 0,
+    shadowOpacity: 0,
   },
   disabledButton: {
-    opacity: 0.7,
+    opacity: 0.65,
   },
-  googleIconContainer: {
-    width: 22,
-    height: 22,
+  buttonLoaderRow: {
+    flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
+    gap: 10,
   },
   googleButtonText: {
-    color: "#1E293B",
-    fontSize: 15,
-    fontWeight: "600",
-    letterSpacing: -0.2,
-  },
-  trustCard: {
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
-    borderRadius: 12,
-    padding: 18,
-    gap: 12,
-  },
-  trustHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  trustTitle: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#065F46",
-  },
-  trustItems: {
-    gap: 10,
-  },
-  trustItem: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    gap: 10,
-  },
-  trustDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: "#10B981",
-    marginTop: 6,
-  },
-  trustText: {
-    fontSize: 12,
-    color: "#475569",
-    lineHeight: 18,
-    flex: 1,
-  },
-  dividerRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginVertical: 18,
-    gap: 12,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: "#E2E8F0",
-  },
-  dividerText: {
+    color: "#f2f1ee",
     fontSize: 11,
     fontWeight: "700",
-    color: "#94A3B8",
     letterSpacing: 0.8,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
-  adminCard: {
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1.5,
-    borderColor: "#BAE6FD",
-    borderRadius: 14,
-    padding: 16,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 14,
-    shadowColor: "#0284C7",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.06,
-    shadowRadius: 6,
-    elevation: 2,
-  },
-  adminIconBadge: {
-    width: 42,
-    height: 42,
-    borderRadius: 10,
-    backgroundColor: "#F0F9FF",
+  adminHintCard: {
+    backgroundColor: "#ffffff",
     borderWidth: 1,
-    borderColor: "#E0F2FE",
-    alignItems: "center",
-    justifyContent: "center",
+    borderColor: "#e5e7eb",
+    borderRadius: 0,
+    padding: 16,
+    gap: 6,
+    elevation: 0,
+    shadowOpacity: 0,
   },
-  adminCardTitle: {
-    fontSize: 14,
+  adminHintTag: {
+    fontSize: 10,
     fontWeight: "700",
-    color: "#0369A1",
-    letterSpacing: -0.2,
+    color: "#142748",
+    letterSpacing: 0.8,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
-  adminCardSubtitle: {
+  adminHintText: {
     fontSize: 12,
-    color: "#64748B",
-    lineHeight: 16,
+    color: "#52525b",
+    lineHeight: 18,
   },
 });

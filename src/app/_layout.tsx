@@ -9,6 +9,8 @@ import { requestAllAppPermissions } from '../services/permissionService';
 
 SplashScreen.preventAutoHideAsync();
 
+import { StatusBar } from 'expo-status-bar';
+
 function RootNavigator() {
   const { isLoading } = useAuth();
 
@@ -27,18 +29,21 @@ function RootNavigator() {
   }
 
   return (
-    <Stack
-      screenOptions={{
-        headerShown: false,
-        animation: 'fade',
-        contentStyle: { backgroundColor: '#F8FAFC' },
-      }}
-    >
-      <Stack.Screen name="index" />
-      <Stack.Screen name="login" options={{ gestureEnabled: false }} />
-      <Stack.Screen name="onboarding" options={{ gestureEnabled: false }} />
-      <Stack.Screen name="calibrate" />
-    </Stack>
+    <>
+      <StatusBar style="dark" />
+      <Stack
+        screenOptions={{
+          headerShown: false,
+          animation: 'fade',
+          contentStyle: { backgroundColor: '#f2f1ee' },
+        }}
+      >
+        <Stack.Screen name="index" />
+        <Stack.Screen name="login" options={{ gestureEnabled: false }} />
+        <Stack.Screen name="onboarding" options={{ gestureEnabled: false }} />
+        <Stack.Screen name="calibrate" />
+      </Stack>
+    </>
   );
 }
 

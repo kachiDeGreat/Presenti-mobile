@@ -9,18 +9,29 @@ import { Platform } from 'react-native';
 
 export const Colors = {
   light: {
-    text: '#000000',
-    background: '#ffffff',
-    backgroundElement: '#F0F0F3',
-    backgroundSelected: '#E0E1E6',
-    textSecondary: '#60646C',
+    text: '#142748',
+    background: '#f2f1ee',
+    backgroundElement: '#ffffff',
+    backgroundSelected: '#e5e7eb',
+    textSecondary: '#52525b',
+    border: '#e5e7eb',
+    primary: '#142748',
+    accent: '#2d81ff',
+    error: '#d92d20',
+    surface: '#ffffff',
   },
   dark: {
-    text: '#ffffff',
-    background: '#000000',
-    backgroundElement: '#212225',
-    backgroundSelected: '#2E3135',
-    textSecondary: '#B0B4BA',
+    // ArtCraft strictly specifies Light theme only; provide fallback matching high contrast
+    text: '#142748',
+    background: '#f2f1ee',
+    backgroundElement: '#ffffff',
+    backgroundSelected: '#e5e7eb',
+    textSecondary: '#52525b',
+    border: '#e5e7eb',
+    primary: '#142748',
+    accent: '#2d81ff',
+    error: '#d92d20',
+    surface: '#ffffff',
   },
 } as const;
 
@@ -28,28 +39,58 @@ export type ThemeColor = keyof typeof Colors.light & keyof typeof Colors.dark;
 
 export const Fonts = Platform.select({
   ios: {
-    /** iOS `UIFontDescriptorSystemDesignDefault` */
-    sans: 'system-ui',
-    /** iOS `UIFontDescriptorSystemDesignSerif` */
+    sans: 'System',
+    display: 'System',
     serif: 'ui-serif',
-    /** iOS `UIFontDescriptorSystemDesignRounded` */
     rounded: 'ui-rounded',
-    /** iOS `UIFontDescriptorSystemDesignMonospaced` */
     mono: 'ui-monospace',
+  },
+  android: {
+    sans: 'sans-serif',
+    display: 'sans-serif-medium',
+    serif: 'serif',
+    rounded: 'normal',
+    mono: 'monospace',
   },
   default: {
     sans: 'normal',
+    display: 'normal',
     serif: 'serif',
     rounded: 'normal',
     mono: 'monospace',
   },
   web: {
-    sans: 'var(--font-display)',
+    sans: 'var(--font-sans)',
+    display: 'var(--font-display)',
     serif: 'var(--font-serif)',
     rounded: 'var(--font-rounded)',
     mono: 'var(--font-mono)',
   },
 });
+
+export const ArtCraftTokens = {
+  colors: {
+    primary: '#142748',
+    secondary: '#2d81ff',
+    tertiary: '#f2f1ee',
+    neutral: '#e5e7eb',
+    surface: '#ffffff',
+    surfaceAlt: '#f2f1ee',
+    background: '#f2f1ee',
+    text: '#142748',
+    textMuted: '#52525b',
+    border: '#e5e7eb',
+    borderSecondary: 'rgba(20, 39, 72, 0.4)',
+    accent: '#2d81ff',
+    error: '#d92d20',
+    success: '#059669',
+  },
+  radius: {
+    none: 0,
+    sm: 4,
+    md: 8,
+  },
+};
 
 export const Spacing = {
   half: 2,

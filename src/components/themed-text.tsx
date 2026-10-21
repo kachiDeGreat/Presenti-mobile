@@ -59,15 +59,17 @@ const styles = StyleSheet.create({
   link: {
     lineHeight: 30,
     fontSize: 14,
+    color: '#142748',
   },
   linkPrimary: {
     lineHeight: 30,
     fontSize: 14,
-    color: '#3c87f7',
+    color: '#2d81ff',
   },
   code: {
-    fontFamily: Fonts.mono,
-    fontWeight: Platform.select({ android: 700 }) ?? 500,
-    fontSize: 12,
+    fontFamily: Fonts?.mono || 'monospace',
+    fontWeight: '700',
+    fontSize: 11,
+    letterSpacing: 0.5,
   },
 });

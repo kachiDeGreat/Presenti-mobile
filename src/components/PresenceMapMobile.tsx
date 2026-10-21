@@ -37,25 +37,27 @@ export const PresenceMapMobile: React.FC<PresenceMapMobileProps> = ({
       width: 100%;
       margin: 0;
       padding: 0;
-      background: #0F172A;
+      background: #142748;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
     .leaflet-control-zoom {
-      border: none !important;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important;
+      border: 1px solid #e5e7eb !important;
+      border-radius: 0 !important;
+      box-shadow: none !important;
     }
     .leaflet-bar a {
-      background-color: #1E293B !important;
-      color: #F8FAFC !important;
-      border-color: #334155 !important;
+      background-color: #142748 !important;
+      color: #f2f1ee !important;
+      border-color: rgba(255, 255, 255, 0.2) !important;
+      border-radius: 0 !important;
     }
     .beacon-pulse {
-      width: 22px;
-      height: 22px;
-      background: #0284C7;
-      border: 3px solid #FFFFFF;
+      width: 20px;
+      height: 20px;
+      background: #142748;
+      border: 3px solid #ffffff;
       border-radius: 50%;
-      box-shadow: 0 0 14px rgba(2, 132, 199, 0.8);
+      box-shadow: 0 0 12px rgba(20, 39, 72, 0.8);
       cursor: grab;
     }
     .beacon-pulse:active {
@@ -66,15 +68,17 @@ export const PresenceMapMobile: React.FC<PresenceMapMobileProps> = ({
       top: 12px;
       right: 12px;
       z-index: 1000;
-      background: rgba(15, 23, 42, 0.85);
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      color: #38BDF8;
-      padding: 6px 12px;
-      border-radius: 20px;
-      font-size: 11px;
+      background: #142748;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      color: #f2f1ee;
+      padding: 6px 10px;
+      border-radius: 0;
+      font-size: 10px;
       font-weight: 700;
+      font-family: ui-monospace, monospace;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
       cursor: pointer;
-      backdrop-filter: blur(4px);
     }
   </style>
 </head>
@@ -132,10 +136,10 @@ export const PresenceMapMobile: React.FC<PresenceMapMobileProps> = ({
 
     var circle = L.circle([currentLat, currentLng], {
       radius: currentRadius,
-      color: '#38BDF8',
+      color: '#142748',
       weight: 2,
-      fillColor: '#0284C7',
-      fillOpacity: 0.22,
+      fillColor: '#142748',
+      fillOpacity: 0.15,
       dashArray: '4, 6'
     }).addTo(map);
 
@@ -208,7 +212,7 @@ export const PresenceMapMobile: React.FC<PresenceMapMobileProps> = ({
         <iframe
           title="Presence Map"
           srcDoc={mapHtml}
-          style={{ width: '100%', height: '100%', border: 'none', borderRadius: 12 }}
+          style={{ width: '100%', height: '100%', border: 'none', borderRadius: 0 }}
         />
       </View>
     );
@@ -229,7 +233,7 @@ export const PresenceMapMobile: React.FC<PresenceMapMobileProps> = ({
         startInLoadingState
         renderLoading={() => (
           <View style={styles.loadingContainer}>
-            <ActivityIndicator size="small" color="#38BDF8" />
+            <ActivityIndicator size="small" color="#142748" />
             <Text style={styles.loadingText}>Loading Satellite Map...</Text>
           </View>
         )}
@@ -241,11 +245,11 @@ export const PresenceMapMobile: React.FC<PresenceMapMobileProps> = ({
 const styles = StyleSheet.create({
   container: {
     width: '100%',
-    borderRadius: 14,
+    borderRadius: 0,
     overflow: 'hidden',
-    backgroundColor: '#0F172A',
+    backgroundColor: '#142748',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.12)',
+    borderColor: '#e5e7eb',
   },
   webView: {
     flex: 1,
@@ -253,13 +257,16 @@ const styles = StyleSheet.create({
   },
   loadingContainer: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: '#0F172A',
+    backgroundColor: '#ffffff',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
   },
   loadingText: {
-    color: '#94A3B8',
-    fontSize: 12,
+    color: '#52525b',
+    fontSize: 11,
+    fontFamily: Platform.OS === 'ios' ? 'ui-monospace' : 'monospace',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
 });
