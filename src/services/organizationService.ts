@@ -190,6 +190,7 @@ export async function getCachedMember(): Promise<ChurchMember | null> {
 // Security Check: Verify whether an email or UID is registered as an organization administrator on the web portal
 export async function checkIfUserIsAdmin(email?: string, uid?: string): Promise<boolean> {
   const cleanEmail = (email || '').trim().toLowerCase();
+  const rawEmail = (email || '').trim();
   if (!cleanEmail && !uid) return false;
 
   // 0. Instant local check: If cached organization or user on device already confirms admin role
@@ -216,6 +217,7 @@ export async function checkIfUserIsAdmin(email?: string, uid?: string): Promise<
         const o = JSON.parse(cachedOrgRaw);
         if (
           (cleanEmail && o.adminEmail && o.adminEmail.toLowerCase() === cleanEmail) ||
+          (rawEmail && o.adminEmail && o.adminEmail === rawEmail) ||
           (uid && Array.isArray(o.adminUids) && o.adminUids.includes(uid)) ||
           (uid && o.id === uid)
         ) {
@@ -225,103 +227,122 @@ export async function checkIfUserIsAdmin(email?: string, uid?: string): Promise<
     }
   } catch {}
 
-  // Function to execute Firestore queries with retry on transient network errors
+  // Function to execute Firestore queries to determine admin status
   const executeQuery = async (): Promise<boolean> => {
-    // 1. Direct O(1) read from account_roles registry
+    // 1. Check account_roles registry
     if (cleanEmail) {
-      const roleRef = doc(db, 'account_roles', cleanEmail);
-      const roleSnap = await getDoc(roleRef);
-      if (roleSnap.exists()) {
-        const data = roleSnap.data();
-        if (data.role === 'ADMIN') return true;
-        if (data.role === 'WORKER') return false;
-      }
+      try {
+        const roleRef = doc(db, 'account_roles', cleanEmail);
+        const roleSnap = await getDoc(roleRef);
+        if (roleSnap.exists()) {
+          const data = roleSnap.data();
+          if (data.role === 'ADMIN') return true;
+        }
+      } catch {}
     }
 
-    // 2. Query churches collection by adminEmail
+    // 2. Query churches collection by adminEmail (both lowercase and raw casing)
     if (cleanEmail) {
-      const qEmail = query(
-        collection(db, 'churches'),
-        where('adminEmail', '==', cleanEmail),
-        limit(1)
-      );
-      const snapEmail = await getDocs(qEmail);
-      if (!snapEmail.empty) {
-        try {
-          await setDoc(
-            doc(db, 'account_roles', cleanEmail),
-            {
-              email: cleanEmail,
-              role: 'ADMIN',
-              churchId: snapEmail.docs[0].id,
-              updatedAt: new Date().toISOString(),
-            },
-            { merge: true }
+      try {
+        const qEmail = query(
+          collection(db, 'churches'),
+          where('adminEmail', '==', cleanEmail),
+          limit(1)
+        );
+        const snapEmail = await getDocs(qEmail);
+        if (!snapEmail.empty) {
+          try {
+            await setDoc(
+              doc(db, 'account_roles', cleanEmail),
+              {
+                email: cleanEmail,
+                role: 'ADMIN',
+                churchId: snapEmail.docs[0].id,
+                updatedAt: new Date().toISOString(),
+              },
+              { merge: true }
+            );
+          } catch {}
+          return true;
+        }
+
+        if (rawEmail && rawEmail !== cleanEmail) {
+          const qRaw = query(
+            collection(db, 'churches'),
+            where('adminEmail', '==', rawEmail),
+            limit(1)
           );
-        } catch {}
-        return true;
+          const snapRaw = await getDocs(qRaw);
+          if (!snapRaw.empty) {
+            try {
+              await setDoc(
+                doc(db, 'account_roles', cleanEmail),
+                {
+                  email: cleanEmail,
+                  role: 'ADMIN',
+                  churchId: snapRaw.docs[0].id,
+                  updatedAt: new Date().toISOString(),
+                },
+                { merge: true }
+              );
+            } catch {}
+            return true;
+          }
+        }
+      } catch (err) {
+        console.warn('Error querying churches by adminEmail:', err);
       }
     }
 
     // 3. Query churches collection by adminUids
     if (uid) {
-      const qUids = query(
-        collection(db, 'churches'),
-        where('adminUids', 'array-contains', uid),
-        limit(1)
-      );
-      const snapUids = await getDocs(qUids);
-      if (!snapUids.empty) {
-        if (cleanEmail) {
-          try {
-            await setDoc(
-              doc(db, 'account_roles', cleanEmail),
-              {
-                email: cleanEmail,
-                role: 'ADMIN',
-                churchId: snapUids.docs[0].id,
-                updatedAt: new Date().toISOString(),
-              },
-              { merge: true }
-            );
-          } catch {}
-        }
-        return true;
-      }
-
-      // 4. Direct document check churches/{uid}
-      const directSnap = await getDoc(doc(db, 'churches', uid));
-      if (directSnap.exists()) {
-        if (cleanEmail) {
-          try {
-            await setDoc(
-              doc(db, 'account_roles', cleanEmail),
-              {
-                email: cleanEmail,
-                role: 'ADMIN',
-                churchId: uid,
-                updatedAt: new Date().toISOString(),
-              },
-              { merge: true }
-            );
-          } catch {}
-        }
-        return true;
-      }
-    }
-
-    if (cleanEmail) {
       try {
-        await setDoc(
-          doc(db, 'account_roles', cleanEmail),
-          {
-            email: cleanEmail,
-            role: 'WORKER',
-            updatedAt: new Date().toISOString(),
-          },
-          { merge: true }
+        const qUids = query(
+          collection(db, 'churches'),
+          where('adminUids', 'array-contains', uid),
+          limit(1)
         );
-      } catch {}
+        const snapUids = await getDocs(qUids);
+        if (!snapUids.empty) {
+          if (cleanEmail) {
+            try {
+              await setDoc(
+                doc(db, 'account_roles', cleanEmail),
+                {
+                  email: cleanEmail,
+                  role: 'ADMIN',
+                  churchId: snapUids.docs[0].id,
+                  updatedAt: new Date().toISOString(),
+                },
+                { merge: true }
+              );
+            } catch {}
+          }
+          return true;
+        }
+
+        // 4. Direct document check churches/{uid}
+        const directSnap = await getDoc(doc(db, 'churches', uid));
+        if (directSnap.exists()) {
+          if (cleanEmail) {
+            try {
+              await setDoc(
+                doc(db, 'account_roles', cleanEmail),
+                {
+                  email: cleanEmail,
+                  role: 'ADMIN',
+                  churchId: uid,
+                  updatedAt: new Date().toISOString(),
+                },
+                { merge: true }
+              );
+            } catch {}
+          }
+          return true;
+        }
+      } catch (err) {
+        console.warn('Error querying churches by uid/adminUids:', err);
+      }
     }
 
     return false;

@@ -22,6 +22,7 @@ import {
   requestAllAppPermissions,
   AppPermissionsStatus,
 } from "../services/permissionService";
+import { checkIfUserIsAdmin } from "../services/organizationService";
 
 export function formatOrgCode(raw: string, prev: string = ""): string {
   // If user deleted (backspace) and hit a hyphen
@@ -62,6 +63,7 @@ export default function OnboardingScreen() {
     isAdmin,
     pairOrganization,
     completeRegistration,
+    signOut,
   } = useAuth();
   const toast = useToast();
 
@@ -78,10 +80,28 @@ export default function OnboardingScreen() {
   const [permissions, setPermissions] = useState<AppPermissionsStatus | null>(null);
   const codeInputRef = React.useRef<TextInput>(null);
 
-  // Administrators route to calibration
+  // Administrators are strictly blocked from workforce onboarding on mobile
   useEffect(() => {
     if (isAdmin || user?.isAdmin) {
-      router.replace("/calibrate");
+      toast.error(
+        "Administrator accounts cannot be registered as workforce members on mobile."
+      );
+      signOut();
+      router.replace("/login");
+      return;
+    }
+
+    if (user?.email) {
+      const cleanEmail = user.email.trim().toLowerCase();
+      checkIfUserIsAdmin(cleanEmail, user.uid).then((isAdm) => {
+        if (isAdm) {
+          toast.error(
+            "Administrator accounts cannot be registered as workforce members on mobile."
+          );
+          signOut();
+          router.replace("/login");
+        }
+      });
     }
   }, [isAdmin, user]);
 

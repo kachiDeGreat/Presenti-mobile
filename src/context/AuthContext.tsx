@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
+import { GoogleSignin } from '@react-native-google-signin/google-signin';
 import * as FirebaseAuth from 'firebase/auth';
 import {
   collectionGroup,
@@ -158,17 +159,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setKnownAccounts(parsedAccounts);
 
         if (loadedUser) {
-          const isAdminUser = loadedUser.isAdmin === true;
-          setUser({ ...loadedUser, isAdmin: isAdminUser });
-          if (isAdminUser && !loadedOrg) {
-            getAdminOrganization(loadedUser.email, loadedUser.uid)
-              .then((adminOrg) => {
-                if (adminOrg) {
-                  setOrganization(adminOrg);
-                  AsyncStorage.setItem(STORAGE_KEY_ORG, JSON.stringify(adminOrg)).catch(() => {});
-                }
-              })
-              .catch(() => {});
+          const cleanEmail = (loadedUser.email || '').trim().toLowerCase();
+          const isAdminUser = loadedUser.isAdmin === true || (await checkIfUserIsAdmin(cleanEmail, loadedUser.uid));
+          if (isAdminUser) {
+            // Admin accounts are strictly forbidden from signing into the mobile app
+            await AsyncStorage.multiRemove([STORAGE_KEY_USER, STORAGE_KEY_MEMBER]);
+            setUser(null);
+            setMember(null);
+            try {
+              if (auth.currentUser) await FirebaseAuth.signOut(auth);
+              if (Platform.OS !== 'web') await GoogleSignin.signOut();
+            } catch {}
+          } else {
+            setUser({ ...loadedUser, isAdmin: false });
           }
         }
 
@@ -253,36 +256,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const handleUserAuthenticated = useCallback(
     async (authUser: MobileUser): Promise<AuthResult> => {
-      // 0. Workforce accounts do not perform slow blocking admin queries.
-      // If user was already marked as admin locally or in session, preserve it.
-      const isAdmin = authUser.isAdmin === true;
-      authUser.isAdmin = isAdmin;
+      const cleanEmail = (authUser.email || '').trim().toLowerCase();
+      const uid = authUser.uid;
 
+      // 0. STRICT SECURITY ENFORCEMENT:
+      // Administrator accounts can ONLY be used on the Web Admin Portal, NEVER on the mobile app.
+      const isAdmin = authUser.isAdmin === true || (await checkIfUserIsAdmin(cleanEmail, uid));
       if (isAdmin) {
-        let adminOrg = organization || (await getCachedOrganization());
-        if (!adminOrg) {
-          adminOrg = await getAdminOrganization(authUser.email, authUser.uid);
-        }
-        if (adminOrg) {
-          setOrganization(adminOrg);
-          await AsyncStorage.setItem(STORAGE_KEY_ORG, JSON.stringify(adminOrg)).catch(() => {});
-        }
-        await AsyncStorage.setItem(STORAGE_KEY_USER, JSON.stringify({ ...authUser, isAdmin: true })).catch(() => {});
-        setUser({ ...authUser, isAdmin: true });
+        try {
+          if (auth.currentUser) await FirebaseAuth.signOut(auth);
+          if (Platform.OS !== 'web') await GoogleSignin.signOut();
+        } catch {}
+        await AsyncStorage.multiRemove([STORAGE_KEY_USER, STORAGE_KEY_MEMBER]);
+        setUser(null);
         setMember(null);
-
-        setKnownAccounts((prev) => {
-          const filtered = prev.filter((a) => a.email.toLowerCase() !== authUser.email.toLowerCase());
-          const updated = [{ ...authUser, isAdmin: true }, ...filtered];
-          AsyncStorage.setItem(STORAGE_KEY_KNOWN_ACCOUNTS, JSON.stringify(updated)).catch(() => {});
-          return updated;
-        });
-
-        return {
-          user: { ...authUser, isAdmin: true },
-          organization: adminOrg,
-          member: null,
-        };
+        throw new Error(
+          `This account (${cleanEmail}) is registered as an Organization Administrator on the web portal. Administrator accounts cannot be signed into the mobile app. Please sign in with your workforce member account.`
+        );
       }
 
       // 1. Instant user session persistence
@@ -436,7 +426,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     const cleanEmail = (user?.email || '').trim().toLowerCase();
-    if (organization.adminEmail && cleanEmail && organization.adminEmail.toLowerCase() === cleanEmail) {
+    const isAdminAccount = user?.isAdmin || (await checkIfUserIsAdmin(cleanEmail, user?.uid));
+    if (
+      isAdminAccount ||
+      (organization.adminEmail && cleanEmail && organization.adminEmail.toLowerCase() === cleanEmail) ||
+      (organization.adminUids && user?.uid && organization.adminUids.includes(user.uid)) ||
+      (organization.id && user?.uid && organization.id === user.uid)
+    ) {
       throw new Error(
         `This account (${cleanEmail}) is registered as an organization administrator on the web portal and cannot be registered as a workforce member.`
       );
@@ -481,8 +477,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signOut = async () => {
     try {
-      if (Platform.OS === 'web' && auth.currentUser) {
+      if (auth.currentUser) {
         await FirebaseAuth.signOut(auth);
+      }
+      if (Platform.OS !== 'web') {
+        try {
+          await GoogleSignin.signOut();
+        } catch {}
       }
       await AsyncStorage.multiRemove([STORAGE_KEY_USER, STORAGE_KEY_MEMBER]);
       setUser(null);

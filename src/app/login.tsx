@@ -35,6 +35,7 @@ export default function LoginScreen() {
     isAdmin,
     signInWithGoogle,
     signInWithGoogleCredential,
+    signOut,
   } = useAuth();
   const toast = useToast();
 
@@ -42,7 +43,10 @@ export default function LoginScreen() {
 
   useEffect(() => {
     if (isAdmin || user?.isAdmin) {
-      router.replace("/calibrate" as any);
+      toast.error(
+        "Administrator accounts cannot be signed into the mobile app. Please use the Web Admin Portal."
+      );
+      signOut();
       return;
     }
     if (user && organization && member) {
@@ -64,8 +68,10 @@ export default function LoginScreen() {
 
   const navigateAfterAuth = (result: AuthResult) => {
     if (result.user?.isAdmin || isAdmin) {
-      toast.success(`Welcome Administrator, ${result.user.displayName}!`);
-      router.replace("/calibrate" as any);
+      toast.error(
+        "Administrator accounts cannot be signed into the mobile app. Please use the Web Admin Portal."
+      );
+      signOut();
       return;
     }
     if (result.organization && result.member) {
@@ -147,8 +153,11 @@ export default function LoginScreen() {
       if (err?.code !== "auth/popup-closed-by-user") {
         const msg = err?.message || "Failed to complete Google authentication.";
         toast.error(msg);
-        if (msg.includes("administrator on the web portal")) {
-          Alert.alert("Administrator Account", msg, [{ text: "Understood" }]);
+        if (
+          msg.toLowerCase().includes("administrator") ||
+          msg.toLowerCase().includes("admin portal")
+        ) {
+          Alert.alert("Administrator Account Restricted", msg, [{ text: "Understood" }]);
         }
       }
     } finally {
