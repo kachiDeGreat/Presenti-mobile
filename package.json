@@ -51,7 +51,9 @@
     "android": "ELECTRON_DISABLE_SANDBOX=1 expo start --android",
     "ios": "ELECTRON_DISABLE_SANDBOX=1 expo start --ios",
     "web": "ELECTRON_DISABLE_SANDBOX=1 expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "build:preview": "NODE_OPTIONS=--dns-result-order=ipv4first npx -y eas-cli build --platform android --profile preview",
+    "build:prod": "NODE_OPTIONS=--dns-result-order=ipv4first npx -y eas-cli build --platform android --profile production"
   },
   "private": true
 }
