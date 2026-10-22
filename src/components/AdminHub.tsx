@@ -11,11 +11,10 @@ import {
   Alert,
   Image,
   RefreshControl,
-  Share,
+  Vibration,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import { router } from "expo-router";
 import * as Location from "expo-location";
 import * as Clipboard from "expo-clipboard";
 import {
@@ -23,9 +22,6 @@ import {
   query,
   orderBy,
   onSnapshot,
-  doc,
-  updateDoc,
-  deleteDoc,
   writeBatch,
   getDocs,
 } from "firebase/firestore";
@@ -38,10 +34,16 @@ import {
   ScannedWifiNetwork,
 } from "../services/wifiScanService";
 import { updateOrganizationAnchors as updateAnchorsService } from "../services/organizationService";
-import type { ChurchMember, PolicySettings } from "../types";
+import { reverseGeocodeCoords } from "../services/geocodingService";
 
-const RADIUS_OPTIONS = [10, 20, 30, 50, 80, 100];
-const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const RADIUS_OPTIONS = [
+  { value: 10, label: "10m", desc: "Executive Room" },
+  { value: 20, label: "20m", desc: "Standard Suite" },
+  { value: 30, label: "30m", desc: "Main Hall / Venue" },
+  { value: 50, label: "50m", desc: "Medium Compound" },
+  { value: 80, label: "80m", desc: "Large Grounds" },
+  { value: 100, label: "100m", desc: "Open Campus" },
+];
 
 interface LiveAttendanceRecord {
   id: string;
@@ -57,12 +59,11 @@ interface LiveAttendanceRecord {
 }
 
 export const AdminHub: React.FC = () => {
-  const { user, organization, refreshOrganization, signOut } = useAuth();
+  const { organization, refreshOrganization, signOut } = useAuth();
   const toast = useToast();
 
-  const [activeTab, setActiveTab] = useState<
-    "feed" | "anchors" | "roster" | "policy"
-  >("feed");
+  // Navigation: Only 2 core tabs on mobile
+  const [activeTab, setActiveTab] = useState<"feed" | "anchors">("feed");
   const [refreshing, setRefreshing] = useState(false);
 
   // ---------------------------------------------------------------------------
@@ -124,6 +125,16 @@ export const AdminHub: React.FC = () => {
     return Math.round((onTimeCount / todayRecords.length) * 100);
   }, [todayRecords, onTimeCount]);
 
+  const departmentList = useMemo(() => {
+    const set = new Set<string>();
+    todayRecords.forEach((r) => {
+      if (r.department && r.department.trim()) {
+        set.add(r.department.trim());
+      }
+    });
+    return ["ALL", ...Array.from(set)];
+  }, [todayRecords]);
+
   const filteredFeedRecords = useMemo(() => {
     return todayRecords.filter((rec) => {
       const matchSearch =
@@ -140,12 +151,12 @@ export const AdminHub: React.FC = () => {
     if (!organization?.id || isClearingFeed) return;
 
     Alert.alert(
-      "Clear Attendance Feed",
-      "Are you sure you want to permanently clear all attendance records from the cloud database? This cannot be undone.",
+      "Clear Today's Attendance Feed",
+      "Are you sure you want to permanently clear today's attendance records from the cloud database? This action cannot be undone.",
       [
         { text: "Cancel", style: "cancel" },
         {
-          text: "Clear Database",
+          text: "Clear Cloud Records",
           style: "destructive",
           onPress: async () => {
             setIsClearingFeed(true);
@@ -181,12 +192,12 @@ export const AdminHub: React.FC = () => {
   };
 
   // ---------------------------------------------------------------------------
-  // TAB 2: HARDWARE PRESENCE ANCHORS & CALIBRATION
+  // TAB 2: HARDWARE PRESENCE ANCHORS & DIRECT MOBILE CALIBRATION
   // ---------------------------------------------------------------------------
-  const [calMode, setCalMode] = useState<"HYBRID" | "GEOFENCE_ONLY">(
-    organization?.beaconConfig?.verificationMode === "GEOFENCE_ONLY"
-      ? "GEOFENCE_ONLY"
-      : "HYBRID"
+  const [calMode, setCalMode] = useState<"GEOFENCE_ONLY" | "HYBRID">(
+    organization?.beaconConfig?.verificationMode === "HYBRID"
+      ? "HYBRID"
+      : "GEOFENCE_ONLY"
   );
   const [ssidHint, setSsidHint] = useState<string>(
     organization?.beaconConfig?.ssidHint || ""
@@ -201,8 +212,11 @@ export const AdminHub: React.FC = () => {
     organization?.geoFallback?.longitude || 8.3417
   );
   const [radiusMeters, setRadiusMeters] = useState<number>(
-    organization?.geoFallback?.radiusMeters || 10
+    organization?.geoFallback?.radiusMeters || 20
   );
+  const [locationAddress, setLocationAddress] = useState<string>("");
+  const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
+
   const [availableNetworks, setAvailableNetworks] = useState<
     ScannedWifiNetwork[]
   >([]);
@@ -233,6 +247,21 @@ export const AdminHub: React.FC = () => {
       }
     }
   }, [organization]);
+
+  // Reverse geocode venue label
+  useEffect(() => {
+    if (latitude && longitude && latitude !== 0 && longitude !== 0) {
+      reverseGeocodeCoords(latitude, longitude)
+        .then((addr) => {
+          if (addr?.displayName) {
+            setLocationAddress(addr.displayName);
+          } else if (addr?.name) {
+            setLocationAddress(addr.name);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [latitude, longitude]);
 
   const isCalibrated = Boolean(
     organization?.isCalibrated ||
@@ -280,10 +309,13 @@ export const AdminHub: React.FC = () => {
       });
       setLatitude(pos.coords.latitude);
       setLongitude(pos.coords.longitude);
+      setGpsAccuracy(Math.round(pos.coords.accuracy || 5));
+      Vibration.vibrate(50);
       toast.success(
-        `High-precision GPS pinpointed (±${Math.round(pos.coords.accuracy || 5)}m accuracy).`
+        `GPS Pinpointed: ±${Math.round(pos.coords.accuracy || 5)}m high-accuracy fix.`
       );
     } catch (err: any) {
+      console.warn("GPS acquire error:", err);
       toast.error("Could not capture GPS location from phone sensors.");
     } finally {
       setIsLocatingGps(false);
@@ -294,11 +326,11 @@ export const AdminHub: React.FC = () => {
     if (!organization?.id || isSavingAnchors) return;
 
     if (calMode === "HYBRID" && !targetBssid.trim()) {
-      toast.warn("Please enter or scan an office Wi-Fi router BSSID MAC address.");
+      toast.warn("Please scan or enter an office Wi-Fi router BSSID MAC address.");
       return;
     }
     if (latitude === 0 && longitude === 0) {
-      toast.warn("Please sample on-site GPS coordinates.");
+      toast.warn("Please pinpoint on-site GPS coordinates first.");
       return;
     }
 
@@ -313,6 +345,7 @@ export const AdminHub: React.FC = () => {
         verificationMode: calMode,
       });
       await refreshOrganization();
+      Vibration.vibrate([0, 80, 40, 80]);
       toast.success(
         "Presence Anchors calibrated & synced to cloud! Web admin portal updated."
       );
@@ -324,228 +357,10 @@ export const AdminHub: React.FC = () => {
     }
   };
 
-  // ---------------------------------------------------------------------------
-  // TAB 3: WORKFORCE ROSTER & MEMBER MANAGEMENT
-  // ---------------------------------------------------------------------------
-  const [members, setMembers] = useState<ChurchMember[]>([]);
-  const [isMembersLoading, setIsMembersLoading] = useState(true);
-  const [rosterSearch, setRosterSearch] = useState("");
-  const [rosterDeptFilter, setRosterDeptFilter] = useState("ALL");
-  const [unbindingMemberId, setUnbindingMemberId] = useState<string | null>(
-    null
-  );
-
-  useEffect(() => {
-    if (!organization?.id || !db) return;
-    setIsMembersLoading(true);
-
-    try {
-      const memRef = collection(db, "churches", organization.id, "members");
-      const q = query(memRef, orderBy("registeredAt", "desc"));
-      const unsubscribe = onSnapshot(
-        q,
-        (snap) => {
-          const list: ChurchMember[] = snap.docs.map((d) => ({
-            id: d.id,
-            ...(d.data() as any),
-          }));
-          setMembers(list);
-          setIsMembersLoading(false);
-        },
-        (err) => {
-          console.warn("Members stream error:", err);
-          setIsMembersLoading(false);
-        }
-      );
-      return () => unsubscribe();
-    } catch (e) {
-      console.warn("Error subscribing to members:", e);
-      setIsMembersLoading(false);
-    }
-  }, [organization?.id]);
-
-  const filteredMembers = useMemo(() => {
-    return members.filter((m) => {
-      const matchSearch =
-        !rosterSearch.trim() ||
-        m.fullName?.toLowerCase().includes(rosterSearch.toLowerCase()) ||
-        m.email?.toLowerCase().includes(rosterSearch.toLowerCase()) ||
-        m.phone?.includes(rosterSearch);
-      const matchDept =
-        rosterDeptFilter === "ALL" || m.department === rosterDeptFilter;
-      return matchSearch && matchDept;
-    });
-  }, [members, rosterSearch, rosterDeptFilter]);
-
-  const handleUnbindMemberDevice = (member: ChurchMember) => {
-    if (!organization?.id || unbindingMemberId) return;
-
-    Alert.alert(
-      "Unbind Worker Device",
-      `Are you sure you want to release the device hardware lock for ${member.fullName}? They will be able to enroll on a new phone.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Unbind Device",
-          style: "default",
-          onPress: async () => {
-            setUnbindingMemberId(member.id);
-            try {
-              const docRef = doc(
-                db,
-                "churches",
-                organization.id,
-                "members",
-                member.id
-              );
-              await updateDoc(docRef, { boundDeviceId: "UNBOUND" });
-              toast.success(`Device lock released for ${member.fullName}.`);
-            } catch (err: any) {
-              console.error("Unbind error:", err);
-              toast.error("Failed to release device lock.");
-            } finally {
-              setUnbindingMemberId(null);
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  const handleDeleteMember = (member: ChurchMember) => {
-    if (!organization?.id) return;
-
-    Alert.alert(
-      "Remove Member",
-      `Are you sure you want to remove ${member.fullName} from this organization? Their attendance history will remain archived.`,
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Remove",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              const docRef = doc(
-                db,
-                "churches",
-                organization.id,
-                "members",
-                member.id
-              );
-              await deleteDoc(docRef);
-              toast.success(`Removed ${member.fullName} from roster.`);
-            } catch (err: any) {
-              console.error("Delete member error:", err);
-              toast.error("Failed to remove member.");
-            }
-          },
-        },
-      ]
-    );
-  };
-
-  // ---------------------------------------------------------------------------
-  // TAB 4: POLICY & SETTINGS
-  // ---------------------------------------------------------------------------
-  const [serviceDays, setServiceDays] = useState<(number | string)[]>(
-    organization?.policySettings?.serviceDays || [1, 2, 3, 4, 5]
-  );
-  const [arrivalCutoff, setArrivalCutoff] = useState<string>(
-    organization?.policySettings?.arrivalCutoff || "07:00"
-  );
-  const [lateTolerance, setLateTolerance] = useState<string>(
-    organization?.policySettings?.lateTolerance || "07:30"
-  );
-  const [allowLateSignIn, setAllowLateSignIn] = useState<boolean>(
-    organization?.policySettings?.allowLateSignIn ?? true
-  );
-  const [enableSignOut, setEnableSignOut] = useState<boolean>(
-    organization?.policySettings?.enableSignOut ?? false
-  );
-  const [signOutTime, setSignOutTime] = useState<string>(
-    organization?.policySettings?.signOutTime || "17:00"
-  );
-  const [isSavingPolicy, setIsSavingPolicy] = useState(false);
-
-  const toggleServiceDay = (dayIndex: number) => {
-    setServiceDays((prev) => {
-      if (prev.includes(dayIndex)) {
-        if (prev.length === 1) {
-          toast.warn("At least one active service day is required.");
-          return prev;
-        }
-        return prev.filter((d) => d !== dayIndex);
-      } else {
-        return [...prev, dayIndex].sort();
-      }
-    });
-  };
-
-  const handleSavePolicy = async () => {
-    if (!organization?.id || isSavingPolicy) return;
-    setIsSavingPolicy(true);
-
-    try {
-      const updatedPolicy: PolicySettings = {
-        ...(organization.policySettings || {}),
-        serviceDays,
-        arrivalCutoff: arrivalCutoff.trim(),
-        lateTolerance: lateTolerance.trim(),
-        allowLateSignIn,
-        enableSignOut,
-        signOutTime: signOutTime.trim(),
-      };
-
-      const orgRef = doc(db, "churches", organization.id);
-      await updateDoc(orgRef, { policySettings: updatedPolicy });
-      await refreshOrganization();
-      toast.success("Organization attendance policy updated successfully.");
-    } catch (err: any) {
-      console.error("Save policy error:", err);
-      toast.error("Failed to update policy settings.");
-    } finally {
-      setIsSavingPolicy(false);
-    }
-  };
-
-  const handleResetWorkspace = () => {
-    if (!organization?.id) return;
-
-    Alert.alert(
-      "DANGER: Wipe Organization Workspace",
-      "This action will permanently erase this entire organization workspace, including all anchors, registered workforce profiles, and attendance feeds. Type confirmation cannot be undone.",
-      [
-        { text: "Cancel", style: "cancel" },
-        {
-          text: "Wipe Workspace",
-          style: "destructive",
-          onPress: async () => {
-            try {
-              await deleteDoc(doc(db, "churches", organization.id));
-              if (user?.email) {
-                await deleteDoc(
-                  doc(db, "account_roles", user.email.trim().toLowerCase())
-                ).catch(() => {});
-              }
-              toast.info("Organization workspace purged.");
-              await signOut();
-            } catch (err: any) {
-              console.error("Purge error:", err);
-              toast.error("Failed to wipe workspace.");
-            }
-          },
-        },
-      ]
-    );
-  };
-
   const copyOrgCode = async () => {
-    if (organization?.churchCode) {
-      await Clipboard.setStringAsync(organization.churchCode);
-      toast.success(
-        `Copied Organization Code "${organization.churchCode}" to clipboard!`
-      );
-    }
+    if (!organization?.churchCode) return;
+    await Clipboard.setStringAsync(organization.churchCode);
+    toast.success("Organization code copied to clipboard!");
   };
 
   const handlePullRefresh = async () => {
@@ -554,59 +369,123 @@ export const AdminHub: React.FC = () => {
     setRefreshing(false);
   };
 
-  // ---------------------------------------------------------------------------
-  // RENDER
-  // ---------------------------------------------------------------------------
   return (
     <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
-      {/* Top Admin Header */}
+      {/* Sleek Modern Header */}
       <View style={styles.headerBar}>
         <View style={styles.headerLeft}>
-          <View style={styles.adminBadgeRow}>
-            <View style={styles.adminPill}>
-              <View style={styles.greenPulse} />
-              <Text style={styles.adminPillText}>ADMIN COMMAND</Text>
-            </View>
+          <View style={styles.orgBadgeRow}>
+            <View style={styles.livePulseDot} />
+            <Text style={styles.headerSubtitle}>ADMIN COMMAND CENTER</Text>
             <TouchableOpacity
               onPress={copyOrgCode}
               style={styles.orgCodePill}
               activeOpacity={0.7}
             >
-              <Text style={styles.orgCodeLabel}>CODE:</Text>
               <Text style={styles.orgCodeText}>
-                {organization?.churchCode || "NO-CODE"}
+                {organization?.churchCode || "ORG"}
               </Text>
-              <Ionicons name="copy-outline" size={11} color="#2563EB" />
+              <Ionicons name="copy-outline" size={11} color="#64748B" />
             </TouchableOpacity>
           </View>
           <Text style={styles.headerOrgName} numberOfLines={1}>
             {organization?.churchName || "Organization Workspace"}
           </Text>
-          <Text style={styles.headerBranchName} numberOfLines={1}>
-            {organization?.branchName || "Main Campus"}
-          </Text>
         </View>
 
-        <View style={styles.headerRight}>
+        <TouchableOpacity
+          style={styles.signOutIconButton}
+          activeOpacity={0.8}
+          onPress={() => {
+            Alert.alert("Sign Out", "Sign out of Admin Command Center?", [
+              { text: "Cancel", style: "cancel" },
+              {
+                text: "Sign Out",
+                style: "destructive",
+                onPress: () => signOut(),
+              },
+            ]);
+          }}
+        >
+          <Ionicons name="log-out-outline" size={20} color="#DC2626" />
+        </TouchableOpacity>
+      </View>
+
+      {/* Segmented Tab Control */}
+      <View style={styles.segmentedContainer}>
+        <View style={styles.segmentedControl}>
           <TouchableOpacity
-            style={styles.signOutBtn}
-            onPress={() => {
-              Alert.alert("Sign Out", "Sign out of Admin Command Center?", [
-                { text: "Cancel", style: "cancel" },
-                {
-                  text: "Sign Out",
-                  style: "destructive",
-                  onPress: () => signOut(),
-                },
-              ]);
-            }}
+            style={[
+              styles.segmentItem,
+              activeTab === "feed" && styles.segmentItemActive,
+            ]}
+            onPress={() => setActiveTab("feed")}
+            activeOpacity={0.8}
           >
-            <Ionicons name="log-out-outline" size={18} color="#ef4444" />
+            <Ionicons
+              name={activeTab === "feed" ? "pulse" : "pulse-outline"}
+              size={16}
+              color={activeTab === "feed" ? "#0F172A" : "#64748B"}
+            />
+            <Text
+              style={[
+                styles.segmentText,
+                activeTab === "feed" && styles.segmentTextActive,
+              ]}
+            >
+              Live Attendance
+            </Text>
+            {todayRecords.length > 0 && (
+              <View
+                style={[
+                  styles.tabBadge,
+                  activeTab === "feed" && styles.tabBadgeActive,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.tabBadgeText,
+                    activeTab === "feed" && styles.tabBadgeTextActive,
+                  ]}
+                >
+                  {todayRecords.length}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.segmentItem,
+              activeTab === "anchors" && styles.segmentItemActive,
+            ]}
+            onPress={() => setActiveTab("anchors")}
+            activeOpacity={0.8}
+          >
+            <Ionicons
+              name={activeTab === "anchors" ? "radio" : "radio-outline"}
+              size={16}
+              color={activeTab === "anchors" ? "#0F172A" : "#64748B"}
+            />
+            <Text
+              style={[
+                styles.segmentText,
+                activeTab === "anchors" && styles.segmentTextActive,
+              ]}
+            >
+              Presence Anchors
+            </Text>
+            <View
+              style={[
+                styles.statusDotSmall,
+                { backgroundColor: isCalibrated ? "#10B981" : "#F59E0B" },
+              ]}
+            />
           </TouchableOpacity>
         </View>
       </View>
 
-      {/* Main Tab Content */}
+      {/* Main Content Area */}
       <ScrollView
         style={styles.contentScroll}
         contentContainerStyle={styles.contentInner}
@@ -620,121 +499,103 @@ export const AdminHub: React.FC = () => {
         }
       >
         {/* ================================================================= */}
-        {/* TAB 1: LIVE ATTENDANCE FEED */}
+        {/* TAB 1: LIVE ATTENDANCE STREAM */}
         {/* ================================================================= */}
         {activeTab === "feed" && (
           <View style={styles.tabSection}>
-            {/* Metrics Grid */}
-            <View style={styles.metricsGrid}>
-              <View style={styles.metricCard}>
-                <Text style={styles.metricLabel}>CHECKED IN TODAY</Text>
-                <Text style={styles.metricValue}>{todayRecords.length}</Text>
-                <Text style={styles.metricSub}>Active Live Stream</Text>
+            {/* Quick KPI Overview */}
+            <View style={styles.kpiRow}>
+              <View style={styles.kpiCard}>
+                <Text style={styles.kpiLabel}>CHECKED IN</Text>
+                <Text style={styles.kpiValue}>{todayRecords.length}</Text>
+                <Text style={styles.kpiSub}>Today's punches</Text>
               </View>
 
-              <View style={styles.metricCard}>
-                <Text style={styles.metricLabel}>PUNCTUALITY</Text>
+              <View style={styles.kpiCard}>
+                <Text style={styles.kpiLabel}>ON TIME</Text>
+                <Text style={[styles.kpiValue, { color: "#059669" }]}>
+                  {onTimeCount}
+                </Text>
+                <Text style={styles.kpiSub}>
+                  {todayRecords.length > 0 ? `${punctualityRate}% rate` : "100% rate"}
+                </Text>
+              </View>
+
+              <View style={styles.kpiCard}>
+                <Text style={styles.kpiLabel}>LATE</Text>
                 <Text
                   style={[
-                    styles.metricValue,
-                    {
-                      color:
-                        punctualityRate >= 80
-                          ? "#059669"
-                          : punctualityRate >= 50
-                          ? "#d97706"
-                          : "#dc2626",
-                    },
+                    styles.kpiValue,
+                    { color: lateCount > 0 ? "#D97706" : "#64748B" },
                   ]}
                 >
-                  {punctualityRate}%
+                  {lateCount}
                 </Text>
-                <Text style={styles.metricSub}>
-                  {onTimeCount} on-time · {lateCount} late
-                </Text>
+                <Text style={styles.kpiSub}>Flagged records</Text>
               </View>
             </View>
 
-            {/* Feed Controls */}
-            <View style={styles.feedControlsRow}>
-              <View style={styles.searchInputWrapper}>
-                <Ionicons
-                  name="search-outline"
-                  size={16}
-                  color="#94a3b8"
-                  style={styles.searchIcon}
-                />
+            {/* Search & Actions Bar */}
+            <View style={styles.searchBarRow}>
+              <View style={styles.searchBox}>
+                <Ionicons name="search-outline" size={16} color="#94A3B8" />
                 <TextInput
                   style={styles.searchInput}
-                  placeholder="Search team member..."
-                  placeholderTextColor="#94a3b8"
+                  placeholder="Search worker or department..."
+                  placeholderTextColor="#94A3B8"
                   value={feedSearch}
                   onChangeText={setFeedSearch}
+                  clearButtonMode="while-editing"
                 />
+                {feedSearch.length > 0 && (
+                  <TouchableOpacity onPress={() => setFeedSearch("")}>
+                    <Ionicons name="close-circle" size={16} color="#94A3B8" />
+                  </TouchableOpacity>
+                )}
               </View>
 
-              <TouchableOpacity
-                style={styles.clearFeedBtn}
-                onPress={handleClearFeed}
-                disabled={isClearingFeed || todayRecords.length === 0}
-              >
-                {isClearingFeed ? (
-                  <ActivityIndicator size="small" color="#dc2626" />
-                ) : (
-                  <>
-                    <Ionicons name="trash-outline" size={14} color="#dc2626" />
-                    <Text style={styles.clearFeedText}>CLEAR</Text>
-                  </>
-                )}
-              </TouchableOpacity>
+              {todayRecords.length > 0 && (
+                <TouchableOpacity
+                  style={styles.clearFeedButton}
+                  onPress={handleClearFeed}
+                  disabled={isClearingFeed}
+                  activeOpacity={0.8}
+                >
+                  {isClearingFeed ? (
+                    <ActivityIndicator size="small" color="#DC2626" />
+                  ) : (
+                    <Ionicons name="trash-outline" size={16} color="#DC2626" />
+                  )}
+                </TouchableOpacity>
+              )}
             </View>
 
-            {/* Department Filter Chips */}
-            {organization?.departments && organization.departments.length > 0 && (
+            {/* Department Filter Pills */}
+            {departmentList.length > 2 && (
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
-                style={styles.deptScroller}
-                contentContainerStyle={styles.deptScrollerContent}
+                contentContainerStyle={styles.filterScroll}
               >
-                <TouchableOpacity
-                  style={[
-                    styles.deptChip,
-                    selectedDeptFilter === "ALL" && styles.deptChipActive,
-                  ]}
-                  onPress={() => setSelectedDeptFilter("ALL")}
-                >
-                  <Text
-                    style={[
-                      styles.deptChipText,
-                      selectedDeptFilter === "ALL" && styles.deptChipTextActive,
-                    ]}
-                  >
-                    ALL DEPARTMENTS ({todayRecords.length})
-                  </Text>
-                </TouchableOpacity>
-
-                {organization.departments.map((dept) => {
-                  const count = todayRecords.filter(
-                    (r) => r.department === dept
-                  ).length;
-                  const isSelected = selectedDeptFilter === dept;
+                {departmentList.map((dept) => {
+                  const isActive = selectedDeptFilter === dept;
                   return (
                     <TouchableOpacity
                       key={dept}
                       style={[
-                        styles.deptChip,
-                        isSelected && styles.deptChipActive,
+                        styles.deptFilterPill,
+                        isActive && styles.deptFilterPillActive,
                       ]}
                       onPress={() => setSelectedDeptFilter(dept)}
+                      activeOpacity={0.7}
                     >
                       <Text
                         style={[
-                          styles.deptChipText,
-                          isSelected && styles.deptChipTextActive,
+                          styles.deptFilterText,
+                          isActive && styles.deptFilterTextActive,
                         ]}
                       >
-                        {dept} ({count})
+                        {dept}
                       </Text>
                     </TouchableOpacity>
                   );
@@ -742,102 +603,116 @@ export const AdminHub: React.FC = () => {
               </ScrollView>
             )}
 
-            {/* Feed Stream List */}
+            {/* Feed List */}
             {isAttendanceLoading ? (
-              <View style={styles.emptyContainer}>
-                <ActivityIndicator size="large" color="#2563EB" />
-                <Text style={styles.emptySub}>Connecting to live feed...</Text>
+              <View style={styles.loadingBox}>
+                <ActivityIndicator size="small" color="#2563EB" />
+                <Text style={styles.loadingText}>Syncing live attendance feed...</Text>
               </View>
             ) : filteredFeedRecords.length === 0 ? (
-              <View style={styles.emptyContainer}>
-                <Ionicons name="radio-outline" size={44} color="#cbd5e1" />
-                <Text style={styles.emptyTitle}>No Clock-Ins Recorded Yet</Text>
+              <View style={styles.emptyCard}>
+                <View style={styles.emptyIconCircle}>
+                  <Ionicons name="finger-print-outline" size={32} color="#94A3B8" />
+                </View>
+                <Text style={styles.emptyTitle}>
+                  {feedSearch ? "No matching records found" : "No Attendance Recorded Today"}
+                </Text>
                 <Text style={styles.emptySub}>
-                  When workforce members punch in from the mobile app within
-                  premises, live arrivals stream here in real time.
+                  {feedSearch
+                    ? "Try adjusting your search query or department filter."
+                    : "Workers' verified check-in punches will appear here live as they clock in."}
                 </Text>
               </View>
             ) : (
               <View style={styles.feedList}>
                 {filteredFeedRecords.map((item) => {
-                  const punchDate = new Date(item.punchedAt);
-                  const punchTime = !isNaN(punchDate.getTime())
-                    ? punchDate.toLocaleTimeString([], {
+                  const isOnTime = item.status === "ON_TIME";
+                  const punchTime = item.punchedAt
+                    ? new Date(item.punchedAt).toLocaleTimeString([], {
                         hour: "2-digit",
                         minute: "2-digit",
-                        second: "2-digit",
                       })
-                    : item.punchedAt;
+                    : "--:--";
 
-                  const isOnTime = item.status === "ON_TIME";
+                  const initial = (item.memberName?.[0] || "W").toUpperCase();
 
                   return (
-                    <View key={item.id} style={styles.feedCard}>
-                      <View style={styles.feedCardTop}>
-                        <View style={styles.memberAvatar}>
-                          <Text style={styles.memberAvatarText}>
-                            {item.memberName?.[0]?.toUpperCase() || "M"}
-                          </Text>
+                    <View key={item.id} style={styles.punchCard}>
+                      <View style={styles.punchTopRow}>
+                        <View style={styles.avatarCircle}>
+                          <Text style={styles.avatarText}>{initial}</Text>
                         </View>
 
-                        <View style={styles.feedMemberInfo}>
-                          <Text style={styles.feedMemberName}>
+                        <View style={styles.punchInfoCol}>
+                          <Text style={styles.punchMemberName} numberOfLines={1}>
                             {item.memberName}
                           </Text>
-                          <Text style={styles.feedMemberDept}>
+                          <Text style={styles.punchDept} numberOfLines={1}>
                             {item.department || "General Workforce"}
                           </Text>
                         </View>
 
-                        <View
-                          style={[
-                            styles.statusBadge,
-                            isOnTime
-                              ? styles.statusBadgeOnTime
-                              : styles.statusBadgeLate,
-                          ]}
-                        >
-                          <Text
+                        <View style={styles.punchMetaCol}>
+                          <Text style={styles.punchTimeText}>{punchTime}</Text>
+                          <View
                             style={[
-                              styles.statusBadgeText,
+                              styles.statusPill,
                               isOnTime
-                                ? styles.statusBadgeTextOnTime
-                                : styles.statusBadgeTextLate,
+                                ? styles.statusPillOnTime
+                                : styles.statusPillLate,
                             ]}
                           >
-                            {isOnTime ? "ON TIME" : "LATE"}
-                          </Text>
+                            <Text
+                              style={[
+                                styles.statusPillText,
+                                isOnTime
+                                  ? styles.statusPillTextOnTime
+                                  : styles.statusPillTextLate,
+                              ]}
+                            >
+                              {isOnTime ? "ON TIME" : "LATE"}
+                            </Text>
+                          </View>
                         </View>
                       </View>
 
-                      <View style={styles.feedCardBottom}>
-                        <View style={styles.feedDetailItem}>
-                          <Ionicons
-                            name="time-outline"
-                            size={13}
-                            color="#64748b"
-                          />
-                          <Text style={styles.feedDetailText}>
-                            Clock-In: <strong>{punchTime}</strong>
-                          </Text>
-                        </View>
+                      <View style={styles.punchDivider} />
 
-                        <View style={styles.feedDetailItem}>
+                      <View style={styles.punchBottomRow}>
+                        <View style={styles.methodBadge}>
                           <Ionicons
                             name={
                               item.verificationMethod === "WIFI_BSSID"
-                                ? "wifi-outline"
-                                : "navigate-outline"
+                                ? "wifi"
+                                : "navigate"
                             }
-                            size={13}
-                            color="#64748b"
+                            size={12}
+                            color="#2563EB"
                           />
-                          <Text style={styles.feedDetailText}>
+                          <Text style={styles.methodBadgeText}>
                             {item.verificationMethod === "WIFI_BSSID"
                               ? "Wi-Fi Anchor"
                               : "GPS Geofence"}
                           </Text>
                         </View>
+
+                        {item.signedOutAt ? (
+                          <View style={styles.signOutTag}>
+                            <Ionicons name="log-out" size={12} color="#059669" />
+                            <Text style={styles.signOutTagText}>
+                              Out:{" "}
+                              {new Date(item.signedOutAt).toLocaleTimeString([], {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </Text>
+                          </View>
+                        ) : (
+                          <View style={styles.presenceActiveTag}>
+                            <View style={styles.activeDot} />
+                            <Text style={styles.presenceActiveText}>Active On-Site</Text>
+                          </View>
+                        )}
                       </View>
                     </View>
                   );
@@ -852,1390 +727,1201 @@ export const AdminHub: React.FC = () => {
         {/* ================================================================= */}
         {activeTab === "anchors" && (
           <View style={styles.tabSection}>
-            {/* Primary Action Card: Scan Web Portal QR Code */}
-            <View style={styles.qrCard}>
-              <View style={styles.qrCardHeaderRow}>
-                <View style={styles.qrIconBadge}>
-                  <Ionicons name="qr-code" size={24} color="#2563EB" />
-                </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.qrCardTitle}>
-                    {isCalibrated ? "Presence Anchors Calibrated" : "Calibrate via Web QR Code"}
-                  </Text>
-                  <Text style={{ fontSize: 11, fontWeight: "600", color: isCalibrated ? "#16a34a" : "#d97706" }}>
-                    {isCalibrated ? "● Live Cloud Synchronized" : "○ Calibration Required"}
-                  </Text>
-                </View>
-              </View>
-
-              <Text style={styles.qrCardSub}>
-                To pair with physical premises security, scan the QR code displayed on your Admin Web Portal. Your phone will detect the premises Wi-Fi router BSSID and acquire high-accuracy satellite GPS coordinates.
-              </Text>
-
-              <TouchableOpacity
-                style={styles.qrScanLaunchBtn}
-                activeOpacity={0.85}
-                onPress={() => router.push("/calibrate" as any)}
-              >
-                <Ionicons name="scan-outline" size={20} color="#ffffff" />
-                <Text style={styles.qrScanLaunchBtnText}>
-                  {isCalibrated ? "Scan Web QR to Re-calibrate" : "Scan Code to Calibrate"}
-                </Text>
-              </TouchableOpacity>
-            </View>
-
-            {/* Current Active Anchors Summary */}
-            {isCalibrated ? (
-              <View style={styles.card}>
-                <Text style={styles.cardHeader}>CURRENT CALIBRATED ANCHORS</Text>
-                <View style={{ gap: 8, marginTop: 4 }}>
-                  <View style={styles.rosterStatRow}>
-                    <Text style={styles.rosterStatLabel}>MODE</Text>
-                    <Text style={styles.rosterStatValue}>
-                      {calMode === "GEOFENCE_ONLY" ? "Satellite GPS Only" : "Office Wi-Fi (Hybrid)"}
-                    </Text>
-                  </View>
-                  {calMode === "HYBRID" && (
-                    <>
-                      <View style={styles.rosterStatRow}>
-                        <Text style={styles.rosterStatLabel}>ROUTER SSID</Text>
-                        <Text style={styles.rosterStatValue}>{ssidHint || "Configured"}</Text>
-                      </View>
-                      <View style={styles.rosterStatRow}>
-                        <Text style={styles.rosterStatLabel}>BSSID (MAC)</Text>
-                        <Text style={[styles.rosterStatValue, { fontFamily: Platform.OS === "ios" ? "Courier" : "monospace" }]}>
-                          {targetBssid || "Configured"}
-                        </Text>
-                      </View>
-                    </>
-                  )}
-                  <View style={styles.rosterStatRow}>
-                    <Text style={styles.rosterStatLabel}>GPS COORDINATES</Text>
-                    <Text style={[styles.rosterStatValue, { fontFamily: Platform.OS === "ios" ? "Courier" : "monospace" }]}>
-                      {latitude.toFixed(6)}, {longitude.toFixed(6)}
-                    </Text>
-                  </View>
-                  <View style={styles.rosterStatRow}>
-                    <Text style={styles.rosterStatLabel}>PERIMETER RADIUS</Text>
-                    <Text style={styles.rosterStatValue}>{radiusMeters} meters</Text>
-                  </View>
-                </View>
-
-                {/* Map Preview of Calibrated Premises */}
-                <View style={[styles.mapContainer, { marginTop: 12 }]}>
-                  <PresenceMapMobile
-                    latitude={latitude}
-                    longitude={longitude}
-                    radiusMeters={radiusMeters}
-                    onCoordinatesChange={() => {}}
-                    height={180}
+            {/* Status Hero Card */}
+            <View style={styles.statusHeroCard}>
+              <View style={styles.statusHeroTop}>
+                <View
+                  style={[
+                    styles.statusHeroIconBox,
+                    { backgroundColor: isCalibrated ? "#ECFDF5" : "#FFFBEB" },
+                  ]}
+                >
+                  <Ionicons
+                    name={isCalibrated ? "shield-checkmark" : "alert-circle"}
+                    size={24}
+                    color={isCalibrated ? "#059669" : "#D97706"}
                   />
                 </View>
-              </View>
-            ) : (
-              <View style={styles.card}>
-                <Text style={styles.cardHeader}>HOW TO CALIBRATE</Text>
-                <View style={{ gap: 12, marginTop: 8 }}>
-                  <View style={{ flexDirection: "row", gap: 10, alignItems: "flex-start" }}>
-                    <View style={styles.stepNumCircle}>
-                      <Text style={styles.stepNumText}>1</Text>
-                    </View>
-                    <Text style={{ flex: 1, fontSize: 13, color: "#334155", lineHeight: 18 }}>
-                      Log into your <Text style={{ fontWeight: "700" }}>Admin Web Portal</Text> on your computer and navigate to <Text style={{ fontWeight: "700" }}>Present Anchors</Text>.
-                    </Text>
-                  </View>
-                  <View style={{ flexDirection: "row", gap: 10, alignItems: "flex-start" }}>
-                    <View style={styles.stepNumCircle}>
-                      <Text style={styles.stepNumText}>2</Text>
-                    </View>
-                    <Text style={{ flex: 1, fontSize: 13, color: "#334155", lineHeight: 18 }}>
-                      Tap the <Text style={{ fontWeight: "700", color: "#2563EB" }}>"Scan Code to Calibrate"</Text> button above to launch your phone's camera.
-                    </Text>
-                  </View>
-                  <View style={{ flexDirection: "row", gap: 10, alignItems: "flex-start" }}>
-                    <View style={styles.stepNumCircle}>
-                      <Text style={styles.stepNumText}>3</Text>
-                    </View>
-                    <Text style={{ flex: 1, fontSize: 13, color: "#334155", lineHeight: 18 }}>
-                      Point your phone at the QR code on your computer screen. The calibration sensor window will open to lock your router BSSID and GPS.
-                    </Text>
-                  </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.statusHeroTitle}>
+                    {isCalibrated ? "Presence Anchors Active" : "Anchors Not Calibrated"}
+                  </Text>
+                  <Text style={styles.statusHeroSub}>
+                    {isCalibrated
+                      ? `Enforcing ${
+                          calMode === "GEOFENCE_ONLY"
+                            ? "Satellite GPS Geofence"
+                            : "Hybrid Wi-Fi Router + GPS"
+                        }`
+                      : "Calibrate below on-site to lock physical boundaries."}
+                  </Text>
                 </View>
-              </View>
-            )}
-
-            {/* Security Notice */}
-            <View style={styles.infoBanner}>
-              <Ionicons
-                name="shield-checkmark"
-                size={20}
-                color="#2563EB"
-              />
-              <View style={{ flex: 1 }}>
-                <Text style={styles.infoBannerTitle}>
-                  Enforced QR Handshake Security
-                </Text>
-                <Text style={styles.infoBannerSub}>
-                  Direct manual editing is disabled to ensure only authorized administrators standing on physical premises can calibrate premises attendance boundaries.
-                </Text>
-              </View>
-            </View>
-          </View>
-        )}
-
-        {/* ================================================================= */}
-        {/* TAB 3: WORKFORCE ROSTER */}
-        {/* ================================================================= */}
-        {activeTab === "roster" && (
-          <View style={styles.tabSection}>
-            {/* Search Input */}
-            <View style={styles.searchInputWrapper}>
-              <Ionicons
-                name="search-outline"
-                size={16}
-                color="#94a3b8"
-                style={styles.searchIcon}
-              />
-              <TextInput
-                style={styles.searchInput}
-                placeholder="Search worker by name, email, phone..."
-                placeholderTextColor="#94a3b8"
-                value={rosterSearch}
-                onChangeText={setRosterSearch}
-              />
-            </View>
-
-            {/* Department Chips */}
-            {organization?.departments && organization.departments.length > 0 && (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                style={styles.deptScroller}
-                contentContainerStyle={styles.deptScrollerContent}
-              >
-                <TouchableOpacity
+                <View
                   style={[
-                    styles.deptChip,
-                    rosterDeptFilter === "ALL" && styles.deptChipActive,
+                    styles.liveSyncBadge,
+                    { backgroundColor: isCalibrated ? "#ECFDF5" : "#FFFBEB" },
                   ]}
-                  onPress={() => setRosterDeptFilter("ALL")}
                 >
+                  <View
+                    style={[
+                      styles.syncPulseDot,
+                      { backgroundColor: isCalibrated ? "#059669" : "#D97706" },
+                    ]}
+                  />
                   <Text
                     style={[
-                      styles.deptChipText,
-                      rosterDeptFilter === "ALL" && styles.deptChipTextActive,
+                      styles.liveSyncText,
+                      { color: isCalibrated ? "#059669" : "#D97706" },
                     ]}
                   >
-                    ALL MEMBERS ({members.length})
+                    {isCalibrated ? "LIVE" : "PENDING"}
+                  </Text>
+                </View>
+              </View>
+
+              {locationAddress ? (
+                <View style={styles.addressBox}>
+                  <Ionicons name="location" size={14} color="#64748B" />
+                  <Text style={styles.addressText} numberOfLines={2}>
+                    {locationAddress}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+
+            {/* Architecture Mode Selector */}
+            <View style={styles.card}>
+              <Text style={styles.cardSectionTitle}>VERIFICATION ARCHITECTURE</Text>
+              <Text style={styles.cardSectionSub}>
+                Select the physical security method required for worker clock-ins.
+              </Text>
+
+              <View style={styles.modeCardsRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.modeChoiceCard,
+                    calMode === "GEOFENCE_ONLY" && styles.modeChoiceCardActive,
+                  ]}
+                  onPress={() => setCalMode("GEOFENCE_ONLY")}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.modeChoiceHeader}>
+                    <Ionicons
+                      name="navigate"
+                      size={20}
+                      color={calMode === "GEOFENCE_ONLY" ? "#2563EB" : "#64748B"}
+                    />
+                    <View
+                      style={[
+                        styles.radioCircle,
+                        calMode === "GEOFENCE_ONLY" && styles.radioCircleActive,
+                      ]}
+                    >
+                      {calMode === "GEOFENCE_ONLY" && <View style={styles.radioDot} />}
+                    </View>
+                  </View>
+                  <Text style={styles.modeChoiceTitle}>Satellite Geofence</Text>
+                  <Text style={styles.modeChoiceSub}>
+                    Recommended • 100% Router-Free. Uses high-precision GPS.
                   </Text>
                 </TouchableOpacity>
 
-                {organization.departments.map((dept) => {
-                  const count = members.filter(
-                    (m) => m.department === dept
-                  ).length;
-                  const isSelected = rosterDeptFilter === dept;
-                  return (
-                    <TouchableOpacity
-                      key={dept}
+                <TouchableOpacity
+                  style={[
+                    styles.modeChoiceCard,
+                    calMode === "HYBRID" && styles.modeChoiceCardActive,
+                  ]}
+                  onPress={() => setCalMode("HYBRID")}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.modeChoiceHeader}>
+                    <Ionicons
+                      name="wifi"
+                      size={20}
+                      color={calMode === "HYBRID" ? "#2563EB" : "#64748B"}
+                    />
+                    <View
                       style={[
-                        styles.deptChip,
-                        isSelected && styles.deptChipActive,
+                        styles.radioCircle,
+                        calMode === "HYBRID" && styles.radioCircleActive,
                       ]}
-                      onPress={() => setRosterDeptFilter(dept)}
                     >
-                      <Text
-                        style={[
-                          styles.deptChipText,
-                          isSelected && styles.deptChipTextActive,
-                        ]}
-                      >
-                        {dept} ({count})
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            )}
-
-            {/* Members List */}
-            {isMembersLoading ? (
-              <View style={styles.emptyContainer}>
-                <ActivityIndicator size="large" color="#2563EB" />
-                <Text style={styles.emptySub}>Loading workforce roster...</Text>
-              </View>
-            ) : filteredMembers.length === 0 ? (
-              <View style={styles.emptyContainer}>
-                <Ionicons name="people-outline" size={44} color="#cbd5e1" />
-                <Text style={styles.emptyTitle}>No Workers Enrolled</Text>
-                <Text style={styles.emptySub}>
-                  Workers pair via the mobile app using Organization Code "
-                  {organization?.churchCode}".
-                </Text>
-              </View>
-            ) : (
-              <View style={styles.feedList}>
-                {filteredMembers.map((member) => {
-                  const isUnbound =
-                    !member.boundDeviceId || member.boundDeviceId === "UNBOUND";
-                  const isUnbinding = unbindingMemberId === member.id;
-
-                  return (
-                    <View key={member.id} style={styles.memberCard}>
-                      <View style={styles.memberCardHeader}>
-                        <View style={styles.memberAvatar}>
-                          <Text style={styles.memberAvatarText}>
-                            {member.fullName?.[0]?.toUpperCase() || "W"}
-                          </Text>
-                        </View>
-
-                        <View style={styles.memberMainInfo}>
-                          <Text style={styles.memberName}>{member.fullName}</Text>
-                          <Text style={styles.memberDept}>
-                            {member.department || "General Workforce"}
-                          </Text>
-                          {member.email && (
-                            <Text style={styles.memberContact}>{member.email}</Text>
-                          )}
-                          {member.phone && (
-                            <Text style={styles.memberContact}>{member.phone}</Text>
-                          )}
-                        </View>
-
-                        <TouchableOpacity
-                          style={styles.deleteMemberBtn}
-                          onPress={() => handleDeleteMember(member)}
-                        >
-                          <Ionicons
-                            name="trash-outline"
-                            size={16}
-                            color="#94a3b8"
-                          />
-                        </TouchableOpacity>
-                      </View>
-
-                      {/* Device Binding Status & Unbind Button */}
-                      <View style={styles.deviceStatusRow}>
-                        <View
-                          style={[
-                            styles.devicePill,
-                            isUnbound
-                              ? styles.devicePillUnbound
-                              : styles.devicePillBound,
-                          ]}
-                        >
-                          <Ionicons
-                            name={
-                              isUnbound
-                                ? "lock-open-outline"
-                                : "phone-portrait-outline"
-                            }
-                            size={12}
-                            color={isUnbound ? "#059669" : "#2563EB"}
-                          />
-                          <Text
-                            style={[
-                              styles.devicePillText,
-                              isUnbound
-                                ? styles.devicePillTextUnbound
-                                : styles.devicePillTextBound,
-                            ]}
-                          >
-                            {isUnbound ? "DEVICE UNBOUND" : "DEVICE LOCKED"}
-                          </Text>
-                        </View>
-
-                        {!isUnbound && (
-                          <TouchableOpacity
-                            style={styles.unbindBtn}
-                            onPress={() => handleUnbindMemberDevice(member)}
-                            disabled={isUnbinding}
-                          >
-                            {isUnbinding ? (
-                              <ActivityIndicator size="small" color="#d97706" />
-                            ) : (
-                              <>
-                                <Ionicons
-                                  name="refresh-outline"
-                                  size={12}
-                                  color="#d97706"
-                                />
-                                <Text style={styles.unbindBtnText}>
-                                  RELEASE LOCK
-                                </Text>
-                              </>
-                            )}
-                          </TouchableOpacity>
-                        )}
-                      </View>
+                      {calMode === "HYBRID" && <View style={styles.radioDot} />}
                     </View>
-                  );
-                })}
+                  </View>
+                  <Text style={styles.modeChoiceTitle}>Router + Geofence</Text>
+                  <Text style={styles.modeChoiceSub}>
+                    Dual-Tier • Scans office router BSSID MAC address with GPS fallback.
+                  </Text>
+                </TouchableOpacity>
               </View>
-            )}
-          </View>
-        )}
-
-        {/* ================================================================= */}
-        {/* TAB 4: ORGANIZATION POLICY & SETTINGS */}
-        {/* ================================================================= */}
-        {activeTab === "policy" && (
-          <View style={styles.tabSection}>
-            {/* Organization Identity Card */}
-            <View style={styles.card}>
-              <Text style={styles.cardHeader}>ORGANIZATION WORKSPACE</Text>
-              <Text style={styles.cardTitle}>{organization?.churchName}</Text>
-              <Text style={styles.cardSub}>{organization?.branchName}</Text>
-
-              <TouchableOpacity
-                style={styles.orgCodeBanner}
-                onPress={copyOrgCode}
-                activeOpacity={0.8}
-              >
-                <View>
-                  <Text style={styles.orgCodeBannerLabel}>
-                    WORKFORCE ENROLLMENT CODE
-                  </Text>
-                  <Text style={styles.orgCodeBannerCode}>
-                    {organization?.churchCode}
-                  </Text>
-                </View>
-                <Ionicons name="copy-outline" size={20} color="#2563EB" />
-              </TouchableOpacity>
             </View>
 
-            {/* Schedule Configuration Card */}
+            {/* GPS Pinpoint Section */}
             <View style={styles.card}>
-              <Text style={styles.cardHeader}>ACTIVE SERVICE / WORK DAYS</Text>
-              <Text style={styles.subLabel}>
-                Workers can punch in on selected days:
-              </Text>
-
-              <View style={styles.dayPillsRow}>
-                {DAY_LABELS.map((label, idx) => {
-                  const isActive = serviceDays.includes(idx);
-                  return (
-                    <TouchableOpacity
-                      key={label}
-                      style={[
-                        styles.dayPill,
-                        isActive && styles.dayPillActive,
-                      ]}
-                      onPress={() => toggleServiceDay(idx)}
-                    >
-                      <Text
-                        style={[
-                          styles.dayPillText,
-                          isActive && styles.dayPillTextActive,
-                        ]}
-                      >
-                        {label}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </View>
-
-              {/* Arrival Times */}
-              <View style={styles.formGroup}>
-                <Text style={styles.inputLabel}>
-                  CALL-UP / WINDOW OPEN TIME (24H)
-                </Text>
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="07:00"
-                  placeholderTextColor="#94a3b8"
-                  value={arrivalCutoff}
-                  onChangeText={setArrivalCutoff}
-                />
-              </View>
-
-              <View style={styles.formGroup}>
-                <Text style={styles.inputLabel}>
-                  LATE TOLERANCE / CUTOFF TIME (24H)
-                </Text>
-                <TextInput
-                  style={styles.textInput}
-                  placeholder="07:30"
-                  placeholderTextColor="#94a3b8"
-                  value={lateTolerance}
-                  onChangeText={setLateTolerance}
-                />
-              </View>
-
-              {/* Late Sign-In Toggle */}
-              <TouchableOpacity
-                style={styles.toggleRow}
-                onPress={() => setAllowLateSignIn(!allowLateSignIn)}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.toggleTitle}>Allow Late Check-Ins</Text>
-                  <Text style={styles.toggleSub}>
-                    Workers arriving past cutoff are marked LATE instead of blocked.
+              <View style={styles.cardHeaderRow}>
+                <View>
+                  <Text style={styles.cardSectionTitle}>1. GPS PERIMETER COORDINATES</Text>
+                  <Text style={styles.cardSectionSub}>
+                    Sample high-accuracy latitude & longitude from device sensors.
                   </Text>
                 </View>
-                <Ionicons
-                  name={allowLateSignIn ? "checkbox" : "square-outline"}
-                  size={24}
-                  color={allowLateSignIn ? "#2563EB" : "#94a3b8"}
-                />
-              </TouchableOpacity>
+              </View>
 
-              {/* Sign-Out Policy Toggle */}
-              <TouchableOpacity
-                style={styles.toggleRow}
-                onPress={() => setEnableSignOut(!enableSignOut)}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.toggleTitle}>Require Sign-Out</Text>
-                  <Text style={styles.toggleSub}>
-                    Workers record departure punch starting from designated time.
+              <View style={styles.coordsDisplayBox}>
+                <View style={styles.coordCol}>
+                  <Text style={styles.coordLabel}>LATITUDE</Text>
+                  <Text style={styles.coordVal}>
+                    {latitude ? latitude.toFixed(6) : "0.000000"}
                   </Text>
                 </View>
-                <Ionicons
-                  name={enableSignOut ? "checkbox" : "square-outline"}
-                  size={24}
-                  color={enableSignOut ? "#2563EB" : "#94a3b8"}
-                />
-              </TouchableOpacity>
-
-              {enableSignOut && (
-                <View style={styles.formGroup}>
-                  <Text style={styles.inputLabel}>
-                    SIGN-OUT START TIME (24H)
+                <View style={styles.coordDivider} />
+                <View style={styles.coordCol}>
+                  <Text style={styles.coordLabel}>LONGITUDE</Text>
+                  <Text style={styles.coordVal}>
+                    {longitude ? longitude.toFixed(6) : "0.000000"}
                   </Text>
-                  <TextInput
-                    style={styles.textInput}
-                    placeholder="17:00"
-                    placeholderTextColor="#94a3b8"
-                    value={signOutTime}
-                    onChangeText={setSignOutTime}
-                  />
                 </View>
-              )}
-
-              <TouchableOpacity
-                style={styles.primaryActionBtn}
-                onPress={handleSavePolicy}
-                disabled={isSavingPolicy}
-              >
-                {isSavingPolicy ? (
-                  <ActivityIndicator size="small" color="#ffffff" />
-                ) : (
+                {gpsAccuracy !== null && (
                   <>
-                    <Ionicons name="save-outline" size={18} color="#ffffff" />
-                    <Text style={styles.primaryActionBtnText}>
-                      SAVE POLICY SETTINGS
-                    </Text>
+                    <View style={styles.coordDivider} />
+                    <View style={styles.coordCol}>
+                      <Text style={styles.coordLabel}>ACCURACY</Text>
+                      <Text style={[styles.coordVal, { color: "#059669" }]}>
+                        ±{gpsAccuracy}m
+                      </Text>
+                    </View>
                   </>
                 )}
+              </View>
+
+              <TouchableOpacity
+                style={[
+                  styles.pinpointGpsButton,
+                  isLocatingGps && styles.buttonDisabled,
+                ]}
+                onPress={handlePinpointGps}
+                disabled={isLocatingGps}
+                activeOpacity={0.85}
+              >
+                {isLocatingGps ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <Ionicons name="locate" size={18} color="#FFFFFF" />
+                )}
+                <Text style={styles.pinpointGpsText}>
+                  {isLocatingGps
+                    ? "Acquiring High-Precision GPS..."
+                    : "Pinpoint Current GPS Location"}
+                </Text>
               </TouchableOpacity>
             </View>
 
-            {/* Danger Zone */}
-            <View style={[styles.card, styles.dangerCard]}>
-              <Text style={[styles.cardHeader, { color: "#dc2626" }]}>
-                DANGER ZONE
-              </Text>
-              <Text style={styles.dangerDesc}>
-                Purging the organization workspace deletes all anchor profiles,
-                registered workforce members, and attendance feeds permanently.
+            {/* Perimeter Radius Selector */}
+            <View style={styles.card}>
+              <Text style={styles.cardSectionTitle}>2. PERIMETER RADIUS</Text>
+              <Text style={styles.cardSectionSub}>
+                Allowable distance workers can be from the anchor coordinate ({radiusMeters}m selected).
               </Text>
 
-              <TouchableOpacity
-                style={styles.dangerBtn}
-                onPress={handleResetWorkspace}
-              >
-                <Ionicons name="trash-outline" size={16} color="#ffffff" />
-                <Text style={styles.dangerBtnText}>WIPE WORKSPACE</Text>
-              </TouchableOpacity>
+              <View style={styles.radiusPillsGrid}>
+                {RADIUS_OPTIONS.map((opt) => {
+                  const isSel = radiusMeters === opt.value;
+                  return (
+                    <TouchableOpacity
+                      key={opt.value}
+                      style={[
+                        styles.radiusPillItem,
+                        isSel && styles.radiusPillItemActive,
+                      ]}
+                      onPress={() => setRadiusMeters(opt.value)}
+                      activeOpacity={0.8}
+                    >
+                      <Text
+                        style={[
+                          styles.radiusPillLabel,
+                          isSel && styles.radiusPillLabelActive,
+                        ]}
+                      >
+                        {opt.label}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.radiusPillDesc,
+                          isSel && styles.radiusPillDescActive,
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {opt.desc}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </View>
+
+            {/* Office Router Configuration (If Hybrid Mode) */}
+            {calMode === "HYBRID" && (
+              <View style={styles.card}>
+                <View style={styles.cardHeaderRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.cardSectionTitle}>3. OFFICE WI-FI ROUTER ANCHOR</Text>
+                    <Text style={styles.cardSectionSub}>
+                      Pair with your premises Wi-Fi router's unique hardware BSSID.
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={[
+                      styles.scanWifiButton,
+                      isScanningWifi && styles.buttonDisabled,
+                    ]}
+                    onPress={handleScanWifi}
+                    disabled={isScanningWifi}
+                    activeOpacity={0.8}
+                  >
+                    {isScanningWifi ? (
+                      <ActivityIndicator size="small" color="#2563EB" />
+                    ) : (
+                      <Ionicons name="refresh" size={14} color="#2563EB" />
+                    )}
+                    <Text style={styles.scanWifiButtonText}>
+                      {isScanningWifi ? "Scanning..." : "Scan Nearby"}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Detected Networks Selector */}
+                {availableNetworks.length > 0 && (
+                  <View style={styles.networkListContainer}>
+                    <Text style={styles.networkListHeader}>
+                      DETECTED BROADCAST POINTS ({availableNetworks.length}):
+                    </Text>
+                    <ScrollView
+                      style={styles.networkScroll}
+                      nestedScrollEnabled
+                      showsVerticalScrollIndicator={false}
+                    >
+                      {availableNetworks.slice(0, 6).map((net, idx) => {
+                        const isMatch =
+                          targetBssid &&
+                          targetBssid.toLowerCase() === net.bssid.toLowerCase();
+                        return (
+                          <TouchableOpacity
+                            key={`${net.bssid}-${idx}`}
+                            style={[
+                              styles.networkRow,
+                              isMatch && styles.networkRowSelected,
+                            ]}
+                            onPress={() => handleSelectNetwork(net)}
+                            activeOpacity={0.7}
+                          >
+                            <Ionicons
+                              name="wifi"
+                              size={16}
+                              color={isMatch ? "#2563EB" : "#64748B"}
+                            />
+                            <View style={{ flex: 1 }}>
+                              <Text
+                                style={[
+                                  styles.networkSsid,
+                                  isMatch && styles.networkSsidActive,
+                                ]}
+                                numberOfLines={1}
+                              >
+                                {net.ssid || "Hidden Network"}
+                              </Text>
+                              <Text style={styles.networkBssid}>{net.bssid}</Text>
+                            </View>
+                            {isMatch && (
+                              <Ionicons
+                                name="checkmark-circle"
+                                size={18}
+                                color="#2563EB"
+                              />
+                            )}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
+                )}
+
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>ROUTER SSID (NAME)</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="e.g. Office_WiFi or Sanctuary_5G"
+                    placeholderTextColor="#94A3B8"
+                    value={ssidHint}
+                    onChangeText={setSsidHint}
+                  />
+                </View>
+
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>ROUTER BSSID (MAC ADDRESS)</Text>
+                  <TextInput
+                    style={[styles.textInput, styles.monoInput]}
+                    placeholder="e.g. 34:2c:c4:91:a8:20"
+                    placeholderTextColor="#94A3B8"
+                    value={targetBssid}
+                    onChangeText={setTargetBssid}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                  <Text style={styles.inputHelpText}>
+                    Hardware MAC address broadcast by the premises router.
+                  </Text>
+                </View>
+              </View>
+            )}
+
+            {/* Map Preview */}
+            <View style={styles.card}>
+              <Text style={styles.cardSectionTitle}>PREMISES GEOFENCE PREVIEW</Text>
+              <Text style={styles.cardSectionSub}>
+                Workers must be inside this circular boundary ({radiusMeters}m) to punch in.
+              </Text>
+              <View style={styles.mapFrame}>
+                <PresenceMapMobile
+                  latitude={latitude}
+                  longitude={longitude}
+                  radiusMeters={radiusMeters}
+                  onCoordinatesChange={() => {}}
+                  height={190}
+                />
+              </View>
+            </View>
+
+            {/* Save Action Button */}
+            <TouchableOpacity
+              style={[
+                styles.saveAnchorsButton,
+                isSavingAnchors && styles.buttonDisabled,
+              ]}
+              onPress={handleSaveAnchors}
+              disabled={isSavingAnchors}
+              activeOpacity={0.88}
+            >
+              {isSavingAnchors ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Ionicons name="cloud-upload" size={20} color="#FFFFFF" />
+              )}
+              <Text style={styles.saveAnchorsText}>
+                {isSavingAnchors
+                  ? "Committing & Syncing..."
+                  : "Save Calibrated Anchors"}
+              </Text>
+            </TouchableOpacity>
+
+            <View style={styles.webSyncHintCard}>
+              <Ionicons name="desktop-outline" size={16} color="#64748B" />
+              <Text style={styles.webSyncHintText}>
+                Saving here immediately updates your Admin Web Portal in real time via Cloud Firestore.
+              </Text>
             </View>
           </View>
         )}
       </ScrollView>
-
-      {/* Bottom Navigation Tabs */}
-      <View style={styles.bottomNav}>
-        <TouchableOpacity
-          style={[styles.navTab, activeTab === "feed" && styles.navTabActive]}
-          onPress={() => setActiveTab("feed")}
-        >
-          <Ionicons
-            name={activeTab === "feed" ? "pulse" : "pulse-outline"}
-            size={22}
-            color={activeTab === "feed" ? "#2563EB" : "#64748b"}
-          />
-          <Text
-            style={[
-              styles.navTabText,
-              activeTab === "feed" && styles.navTabTextActive,
-            ]}
-          >
-            Live Feed
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.navTab, activeTab === "anchors" && styles.navTabActive]}
-          onPress={() => setActiveTab("anchors")}
-        >
-          <Ionicons
-            name={activeTab === "anchors" ? "radio" : "radio-outline"}
-            size={22}
-            color={activeTab === "anchors" ? "#2563EB" : "#64748b"}
-          />
-          <Text
-            style={[
-              styles.navTabText,
-              activeTab === "anchors" && styles.navTabTextActive,
-            ]}
-          >
-            Anchors
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.navTab, activeTab === "roster" && styles.navTabActive]}
-          onPress={() => setActiveTab("roster")}
-        >
-          <Ionicons
-            name={activeTab === "roster" ? "people" : "people-outline"}
-            size={22}
-            color={activeTab === "roster" ? "#2563EB" : "#64748b"}
-          />
-          <Text
-            style={[
-              styles.navTabText,
-              activeTab === "roster" && styles.navTabTextActive,
-            ]}
-          >
-            Roster
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.navTab, activeTab === "policy" && styles.navTabActive]}
-          onPress={() => setActiveTab("policy")}
-        >
-          <Ionicons
-            name={activeTab === "policy" ? "settings" : "settings-outline"}
-            size={22}
-            color={activeTab === "policy" ? "#2563EB" : "#64748b"}
-          />
-          <Text
-            style={[
-              styles.navTabText,
-              activeTab === "policy" && styles.navTabTextActive,
-            ]}
-          >
-            Policy
-          </Text>
-        </TouchableOpacity>
-      </View>
     </SafeAreaView>
   );
 };
 
+// =============================================================================
+// MODERN SLEEK STYLESHEET
+// =============================================================================
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#f8fafc",
+    backgroundColor: "#F8FAFC",
   },
   headerBar: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: "#ffffff",
+    paddingHorizontal: 18,
+    paddingTop: 8,
+    paddingBottom: 12,
+    backgroundColor: "#FFFFFF",
     borderBottomWidth: 1,
-    borderBottomColor: "#e2e8f0",
+    borderBottomColor: "#E2E8F0",
   },
   headerLeft: {
     flex: 1,
   },
-  headerRight: {
-    marginLeft: 12,
-  },
-  adminBadgeRow: {
+  orgBadgeRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 6,
     marginBottom: 4,
   },
-  adminPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    backgroundColor: "#eff6ff",
-    borderWidth: 1,
-    borderColor: "#bfdbfe",
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 2,
-  },
-  greenPulse: {
+  livePulseDot: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: "#10b981",
+    backgroundColor: "#10B981",
   },
-  adminPillText: {
-    fontSize: 9,
-    fontWeight: "800",
-    color: "#1d4ed8",
-    letterSpacing: 0.5,
+  headerSubtitle: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#64748B",
+    letterSpacing: 0.6,
   },
   orgCodePill: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    backgroundColor: "#f1f5f9",
-    borderWidth: 1,
-    borderColor: "#cbd5e1",
-    paddingHorizontal: 7,
+    backgroundColor: "#F1F5F9",
+    paddingHorizontal: 6,
     paddingVertical: 2,
-    borderRadius: 2,
-  },
-  orgCodeLabel: {
-    fontSize: 9,
-    fontWeight: "700",
-    color: "#64748b",
+    borderRadius: 6,
+    marginLeft: 4,
   },
   orgCodeText: {
     fontSize: 10,
-    fontWeight: "800",
-    color: "#0f172a",
-    fontFamily: Platform.OS === "ios" ? "Courier" : "monospace",
+    fontWeight: "700",
+    color: "#0F172A",
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
   },
   headerOrgName: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: "800",
-    color: "#0f172a",
-    letterSpacing: -0.3,
+    color: "#0F172A",
+    letterSpacing: -0.4,
   },
-  headerBranchName: {
-    fontSize: 12,
-    color: "#64748b",
-    marginTop: 1,
+  signOutIconButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: "#FEE2E2",
+    alignItems: "center",
+    justifyContent: "center",
+    marginLeft: 12,
   },
-  signOutBtn: {
-    padding: 8,
-    borderRadius: 6,
-    backgroundColor: "#fee2e2",
+
+  // Segmented Control
+  segmentedContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    backgroundColor: "#FFFFFF",
+    borderBottomWidth: 1,
+    borderBottomColor: "#E2E8F0",
   },
+  segmentedControl: {
+    flexDirection: "row",
+    backgroundColor: "#F1F5F9",
+    borderRadius: 12,
+    padding: 3,
+  },
+  segmentItem: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: 9,
+    gap: 6,
+    borderRadius: 9,
+  },
+  segmentItemActive: {
+    backgroundColor: "#FFFFFF",
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.08,
+        shadowRadius: 2,
+      },
+      android: {
+        elevation: 2,
+      },
+    }),
+  },
+  segmentText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#64748B",
+  },
+  segmentTextActive: {
+    color: "#0F172A",
+    fontWeight: "700",
+  },
+  tabBadge: {
+    backgroundColor: "#E2E8F0",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 10,
+  },
+  tabBadgeActive: {
+    backgroundColor: "#2563EB",
+  },
+  tabBadgeText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#475569",
+  },
+  tabBadgeTextActive: {
+    color: "#FFFFFF",
+  },
+  statusDotSmall: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+
+  // Content Structure
   contentScroll: {
     flex: 1,
   },
   contentInner: {
     padding: 16,
-    paddingBottom: 32,
+    paddingBottom: 40,
   },
   tabSection: {
-    gap: 16,
+    gap: 14,
   },
-  metricsGrid: {
-    flexDirection: "row",
-    gap: 12,
-  },
-  metricCard: {
-    flex: 1,
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    padding: 14,
-    borderRadius: 6,
-  },
-  metricLabel: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#64748b",
-    letterSpacing: 0.5,
-  },
-  metricValue: {
-    fontSize: 26,
-    fontWeight: "800",
-    color: "#0f172a",
-    marginVertical: 4,
-    letterSpacing: -0.5,
-  },
-  metricSub: {
-    fontSize: 11,
-    color: "#94a3b8",
-  },
-  feedControlsRow: {
-    flexDirection: "row",
-    gap: 8,
-    alignItems: "center",
-  },
-  searchInputWrapper: {
-    flex: 1,
-    position: "relative",
-    justifyContent: "center",
-  },
-  searchIcon: {
-    position: "absolute",
-    left: 10,
-    zIndex: 1,
-  },
-  searchInput: {
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    borderRadius: 4,
-    paddingLeft: 34,
-    paddingRight: 12,
-    height: 40,
-    fontSize: 13,
-    color: "#0f172a",
-  },
-  clearFeedBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    backgroundColor: "#fee2e2",
-    borderWidth: 1,
-    borderColor: "#fca5a5",
-    paddingHorizontal: 12,
-    height: 40,
-    borderRadius: 4,
-  },
-  clearFeedText: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#dc2626",
-    letterSpacing: 0.4,
-  },
-  deptScroller: {
-    flexGrow: 0,
-  },
-  deptScrollerContent: {
-    gap: 6,
-  },
-  deptChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    borderRadius: 4,
-  },
-  deptChipActive: {
-    backgroundColor: "#1e293b",
-    borderColor: "#1e293b",
-  },
-  deptChipText: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#475569",
-    letterSpacing: 0.3,
-  },
-  deptChipTextActive: {
-    color: "#ffffff",
-  },
-  feedList: {
-    gap: 10,
-  },
-  feedCard: {
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    borderRadius: 6,
-    padding: 12,
-    gap: 10,
-  },
-  feedCardTop: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  memberAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 4,
-    backgroundColor: "#1e293b",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  memberAvatarText: {
-    color: "#ffffff",
-    fontWeight: "700",
-    fontSize: 15,
-  },
-  feedMemberInfo: {
-    flex: 1,
-  },
-  feedMemberName: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#0f172a",
-  },
-  feedMemberDept: {
-    fontSize: 11,
-    color: "#64748b",
-  },
-  statusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 3,
-  },
-  statusBadgeOnTime: {
-    backgroundColor: "#dcfce7",
-    borderWidth: 1,
-    borderColor: "#86efac",
-  },
-  statusBadgeLate: {
-    backgroundColor: "#fef3c7",
-    borderWidth: 1,
-    borderColor: "#fcd34d",
-  },
-  statusBadgeText: {
-    fontSize: 10,
-    fontWeight: "800",
-    letterSpacing: 0.4,
-  },
-  statusBadgeTextOnTime: {
-    color: "#15803d",
-  },
-  statusBadgeTextLate: {
-    color: "#b45309",
-  },
-  feedCardBottom: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    borderTopWidth: 1,
-    borderTopColor: "#f1f5f9",
-    paddingTop: 8,
-  },
-  feedDetailItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
-  feedDetailText: {
-    fontSize: 11,
-    color: "#64748b",
-  },
+
+  // Card Structure
   card: {
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    borderRadius: 6,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
     padding: 16,
-    gap: 12,
-  },
-  cardHeader: {
-    fontSize: 11,
-    fontWeight: "800",
-    color: "#64748b",
-    letterSpacing: 0.6,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    ...Platform.select({
+      ios: {
+        shadowColor: "#000",
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.04,
+        shadowRadius: 3,
+      },
+      android: {
+        elevation: 1,
+      },
+    }),
   },
   cardHeaderRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    marginBottom: 8,
   },
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#0f172a",
-  },
-  cardSub: {
-    fontSize: 13,
-    color: "#64748b",
-    marginTop: -8,
-  },
-  subLabel: {
+  cardSectionTitle: {
     fontSize: 12,
-    color: "#64748b",
+    fontWeight: "800",
+    color: "#475569",
+    letterSpacing: 0.6,
   },
-  infoBanner: {
+  cardSectionSub: {
+    fontSize: 12,
+    color: "#64748B",
+    marginTop: 2,
+    marginBottom: 10,
+    lineHeight: 17,
+  },
+
+  // KPI Overview
+  kpiRow: {
     flexDirection: "row",
-    alignItems: "flex-start",
     gap: 10,
-    backgroundColor: "#eff6ff",
-    borderWidth: 1,
-    borderColor: "#bfdbfe",
-    borderRadius: 6,
+  },
+  kpiCard: {
+    flex: 1,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 14,
     padding: 12,
-  },
-  infoBannerTitle: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#1e40af",
-  },
-  infoBannerSub: {
-    fontSize: 11,
-    color: "#3b82f6",
-    marginTop: 2,
-    lineHeight: 16,
-  },
-  modeToggleRow: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  modeToggleBtn: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    paddingVertical: 10,
-    backgroundColor: "#f8fafc",
     borderWidth: 1,
-    borderColor: "#cbd5e1",
-    borderRadius: 4,
+    borderColor: "#E2E8F0",
   },
-  modeToggleBtnActive: {
-    backgroundColor: "#2563EB",
-    borderColor: "#2563EB",
-  },
-  modeToggleText: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#475569",
-  },
-  modeToggleTextActive: {
-    color: "#ffffff",
-  },
-  scanBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    backgroundColor: "#eff6ff",
-    borderWidth: 1,
-    borderColor: "#bfdbfe",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-  },
-  scanBtnText: {
+  kpiLabel: {
     fontSize: 10,
     fontWeight: "700",
-    color: "#2563EB",
-    letterSpacing: 0.4,
-  },
-  formGroup: {
-    gap: 6,
-  },
-  inputLabel: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#64748b",
-    letterSpacing: 0.4,
-  },
-  textInput: {
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "#cbd5e1",
-    borderRadius: 4,
-    paddingHorizontal: 12,
-    height: 40,
-    fontSize: 13,
-    color: "#0f172a",
-    fontFamily: Platform.OS === "ios" ? "Courier" : "monospace",
-  },
-  networkList: {
-    gap: 6,
-    maxHeight: 180,
-  },
-  networkItem: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    padding: 8,
-    backgroundColor: "#f8fafc",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    borderRadius: 4,
-  },
-  networkItemSelected: {
-    borderColor: "#2563EB",
-    backgroundColor: "#eff6ff",
-  },
-  networkSsid: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#0f172a",
-  },
-  networkBssid: {
-    fontSize: 10,
-    color: "#64748b",
-    fontFamily: Platform.OS === "ios" ? "Courier" : "monospace",
-  },
-  mapContainer: {
-    borderRadius: 6,
-    overflow: "hidden",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-  },
-  radiusPillRow: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 6,
-  },
-  radiusPill: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    backgroundColor: "#f1f5f9",
-    borderWidth: 1,
-    borderColor: "#cbd5e1",
-    borderRadius: 4,
-  },
-  radiusPillActive: {
-    backgroundColor: "#2563EB",
-    borderColor: "#2563EB",
-  },
-  radiusPillText: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#475569",
-  },
-  radiusPillTextActive: {
-    color: "#ffffff",
-  },
-  coordDisplayRow: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  coordBox: {
-    flex: 1,
-    padding: 8,
-    backgroundColor: "#f8fafc",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    borderRadius: 4,
-  },
-  coordBoxLabel: {
-    fontSize: 9,
-    fontWeight: "700",
-    color: "#64748b",
-  },
-  coordBoxValue: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#0f172a",
-    fontFamily: Platform.OS === "ios" ? "Courier" : "monospace",
-    marginTop: 2,
-  },
-  primaryActionBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    backgroundColor: "#2563EB",
-    paddingVertical: 12,
-    borderRadius: 4,
-  },
-  primaryActionBtnText: {
-    color: "#ffffff",
-    fontWeight: "700",
-    fontSize: 13,
+    color: "#64748B",
     letterSpacing: 0.5,
   },
-  memberCard: {
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "#e2e8f0",
-    borderRadius: 6,
-    padding: 12,
-    gap: 10,
+  kpiValue: {
+    fontSize: 22,
+    fontWeight: "800",
+    color: "#0F172A",
+    marginVertical: 2,
+    letterSpacing: -0.5,
   },
-  memberCardHeader: {
+  kpiSub: {
+    fontSize: 10,
+    color: "#94A3B8",
+    fontWeight: "500",
+  },
+
+  // Search & Filters
+  searchBarRow: {
     flexDirection: "row",
-    alignItems: "flex-start",
+    gap: 8,
+    alignItems: "center",
+  },
+  searchBox: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 42,
+    gap: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 13,
+    color: "#0F172A",
+  },
+  clearFeedButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    backgroundColor: "#FEE2E2",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  filterScroll: {
+    gap: 6,
+    paddingVertical: 2,
+  },
+  deptFilterPill: {
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  deptFilterPillActive: {
+    backgroundColor: "#0F172A",
+    borderColor: "#0F172A",
+  },
+  deptFilterText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#64748B",
+  },
+  deptFilterTextActive: {
+    color: "#FFFFFF",
+    fontWeight: "700",
+  },
+
+  // Feed Items
+  feedList: {
     gap: 10,
   },
-  memberMainInfo: {
-    flex: 1,
+  punchCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
   },
-  memberName: {
+  punchTopRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  avatarCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#EFF6FF",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarText: {
     fontSize: 14,
     fontWeight: "700",
-    color: "#0f172a",
+    color: "#2563EB",
   },
-  memberDept: {
+  punchInfoCol: {
+    flex: 1,
+  },
+  punchMemberName: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#0F172A",
+  },
+  punchDept: {
     fontSize: 11,
-    color: "#64748b",
+    color: "#64748B",
     marginTop: 1,
   },
-  memberContact: {
-    fontSize: 11,
-    color: "#94a3b8",
+  punchMetaCol: {
+    alignItems: "flex-end",
+    gap: 4,
   },
-  deleteMemberBtn: {
-    padding: 6,
+  punchTimeText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#0F172A",
   },
-  deviceStatusRow: {
+  statusPill: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  statusPillOnTime: {
+    backgroundColor: "#ECFDF5",
+  },
+  statusPillLate: {
+    backgroundColor: "#FFFBEB",
+  },
+  statusPillText: {
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
+  statusPillTextOnTime: {
+    color: "#059669",
+  },
+  statusPillTextLate: {
+    color: "#D97706",
+  },
+  punchDivider: {
+    height: 1,
+    backgroundColor: "#F1F5F9",
+    marginVertical: 10,
+  },
+  punchBottomRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    borderTopWidth: 1,
-    borderTopColor: "#f1f5f9",
-    paddingTop: 8,
   },
-  devicePill: {
+  methodBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    backgroundColor: "#F1F5F9",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  methodBadgeText: {
+    fontSize: 10,
+    fontWeight: "600",
+    color: "#334155",
+  },
+  presenceActiveTag: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+  },
+  activeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "#10B981",
+  },
+  presenceActiveText: {
+    fontSize: 10,
+    fontWeight: "600",
+    color: "#059669",
+  },
+  signOutTag: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#ECFDF5",
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  signOutTagText: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#059669",
+  },
+
+  // Empty / Loading states
+  loadingBox: {
+    padding: 30,
+    alignItems: "center",
+    gap: 8,
+  },
+  loadingText: {
+    fontSize: 12,
+    color: "#64748B",
+  },
+  emptyCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    padding: 32,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  emptyIconCircle: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "#F1F5F9",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 12,
+  },
+  emptyTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#0F172A",
+    marginBottom: 4,
+    textAlign: "center",
+  },
+  emptySub: {
+    fontSize: 12,
+    color: "#64748B",
+    textAlign: "center",
+    lineHeight: 18,
+    maxWidth: 260,
+  },
+
+  // Anchors Status Hero Card
+  statusHeroCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+  },
+  statusHeroTop: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  statusHeroIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  statusHeroTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  statusHeroSub: {
+    fontSize: 12,
+    color: "#64748B",
+    marginTop: 2,
+  },
+  liveSyncBadge: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
     paddingHorizontal: 8,
     paddingVertical: 3,
+    borderRadius: 8,
+  },
+  syncPulseDot: {
+    width: 6,
+    height: 6,
     borderRadius: 3,
   },
-  devicePillBound: {
-    backgroundColor: "#eff6ff",
-    borderWidth: 1,
-    borderColor: "#bfdbfe",
-  },
-  devicePillUnbound: {
-    backgroundColor: "#dcfce7",
-    borderWidth: 1,
-    borderColor: "#86efac",
-  },
-  devicePillText: {
+  liveSyncText: {
     fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+  },
+  addressBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "#F8FAFC",
+    padding: 10,
+    borderRadius: 10,
+    marginTop: 12,
+  },
+  addressText: {
+    fontSize: 11,
+    color: "#475569",
+    flex: 1,
+    lineHeight: 15,
+  },
+
+  // Mode Selection Cards
+  modeCardsRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  modeChoiceCard: {
+    flex: 1,
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1.5,
+    borderColor: "#E2E8F0",
+    borderRadius: 14,
+    padding: 12,
+  },
+  modeChoiceCardActive: {
+    backgroundColor: "#EFF6FF",
+    borderColor: "#2563EB",
+  },
+  modeChoiceHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  radioCircle: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: "#CBD5E1",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  radioCircleActive: {
+    borderColor: "#2563EB",
+  },
+  radioDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#2563EB",
+  },
+  modeChoiceTitle: {
+    fontSize: 13,
     fontWeight: "700",
-    letterSpacing: 0.4,
+    color: "#0F172A",
+    marginBottom: 2,
   },
-  devicePillTextBound: {
-    color: "#1d4ed8",
+  modeChoiceSub: {
+    fontSize: 10,
+    color: "#64748B",
+    lineHeight: 14,
   },
-  devicePillTextUnbound: {
-    color: "#15803d",
+
+  // GPS Pinpoint
+  coordsDisplayBox: {
+    flexDirection: "row",
+    backgroundColor: "#F8FAFC",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    padding: 12,
+    marginBottom: 10,
   },
-  unbindBtn: {
+  coordCol: {
+    flex: 1,
+    alignItems: "center",
+  },
+  coordDivider: {
+    width: 1,
+    backgroundColor: "#E2E8F0",
+    marginHorizontal: 4,
+  },
+  coordLabel: {
+    fontSize: 9,
+    fontWeight: "700",
+    color: "#64748B",
+    letterSpacing: 0.5,
+  },
+  coordVal: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#0F172A",
+    marginTop: 2,
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+  },
+  pinpointGpsButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#0F172A",
+    height: 46,
+    borderRadius: 12,
+    gap: 8,
+  },
+  pinpointGpsText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: "#FFFFFF",
+  },
+
+  // Radius Pills
+  radiusPillsGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  radiusPillItem: {
+    width: "31%",
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 6,
+    alignItems: "center",
+  },
+  radiusPillItemActive: {
+    backgroundColor: "#EFF6FF",
+    borderColor: "#2563EB",
+  },
+  radiusPillLabel: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#0F172A",
+  },
+  radiusPillLabelActive: {
+    color: "#2563EB",
+  },
+  radiusPillDesc: {
+    fontSize: 9,
+    color: "#64748B",
+    marginTop: 2,
+  },
+  radiusPillDescActive: {
+    color: "#1D4ED8",
+  },
+
+  // Wi-Fi Configuration
+  scanWifiButton: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    backgroundColor: "#fef3c7",
+    backgroundColor: "#EFF6FF",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: "#fcd34d",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 3,
+    borderColor: "#BFDBFE",
   },
-  unbindBtnText: {
+  scanWifiButtonText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#2563EB",
+  },
+  networkListContainer: {
+    backgroundColor: "#F8FAFC",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    padding: 10,
+    marginBottom: 12,
+  },
+  networkListHeader: {
     fontSize: 10,
     fontWeight: "700",
-    color: "#b45309",
-    letterSpacing: 0.4,
-  },
-  orgCodeBanner: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    backgroundColor: "#eff6ff",
-    borderWidth: 1,
-    borderColor: "#bfdbfe",
-    borderRadius: 4,
-    padding: 12,
-  },
-  orgCodeBannerLabel: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#3b82f6",
+    color: "#64748B",
+    marginBottom: 6,
     letterSpacing: 0.5,
   },
-  orgCodeBannerCode: {
-    fontSize: 18,
-    fontWeight: "800",
-    color: "#1d4ed8",
-    fontFamily: Platform.OS === "ios" ? "Courier" : "monospace",
-    marginTop: 2,
+  networkScroll: {
+    maxHeight: 150,
   },
-  dayPillsRow: {
+  networkRow: {
     flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  dayPill: {
-    width: 40,
-    height: 36,
     alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#f1f5f9",
-    borderWidth: 1,
-    borderColor: "#cbd5e1",
-    borderRadius: 4,
+    gap: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "#F1F5F9",
   },
-  dayPillActive: {
-    backgroundColor: "#2563EB",
-    borderColor: "#2563EB",
+  networkRowSelected: {
+    backgroundColor: "#EFF6FF",
   },
-  dayPillText: {
-    fontSize: 11,
+  networkSsid: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#0F172A",
+  },
+  networkSsidActive: {
+    color: "#2563EB",
+  },
+  networkBssid: {
+    fontSize: 10,
+    color: "#64748B",
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+  },
+  inputGroup: {
+    marginTop: 8,
+    gap: 4,
+  },
+  inputLabel: {
+    fontSize: 10,
     fontWeight: "700",
     color: "#475569",
+    letterSpacing: 0.5,
   },
-  dayPillTextActive: {
-    color: "#ffffff",
-  },
-  toggleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 8,
-  },
-  toggleTitle: {
+  textInput: {
+    backgroundColor: "#F8FAFC",
+    borderWidth: 1,
+    borderColor: "#E2E8F0",
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    height: 42,
     fontSize: 13,
-    fontWeight: "700",
-    color: "#0f172a",
+    color: "#0F172A",
   },
-  toggleSub: {
-    fontSize: 11,
-    color: "#64748b",
+  monoInput: {
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    fontSize: 12,
+  },
+  inputHelpText: {
+    fontSize: 10,
+    color: "#94A3B8",
     marginTop: 2,
   },
-  dangerCard: {
-    borderColor: "#fca5a5",
-    backgroundColor: "#fff5f5",
-  },
-  dangerDesc: {
-    fontSize: 12,
-    color: "#b91c1c",
-    lineHeight: 16,
-  },
-  dangerBtn: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    backgroundColor: "#dc2626",
-    paddingVertical: 10,
-    borderRadius: 4,
-  },
-  dangerBtnText: {
-    color: "#ffffff",
-    fontWeight: "700",
-    fontSize: 12,
-    letterSpacing: 0.5,
-  },
-  emptyContainer: {
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 32,
-    gap: 8,
-  },
-  emptyTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#334155",
-  },
-  emptySub: {
-    fontSize: 12,
-    color: "#94a3b8",
-    textAlign: "center",
-    maxWidth: 280,
-    lineHeight: 18,
-  },
-  qrCard: {
-    backgroundColor: "#ffffff",
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 16,
+
+  // Map Frame
+  mapFrame: {
+    borderRadius: 12,
+    overflow: "hidden",
     borderWidth: 1,
-    borderColor: "#e2e8f0",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
+    borderColor: "#E2E8F0",
+    marginTop: 4,
   },
-  qrCardHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    marginBottom: 10,
-  },
-  qrIconBadge: {
-    width: 44,
-    height: 44,
-    borderRadius: 8,
-    backgroundColor: "rgba(37, 99, 235, 0.1)",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  qrCardTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#0f172a",
-  },
-  qrCardSub: {
-    fontSize: 12,
-    color: "#64748b",
-    lineHeight: 18,
-    marginBottom: 14,
-  },
-  qrScanLaunchBtn: {
+
+  // Save Button
+  saveAnchorsButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: "#2563EB",
+    height: 52,
+    borderRadius: 14,
     gap: 8,
-    backgroundColor: "#2563EB",
-    paddingVertical: 13,
-    paddingHorizontal: 16,
-    borderRadius: 6,
+    ...Platform.select({
+      ios: {
+        shadowColor: "#2563EB",
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.25,
+        shadowRadius: 5,
+      },
+      android: {
+        elevation: 3,
+      },
+    }),
   },
-  qrScanLaunchBtnText: {
-    color: "#ffffff",
-    fontWeight: "700",
-    fontSize: 14,
-    letterSpacing: 0.3,
+  saveAnchorsText: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#FFFFFF",
   },
-  rosterStatRow: {
+  webSyncHintCard: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
-    paddingVertical: 6,
-    borderBottomWidth: 1,
-    borderBottomColor: "#f1f5f9",
+    gap: 8,
+    backgroundColor: "#F1F5F9",
+    padding: 12,
+    borderRadius: 12,
+    marginTop: -4,
   },
-  rosterStatLabel: {
+  webSyncHintText: {
     fontSize: 11,
-    fontWeight: "700",
-    color: "#64748b",
-    letterSpacing: 0.5,
-  },
-  rosterStatValue: {
-    fontSize: 12,
-    fontWeight: "600",
-    color: "#0f172a",
-  },
-  stepNumCircle: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: "#2563EB",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  stepNumText: {
-    color: "#ffffff",
-    fontSize: 11,
-    fontWeight: "700",
-  },
-  bottomNav: {
-    flexDirection: "row",
-    backgroundColor: "#ffffff",
-    borderTopWidth: 1,
-    borderTopColor: "#e2e8f0",
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-  },
-  navTab: {
+    color: "#475569",
     flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 2,
-    paddingVertical: 4,
+    lineHeight: 15,
   },
-  navTabActive: {},
-  navTabText: {
-    fontSize: 10,
-    fontWeight: "600",
-    color: "#64748b",
-  },
-  navTabTextActive: {
-    color: "#2563EB",
-    fontWeight: "700",
+
+  buttonDisabled: {
+    opacity: 0.6,
   },
 });
