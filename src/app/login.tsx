@@ -89,6 +89,7 @@ export default function LoginScreen() {
         // Web: Direct Firebase popup
         const res = await signInWithGoogle();
         navigateAfterAuth(res);
+      } else {
         // Native (Android / iOS): Force clearing previous Google session so account chooser is ALWAYS shown
         try {
           await GoogleSignin.signOut();
@@ -117,6 +118,7 @@ export default function LoginScreen() {
         }
       }
     } catch (err: any) {
+      console.error("[Login] Google Sign-In caught error:", err);
       if (isErrorWithCode(err)) {
         if (err.code === statusCodes.SIGN_IN_CANCELLED) {
           // User dismissed or swiped away the native bottom sheet
@@ -142,11 +144,21 @@ export default function LoginScreen() {
         return;
       }
 
-      if (err?.message?.includes("DEVELOPER_ERROR")) {
-        toast.error(
-          "Please add your EAS SHA-1 fingerprint to Firebase Console (Project Settings -> Android app).",
-          { title: "Firebase SHA-1 Required" },
+      const isDeveloperError =
+        err?.code === "10" ||
+        err?.code === 10 ||
+        err?.code === (statusCodes as any)?.DEVELOPER_ERROR ||
+        String(err?.message || "").includes("DEVELOPER_ERROR") ||
+        String(err?.message || "").includes("code: 10") ||
+        String(err?.message || "").includes("10:");
+
+      if (isDeveloperError) {
+        Alert.alert(
+          "Firebase SHA-1 Fingerprint Required",
+          "Google Play Services returned Error 10 (DEVELOPER_ERROR). This happens when the signing SHA-1 fingerprint of this APK has not been registered in your Firebase Console.\n\nTo fix:\n1. Copy the SHA-1 from your EAS build logs (or run 'npx eas-cli credentials').\n2. Go to Firebase Console -> Project Settings -> com.attendance.mobile -> Add Fingerprint.\n3. Re-download google-services.json if prompted.",
+          [{ text: "Understood" }]
         );
+        toast.error("Firebase requires your APK's SHA-1 fingerprint.");
         return;
       }
 
