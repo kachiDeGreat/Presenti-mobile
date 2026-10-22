@@ -15,6 +15,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
 import * as Location from "expo-location";
 import * as Clipboard from "expo-clipboard";
 import {
@@ -232,6 +233,13 @@ export const AdminHub: React.FC = () => {
       }
     }
   }, [organization]);
+
+  const isCalibrated = Boolean(
+    organization?.isCalibrated ||
+    organization?.geoFallback?.isCalibrated ||
+    (organization?.geoFallback?.latitude && organization?.geoFallback?.longitude) ||
+    (latitude !== 0 && longitude !== 0 && radiusMeters > 0)
+  );
 
   const handleScanWifi = async () => {
     setIsScanningWifi(true);
@@ -844,20 +852,89 @@ export const AdminHub: React.FC = () => {
         {/* ================================================================= */}
         {activeTab === "anchors" && (
           <View style={styles.tabSection}>
+            {/* Primary Action Card: Scan Web Portal QR Code */}
+            <View style={styles.qrCard}>
+              <View style={styles.qrCardHeaderRow}>
+                <View style={styles.qrIconBadge}>
+                  <Ionicons name="qr-code" size={24} color="#2563EB" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.qrCardTitle}>
+                    {isCalibrated ? "Presence Anchors Calibrated" : "Calibrate via Web QR Code"}
+                  </Text>
+                  <Text style={{ fontSize: 11, fontWeight: "600", color: isCalibrated ? "#16a34a" : "#d97706" }}>
+                    {isCalibrated ? "● Live Cloud Synchronized" : "○ Calibration Required"}
+                  </Text>
+                </View>
+              </View>
+
+              <Text style={styles.qrCardSub}>
+                To pair with physical premises security, scan the QR code displayed on your Admin Web Portal. Your phone will detect the premises Wi-Fi router BSSID and acquire high-accuracy satellite GPS coordinates.
+              </Text>
+
+              <TouchableOpacity
+                style={styles.qrScanLaunchBtn}
+                activeOpacity={0.85}
+                onPress={() => router.push("/calibrate" as any)}
+              >
+                <Ionicons name="scan-outline" size={20} color="#ffffff" />
+                <Text style={styles.qrScanLaunchBtnText}>
+                  {isCalibrated ? "Scan Web QR to Re-calibrate" : "Scan Code to Calibrate"}
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Current Active Anchors Summary */}
+            {isCalibrated && (
+              <View style={styles.card}>
+                <Text style={styles.cardHeader}>CURRENT CALIBRATED ANCHORS</Text>
+                <View style={{ gap: 8, marginTop: 4 }}>
+                  <View style={styles.rosterStatRow}>
+                    <Text style={styles.rosterStatLabel}>MODE</Text>
+                    <Text style={styles.rosterStatValue}>
+                      {calMode === "GEOFENCE_ONLY" ? "Satellite GPS Only" : "Office Wi-Fi (Hybrid)"}
+                    </Text>
+                  </View>
+                  {calMode === "HYBRID" && (
+                    <>
+                      <View style={styles.rosterStatRow}>
+                        <Text style={styles.rosterStatLabel}>ROUTER SSID</Text>
+                        <Text style={styles.rosterStatValue}>{ssidHint || "Configured"}</Text>
+                      </View>
+                      <View style={styles.rosterStatRow}>
+                        <Text style={styles.rosterStatLabel}>BSSID (MAC)</Text>
+                        <Text style={[styles.rosterStatValue, { fontFamily: Platform.OS === "ios" ? "Courier" : "monospace" }]}>
+                          {targetBssid || "Configured"}
+                        </Text>
+                      </View>
+                    </>
+                  )}
+                  <View style={styles.rosterStatRow}>
+                    <Text style={styles.rosterStatLabel}>GPS COORDINATES</Text>
+                    <Text style={[styles.rosterStatValue, { fontFamily: Platform.OS === "ios" ? "Courier" : "monospace" }]}>
+                      {latitude.toFixed(6)}, {longitude.toFixed(6)}
+                    </Text>
+                  </View>
+                  <View style={styles.rosterStatRow}>
+                    <Text style={styles.rosterStatLabel}>PERIMETER RADIUS</Text>
+                    <Text style={styles.rosterStatValue}>{radiusMeters} meters</Text>
+                  </View>
+                </View>
+              </View>
+            )}
+
             <View style={styles.infoBanner}>
               <Ionicons
-                name="shield-checkmark-outline"
+                name="options-outline"
                 size={20}
                 color="#2563EB"
               />
               <View style={{ flex: 1 }}>
                 <Text style={styles.infoBannerTitle}>
-                  Direct On-Site Hardware Calibration
+                  Direct Sensor Tuning
                 </Text>
                 <Text style={styles.infoBannerSub}>
-                  Because you are logged in as Administrator, this phone
-                  calibrates physical Wi-Fi &amp; GPS anchors directly. No QR
-                  code scan required!
+                  You can also fine-tune parameters or scan Wi-Fi signals directly using the controls below:
                 </Text>
               </View>
             </View>
@@ -2232,6 +2309,79 @@ const styles = StyleSheet.create({
     textAlign: "center",
     maxWidth: 280,
     lineHeight: 18,
+  },
+  qrCard: {
+    backgroundColor: "#ffffff",
+    borderRadius: 8,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  qrCardHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 10,
+  },
+  qrIconBadge: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    backgroundColor: "rgba(37, 99, 235, 0.1)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  qrCardTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#0f172a",
+  },
+  qrCardSub: {
+    fontSize: 12,
+    color: "#64748b",
+    lineHeight: 18,
+    marginBottom: 14,
+  },
+  qrScanLaunchBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#2563EB",
+    paddingVertical: 13,
+    paddingHorizontal: 16,
+    borderRadius: 6,
+  },
+  qrScanLaunchBtnText: {
+    color: "#ffffff",
+    fontWeight: "700",
+    fontSize: 14,
+    letterSpacing: 0.3,
+  },
+  rosterStatRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f1f5f9",
+  },
+  rosterStatLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#64748b",
+    letterSpacing: 0.5,
+  },
+  rosterStatValue: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#0f172a",
   },
   bottomNav: {
     flexDirection: "row",
