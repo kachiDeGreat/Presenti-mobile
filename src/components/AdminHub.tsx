@@ -885,7 +885,7 @@ export const AdminHub: React.FC = () => {
             </View>
 
             {/* Current Active Anchors Summary */}
-            {isCalibrated && (
+            {isCalibrated ? (
               <View style={styles.card}>
                 <Text style={styles.cardHeader}>CURRENT CALIBRATED ANCHORS</Text>
                 <View style={{ gap: 8, marginTop: 4 }}>
@@ -920,249 +920,66 @@ export const AdminHub: React.FC = () => {
                     <Text style={styles.rosterStatValue}>{radiusMeters} meters</Text>
                   </View>
                 </View>
+
+                {/* Map Preview of Calibrated Premises */}
+                <View style={[styles.mapContainer, { marginTop: 12 }]}>
+                  <PresenceMapMobile
+                    latitude={latitude}
+                    longitude={longitude}
+                    radiusMeters={radiusMeters}
+                    onCoordinatesChange={() => {}}
+                    height={180}
+                  />
+                </View>
+              </View>
+            ) : (
+              <View style={styles.card}>
+                <Text style={styles.cardHeader}>HOW TO CALIBRATE</Text>
+                <View style={{ gap: 12, marginTop: 8 }}>
+                  <View style={{ flexDirection: "row", gap: 10, alignItems: "flex-start" }}>
+                    <View style={styles.stepNumCircle}>
+                      <Text style={styles.stepNumText}>1</Text>
+                    </View>
+                    <Text style={{ flex: 1, fontSize: 13, color: "#334155", lineHeight: 18 }}>
+                      Log into your <Text style={{ fontWeight: "700" }}>Admin Web Portal</Text> on your computer and navigate to <Text style={{ fontWeight: "700" }}>Present Anchors</Text>.
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: "row", gap: 10, alignItems: "flex-start" }}>
+                    <View style={styles.stepNumCircle}>
+                      <Text style={styles.stepNumText}>2</Text>
+                    </View>
+                    <Text style={{ flex: 1, fontSize: 13, color: "#334155", lineHeight: 18 }}>
+                      Tap the <Text style={{ fontWeight: "700", color: "#2563EB" }}>"Scan Code to Calibrate"</Text> button above to launch your phone's camera.
+                    </Text>
+                  </View>
+                  <View style={{ flexDirection: "row", gap: 10, alignItems: "flex-start" }}>
+                    <View style={styles.stepNumCircle}>
+                      <Text style={styles.stepNumText}>3</Text>
+                    </View>
+                    <Text style={{ flex: 1, fontSize: 13, color: "#334155", lineHeight: 18 }}>
+                      Point your phone at the QR code on your computer screen. The calibration sensor window will open to lock your router BSSID and GPS.
+                    </Text>
+                  </View>
+                </View>
               </View>
             )}
 
+            {/* Security Notice */}
             <View style={styles.infoBanner}>
               <Ionicons
-                name="options-outline"
+                name="shield-checkmark"
                 size={20}
                 color="#2563EB"
               />
               <View style={{ flex: 1 }}>
                 <Text style={styles.infoBannerTitle}>
-                  Direct Sensor Tuning
+                  Enforced QR Handshake Security
                 </Text>
                 <Text style={styles.infoBannerSub}>
-                  You can also fine-tune parameters or scan Wi-Fi signals directly using the controls below:
+                  Direct manual editing is disabled to ensure only authorized administrators standing on physical premises can calibrate premises attendance boundaries.
                 </Text>
               </View>
             </View>
-
-            {/* Architecture Mode Toggle */}
-            <View style={styles.card}>
-              <Text style={styles.cardHeader}>VERIFICATION ARCHITECTURE</Text>
-              <View style={styles.modeToggleRow}>
-                <TouchableOpacity
-                  style={[
-                    styles.modeToggleBtn,
-                    calMode === "GEOFENCE_ONLY" && styles.modeToggleBtnActive,
-                  ]}
-                  onPress={() => setCalMode("GEOFENCE_ONLY")}
-                >
-                  <Ionicons
-                    name="navigate-outline"
-                    size={18}
-                    color={calMode === "GEOFENCE_ONLY" ? "#ffffff" : "#475569"}
-                  />
-                  <Text
-                    style={[
-                      styles.modeToggleText,
-                      calMode === "GEOFENCE_ONLY" && styles.modeToggleTextActive,
-                    ]}
-                  >
-                    Router-Free GPS
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[
-                    styles.modeToggleBtn,
-                    calMode === "HYBRID" && styles.modeToggleBtnActive,
-                  ]}
-                  onPress={() => setCalMode("HYBRID")}
-                >
-                  <Ionicons
-                    name="wifi-outline"
-                    size={18}
-                    color={calMode === "HYBRID" ? "#ffffff" : "#475569"}
-                  />
-                  <Text
-                    style={[
-                      styles.modeToggleText,
-                      calMode === "HYBRID" && styles.modeToggleTextActive,
-                    ]}
-                  >
-                    Office Wi-Fi (Hybrid)
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {/* Wi-Fi Calibration Section (if HYBRID) */}
-            {calMode === "HYBRID" && (
-              <View style={styles.card}>
-                <View style={styles.cardHeaderRow}>
-                  <Text style={styles.cardHeader}>OFFICE WI-FI ROUTER ANCHOR</Text>
-                  <TouchableOpacity
-                    style={styles.scanBtn}
-                    onPress={handleScanWifi}
-                    disabled={isScanningWifi}
-                  >
-                    {isScanningWifi ? (
-                      <ActivityIndicator size="small" color="#2563EB" />
-                    ) : (
-                      <>
-                        <Ionicons name="refresh-outline" size={14} color="#2563EB" />
-                        <Text style={styles.scanBtnText}>SCAN WI-FI</Text>
-                      </>
-                    )}
-                  </TouchableOpacity>
-                </View>
-
-                {availableNetworks.length > 0 && (
-                  <View style={styles.networkList}>
-                    <Text style={styles.subLabel}>Tap a network to select:</Text>
-                    {availableNetworks.map((net, idx) => {
-                      const isSelected =
-                        targetBssid.toLowerCase() === net.bssid.toLowerCase();
-                      return (
-                        <TouchableOpacity
-                          key={`${net.bssid}-${idx}`}
-                          style={[
-                            styles.networkItem,
-                            isSelected && styles.networkItemSelected,
-                          ]}
-                          onPress={() => handleSelectNetwork(net)}
-                        >
-                          <Ionicons
-                            name="wifi"
-                            size={16}
-                            color={isSelected ? "#2563EB" : "#64748b"}
-                          />
-                          <View style={{ flex: 1 }}>
-                            <Text style={styles.networkSsid}>{net.ssid}</Text>
-                            <Text style={styles.networkBssid}>{net.bssid}</Text>
-                          </View>
-                          {isSelected && (
-                            <Ionicons
-                              name="checkmark-circle"
-                              size={18}
-                              color="#2563EB"
-                            />
-                          )}
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                )}
-
-                <View style={styles.formGroup}>
-                  <Text style={styles.inputLabel}>TARGET ROUTER BSSID (MAC)</Text>
-                  <TextInput
-                    style={styles.textInput}
-                    placeholder="e.g. 0c:61:f9:65:8f:07"
-                    placeholderTextColor="#94a3b8"
-                    value={targetBssid}
-                    onChangeText={setTargetBssid}
-                    autoCapitalize="none"
-                  />
-                </View>
-
-                <View style={styles.formGroup}>
-                  <Text style={styles.inputLabel}>NETWORK SSID HINT</Text>
-                  <TextInput
-                    style={styles.textInput}
-                    placeholder="e.g. OfficeCorp-5G"
-                    placeholderTextColor="#94a3b8"
-                    value={ssidHint}
-                    onChangeText={setSsidHint}
-                  />
-                </View>
-              </View>
-            )}
-
-            {/* GPS Geofence Section */}
-            <View style={styles.card}>
-              <View style={styles.cardHeaderRow}>
-                <Text style={styles.cardHeader}>SATELLITE GPS GEOFENCE</Text>
-                <TouchableOpacity
-                  style={styles.scanBtn}
-                  onPress={handlePinpointGps}
-                  disabled={isLocatingGps}
-                >
-                  {isLocatingGps ? (
-                    <ActivityIndicator size="small" color="#2563EB" />
-                  ) : (
-                    <>
-                      <Ionicons name="locate-outline" size={14} color="#2563EB" />
-                      <Text style={styles.scanBtnText}>PINPOINT MY GPS</Text>
-                    </>
-                  )}
-                </TouchableOpacity>
-              </View>
-
-              {/* Leaflet Satellite Map Preview */}
-              <View style={styles.mapContainer}>
-                <PresenceMapMobile
-                  latitude={latitude}
-                  longitude={longitude}
-                  radiusMeters={radiusMeters}
-                  onCoordinatesChange={(lat, lng) => {
-                    setLatitude(lat);
-                    setLongitude(lng);
-                  }}
-                  height={220}
-                />
-              </View>
-
-              {/* Radius Options */}
-              <View style={styles.formGroup}>
-                <Text style={styles.inputLabel}>
-                  PREMISES BOUNDARY RADIUS: {radiusMeters} METERS
-                </Text>
-                <View style={styles.radiusPillRow}>
-                  {RADIUS_OPTIONS.map((r) => (
-                    <TouchableOpacity
-                      key={r}
-                      style={[
-                        styles.radiusPill,
-                        radiusMeters === r && styles.radiusPillActive,
-                      ]}
-                      onPress={() => setRadiusMeters(r)}
-                    >
-                      <Text
-                        style={[
-                          styles.radiusPillText,
-                          radiusMeters === r && styles.radiusPillTextActive,
-                        ]}
-                      >
-                        {r}m
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              </View>
-
-              <View style={styles.coordDisplayRow}>
-                <View style={styles.coordBox}>
-                  <Text style={styles.coordBoxLabel}>LATITUDE</Text>
-                  <Text style={styles.coordBoxValue}>{latitude.toFixed(6)}</Text>
-                </View>
-                <View style={styles.coordBox}>
-                  <Text style={styles.coordBoxLabel}>LONGITUDE</Text>
-                  <Text style={styles.coordBoxValue}>{longitude.toFixed(6)}</Text>
-                </View>
-              </View>
-            </View>
-
-            {/* Save Button */}
-            <TouchableOpacity
-              style={styles.primaryActionBtn}
-              onPress={handleSaveAnchors}
-              disabled={isSavingAnchors}
-            >
-              {isSavingAnchors ? (
-                <ActivityIndicator size="small" color="#ffffff" />
-              ) : (
-                <>
-                  <Ionicons name="save-outline" size={18} color="#ffffff" />
-                  <Text style={styles.primaryActionBtnText}>
-                    SAVE PRESENCE ANCHORS
-                  </Text>
-                </>
-              )}
-            </TouchableOpacity>
           </View>
         )}
 
@@ -2382,6 +2199,19 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "600",
     color: "#0f172a",
+  },
+  stepNumCircle: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: "#2563EB",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  stepNumText: {
+    color: "#ffffff",
+    fontSize: 11,
+    fontWeight: "700",
   },
   bottomNav: {
     flexDirection: "row",
