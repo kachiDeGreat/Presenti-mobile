@@ -489,10 +489,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
           await GoogleSignin.signOut();
         } catch {}
+        try {
+          await GoogleSignin.revokeAccess();
+        } catch {}
       }
-      await AsyncStorage.multiRemove([STORAGE_KEY_USER, STORAGE_KEY_MEMBER]);
+      await AsyncStorage.multiRemove([
+        STORAGE_KEY_USER,
+        STORAGE_KEY_MEMBER,
+        STORAGE_KEY_KNOWN_ACCOUNTS,
+      ]);
       setUser(null);
       setMember(null);
+      setKnownAccounts([]);
     } catch (err) {
       console.error('Sign out error:', err);
     }

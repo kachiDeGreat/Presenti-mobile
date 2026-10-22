@@ -89,8 +89,11 @@ export default function LoginScreen() {
         // Web: Direct Firebase popup
         const res = await signInWithGoogle();
         navigateAfterAuth(res);
-      } else {
-        // Native (Android / iOS): Native bottom sheet account chooser
+        // Native (Android / iOS): Force clearing previous Google session so account chooser is ALWAYS shown
+        try {
+          await GoogleSignin.signOut();
+        } catch {}
+
         await GoogleSignin.hasPlayServices({
           showPlayServicesUpdateDialog: true,
         });
