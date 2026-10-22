@@ -42,11 +42,8 @@ export default function LoginScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    if (isAdmin || user?.isAdmin) {
-      toast.error(
-        "Administrator accounts cannot be signed into the mobile app. Please use the Web Admin Portal."
-      );
-      signOut();
+    if (user && (isAdmin || user.isAdmin)) {
+      router.replace("/");
       return;
     }
     if (user && organization && member) {
@@ -68,10 +65,10 @@ export default function LoginScreen() {
 
   const navigateAfterAuth = (result: AuthResult) => {
     if (result.user?.isAdmin || isAdmin) {
-      toast.error(
-        "Administrator accounts cannot be signed into the mobile app. Please use the Web Admin Portal."
+      toast.success(
+        `Welcome to Presenti Admin, ${result.user.displayName || "Admin"}!`
       );
-      signOut();
+      router.replace("/");
       return;
     }
     if (result.organization && result.member) {

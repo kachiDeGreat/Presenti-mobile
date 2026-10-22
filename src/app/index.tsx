@@ -38,6 +38,7 @@ import { verifyPresenceAnchors } from "../services/presenceVerificationService";
 import { verifyIdentityForClockIn } from "../services/biometricAuthService";
 import type { TodayPunchRecord } from "../types";
 import { AdminCalibrationModal } from "../components/AdminCalibrationModal";
+import { AdminHub } from "../components/AdminHub";
 
 export default function DashboardScreen() {
   const {
@@ -213,21 +214,33 @@ export default function DashboardScreen() {
     }
   }, [refreshOrganization, member, organization, todayServiceDate, toast]);
 
-  // Guard routing: redirect unauthenticated or admin or unenrolled users cleanly after mount
+  // Guard routing: redirect unauthenticated or unenrolled users cleanly after mount
   useEffect(() => {
     if (isLoading) return;
     if (!user) {
       router.replace("/login");
     } else if (user.isAdmin || isAdmin) {
-      router.replace("/calibrate");
+      // Administrator stays right here and AdminHub renders!
     } else if (!organization || !member) {
       router.replace("/onboarding");
     }
   }, [isLoading, user, isAdmin, organization, member]);
 
-  if (isLoading || !user || user.isAdmin || isAdmin || !organization || !member) {
+  if (isLoading || !user) {
     return (
       <LoadingIndicator fullScreen message="Loading attendance dashboard..." />
+    );
+  }
+
+  // Administrator Experience: Mobile Admin Command Center
+  if (user.isAdmin || isAdmin) {
+    return <AdminHub />;
+  }
+
+  // Workforce Member Experience: Guard enrollment
+  if (!organization || !member) {
+    return (
+      <LoadingIndicator fullScreen message="Loading workforce profile..." />
     );
   }
 

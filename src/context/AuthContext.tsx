@@ -162,14 +162,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const cleanEmail = (loadedUser.email || '').trim().toLowerCase();
           const isAdminUser = loadedUser.isAdmin === true || (await checkIfUserIsAdmin(cleanEmail, loadedUser.uid));
           if (isAdminUser) {
-            // Admin accounts are strictly forbidden from signing into the mobile app
-            await AsyncStorage.multiRemove([STORAGE_KEY_USER, STORAGE_KEY_MEMBER]);
-            setUser(null);
-            setMember(null);
-            try {
-              if (auth.currentUser) await FirebaseAuth.signOut(auth);
-              if (Platform.OS !== 'web') await GoogleSignin.signOut();
-            } catch {}
+            const adminUser: MobileUser = { ...loadedUser, isAdmin: true };
+            setUser(adminUser);
+            const adminOrg = await getAdminOrganization(cleanEmail, loadedUser.uid);
+            if (adminOrg) {
+              setOrganization(adminOrg);
+              await cacheOrganizationAnchors(adminOrg);
+            }
           } else {
             setUser({ ...loadedUser, isAdmin: false });
           }
@@ -259,20 +258,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const cleanEmail = (authUser.email || '').trim().toLowerCase();
       const uid = authUser.uid;
 
-      // 0. STRICT SECURITY ENFORCEMENT:
-      // Administrator accounts can ONLY be used on the Web Admin Portal, NEVER on the mobile app.
+      // 0. Check role: If user is an Administrator, grant access to the Mobile Admin Command Center
       const isAdmin = authUser.isAdmin === true || (await checkIfUserIsAdmin(cleanEmail, uid));
       if (isAdmin) {
-        try {
-          if (auth.currentUser) await FirebaseAuth.signOut(auth);
-          if (Platform.OS !== 'web') await GoogleSignin.signOut();
-        } catch {}
-        await AsyncStorage.multiRemove([STORAGE_KEY_USER, STORAGE_KEY_MEMBER]);
-        setUser(null);
-        setMember(null);
-        throw new Error(
-          `This account (${cleanEmail}) is registered as an Organization Administrator on the web portal. Administrator accounts cannot be signed into the mobile app. Please sign in with your workforce member account.`
-        );
+        const adminUser: MobileUser = { ...authUser, isAdmin: true };
+        await AsyncStorage.setItem(STORAGE_KEY_USER, JSON.stringify(adminUser));
+        setUser(adminUser);
+
+        setKnownAccounts((prev) => {
+          const filtered = prev.filter((a) => a.email.toLowerCase() !== adminUser.email.toLowerCase());
+          const updated = [adminUser, ...filtered];
+          AsyncStorage.setItem(STORAGE_KEY_KNOWN_ACCOUNTS, JSON.stringify(updated)).catch(() => {});
+          return updated;
+        });
+
+        const adminOrg = await getAdminOrganization(cleanEmail, uid);
+        if (adminOrg) {
+          setOrganization(adminOrg);
+          await cacheOrganizationAnchors(adminOrg);
+        }
+        return { user: adminUser, organization: adminOrg, member: null };
       }
 
       // 1. Instant user session persistence
