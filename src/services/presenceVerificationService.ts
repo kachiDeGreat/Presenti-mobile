@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 import * as Location from 'expo-location';
 import type { CachedAnchors } from '../types';
+import { acquireDeviceCoordinates } from './locationService';
 
 export interface PresenceVerificationResult {
   isVerified: boolean;
@@ -149,38 +150,12 @@ export async function verifyPresenceAnchors(
   }
 
   try {
-    // 1. Request location permissions if not already granted
-    const { status } = await Location.requestForegroundPermissionsAsync();
-    if (status !== 'granted') {
-      return {
-        isVerified: false,
-        method: 'GEO_FALLBACK',
-        failureReason:
-          'Location permission was denied. Please allow location access in your device settings to verify physical presence on-premise.',
-        details: 'Location permission denied.',
-      };
-    }
+    // Acquire current GPS fix using robust tiered acquisition (instant cached + live + indoor fallback)
+    const location = await acquireDeviceCoordinates();
 
-    // 2. Check if hardware GPS toggle is enabled on the device
-    const isGpsEnabled = await Location.hasServicesEnabledAsync().catch(() => true);
-    if (!isGpsEnabled) {
-      return {
-        isVerified: false,
-        method: 'GEO_FALLBACK',
-        failureReason:
-          'Your device location (GPS) is turned off. Please turn on Location in your phone swipe-down quick settings.',
-        details: 'Device GPS toggle is off.',
-      };
-    }
-
-    // 3. Acquire current high-accuracy GPS fix from hardware sensor
-    const location = await Location.getCurrentPositionAsync({
-      accuracy: Location.Accuracy.High,
-    });
-
-    const userLat = location.coords.latitude;
-    const userLng = location.coords.longitude;
-    const gpsAccuracy = location.coords.accuracy || 15;
+    const userLat = location.latitude;
+    const userLng = location.longitude;
+    const gpsAccuracy = location.accuracy || 15;
 
     // 4. Calculate exact physical distance in meters using Haversine formula
     const distance = calculateDistanceMeters(

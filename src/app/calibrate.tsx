@@ -33,6 +33,7 @@ import {
   reverseGeocodeCoords,
   GeocodedLocation,
 } from "../services/geocodingService";
+import { acquireDeviceCoordinates } from "../services/locationService";
 
 const RADIUS_OPTIONS = [10, 20, 30, 50, 80, 100];
 
@@ -292,42 +293,25 @@ export default function CalibrateScreen() {
         return;
       }
 
-      // 1. Immediately read last known location for near-instant response (< 50ms)
-      const lastKnown = await Location.getLastKnownPositionAsync().catch(
-        () => null,
-      );
-      if (lastKnown && lastKnown.coords) {
-        const lat = parseFloat(lastKnown.coords.latitude.toFixed(6));
-        const lng = parseFloat(lastKnown.coords.longitude.toFixed(6));
-        setLatitude(lat);
-        setLongitude(lng);
-        setAccuracy(Math.round(lastKnown.coords.accuracy || 15));
-        reverseGeocode(lat, lng);
-      }
-
-      // 2. Fetch fresh high-accuracy position with 12s timeout
-      const locPromise = Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High,
+      const coords = await acquireDeviceCoordinates({
+        onInstantFix: (instant) => {
+          setLatitude(instant.latitude);
+          setLongitude(instant.longitude);
+          setAccuracy(instant.accuracy);
+          reverseGeocode(instant.latitude, instant.longitude);
+        },
       });
-      const timeoutPromise = new Promise<null>((resolve) =>
-        setTimeout(() => resolve(null), 12000),
-      );
-      const loc = (await Promise.race([
-        locPromise,
-        timeoutPromise,
-      ])) as Location.LocationObject | null;
 
-      if (loc && loc.coords) {
-        const lat = parseFloat(loc.coords.latitude.toFixed(6));
-        const lng = parseFloat(loc.coords.longitude.toFixed(6));
-        setLatitude(lat);
-        setLongitude(lng);
-        setAccuracy(Math.round(loc.coords.accuracy || 5));
-        reverseGeocode(lat, lng);
-      }
+      setLatitude(coords.latitude);
+      setLongitude(coords.longitude);
+      setAccuracy(coords.accuracy);
+      reverseGeocode(coords.latitude, coords.longitude);
     } catch (err: any) {
       console.warn("Could not acquire current GPS location:", err);
-      toast.error("Could not acquire current device location.");
+      toast.error(
+        err?.message || "Could not acquire current device location.",
+        { duration: 6000 },
+      );
     } finally {
       setIsLocating(false);
     }

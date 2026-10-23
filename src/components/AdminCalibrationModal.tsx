@@ -22,6 +22,7 @@ import {
   reverseGeocodeCoords,
   GeocodedLocation,
 } from "../services/geocodingService";
+import { acquireDeviceCoordinates } from "../services/locationService";
 
 interface CalibrationPayload {
   type: string;
@@ -204,27 +205,25 @@ export const AdminCalibrationModal: React.FC<AdminCalibrationModalProps> = ({
   const acquireGps = async () => {
     setIsLocatingGps(true);
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") {
-        Alert.alert("Permission Required", "Location permission is required to pinpoint premises coordinates.");
-        return;
-      }
-
-      const loc = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Highest,
+      const coords = await acquireDeviceCoordinates({
+        onInstantFix: (instant) => {
+          setLatitude(instant.latitude);
+          setLongitude(instant.longitude);
+          setAccuracy(instant.accuracy);
+          reverseGeocode(instant.latitude, instant.longitude);
+        },
       });
 
-      if (loc && loc.coords) {
-        const lat = parseFloat(loc.coords.latitude.toFixed(6));
-        const lng = parseFloat(loc.coords.longitude.toFixed(6));
-        setLatitude(lat);
-        setLongitude(lng);
-        setAccuracy(Math.round(loc.coords.accuracy || 5));
-        reverseGeocode(lat, lng);
-      }
-    } catch (err) {
+      setLatitude(coords.latitude);
+      setLongitude(coords.longitude);
+      setAccuracy(coords.accuracy);
+      reverseGeocode(coords.latitude, coords.longitude);
+    } catch (err: any) {
       console.warn("GPS lock error:", err);
-      Alert.alert("GPS Timeout", "Unable to acquire high accuracy GPS lock. Ensure location services are turned on.");
+      Alert.alert(
+        "Location Unavailable",
+        err?.message || "Unable to acquire GPS fix. Ensure device location is turned on."
+      );
     } finally {
       setIsLocatingGps(false);
     }

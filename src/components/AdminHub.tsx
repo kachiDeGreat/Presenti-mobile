@@ -9,7 +9,7 @@ import {
   TextInput,
   Platform,
   Alert,
-  Image,
+  // Image,
   RefreshControl,
   Vibration,
 } from "react-native";
@@ -35,6 +35,7 @@ import {
 } from "../services/wifiScanService";
 import { updateOrganizationAnchors as updateAnchorsService } from "../services/organizationService";
 import { reverseGeocodeCoords } from "../services/geocodingService";
+import { acquireDeviceCoordinates } from "../services/locationService";
 
 const RADIUS_OPTIONS = [
   { value: 10, label: "10m", desc: "Executive Room" },
@@ -95,7 +96,7 @@ export const AdminHub: React.FC = () => {
         (err) => {
           console.warn("Live attendance stream error:", err);
           setIsAttendanceLoading(false);
-        }
+        },
       );
       return () => unsubscribe();
     } catch (e) {
@@ -165,7 +166,7 @@ export const AdminHub: React.FC = () => {
                 db,
                 "churches",
                 organization.id,
-                "attendance"
+                "attendance",
               );
               const snap = await getDocs(attRef);
               if (!snap.empty) {
@@ -187,7 +188,7 @@ export const AdminHub: React.FC = () => {
             }
           },
         },
-      ]
+      ],
     );
   };
 
@@ -197,22 +198,22 @@ export const AdminHub: React.FC = () => {
   const [calMode, setCalMode] = useState<"GEOFENCE_ONLY" | "HYBRID">(
     organization?.beaconConfig?.verificationMode === "HYBRID"
       ? "HYBRID"
-      : "GEOFENCE_ONLY"
+      : "GEOFENCE_ONLY",
   );
   const [ssidHint, setSsidHint] = useState<string>(
-    organization?.beaconConfig?.ssidHint || ""
+    organization?.beaconConfig?.ssidHint || "",
   );
   const [targetBssid, setTargetBssid] = useState<string>(
-    organization?.beaconConfig?.targetBssid || ""
+    organization?.beaconConfig?.targetBssid || "",
   );
   const [latitude, setLatitude] = useState<number>(
-    organization?.geoFallback?.latitude || 4.975
+    organization?.geoFallback?.latitude || 4.975,
   );
   const [longitude, setLongitude] = useState<number>(
-    organization?.geoFallback?.longitude || 8.3417
+    organization?.geoFallback?.longitude || 8.3417,
   );
   const [radiusMeters, setRadiusMeters] = useState<number>(
-    organization?.geoFallback?.radiusMeters || 20
+    organization?.geoFallback?.radiusMeters || 20,
   );
   const [locationAddress, setLocationAddress] = useState<string>("");
   const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
@@ -266,8 +267,9 @@ export const AdminHub: React.FC = () => {
   const isCalibrated = Boolean(
     organization?.isCalibrated ||
     organization?.geoFallback?.isCalibrated ||
-    (organization?.geoFallback?.latitude && organization?.geoFallback?.longitude) ||
-    (latitude !== 0 && longitude !== 0 && radiusMeters > 0)
+    (organization?.geoFallback?.latitude &&
+      organization?.geoFallback?.longitude) ||
+    (latitude !== 0 && longitude !== 0 && radiusMeters > 0),
   );
 
   const handleScanWifi = async () => {
@@ -278,10 +280,12 @@ export const AdminHub: React.FC = () => {
       setAvailableNetworks(list);
       if (list.length === 0) {
         toast.info(
-          "No Wi-Fi broadcast points detected nearby. You can enter the BSSID MAC address manually."
+          "No Wi-Fi broadcast points detected nearby. You can enter the BSSID MAC address manually.",
         );
       } else {
-        toast.success(`Discovered ${list.length} nearby Wi-Fi broadcast points.`);
+        toast.success(
+          `Discovered ${list.length} nearby Wi-Fi broadcast points.`,
+        );
       }
     } catch (err: any) {
       toast.warn("Wi-Fi scan limited or unavailable on this device.");
@@ -299,24 +303,36 @@ export const AdminHub: React.FC = () => {
   const handlePinpointGps = async () => {
     setIsLocatingGps(true);
     try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status !== "granted") {
-        toast.warn("Location permission is required to sample GPS coordinates.");
-        return;
-      }
-      const pos = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.High,
+      const coords = await acquireDeviceCoordinates({
+        onInstantFix: (instant) => {
+          setLatitude(instant.latitude);
+          setLongitude(instant.longitude);
+          setGpsAccuracy(instant.accuracy);
+        },
       });
-      setLatitude(pos.coords.latitude);
-      setLongitude(pos.coords.longitude);
-      setGpsAccuracy(Math.round(pos.coords.accuracy || 5));
+
+      setLatitude(coords.latitude);
+      setLongitude(coords.longitude);
+      setGpsAccuracy(coords.accuracy);
       Vibration.vibrate(50);
-      toast.success(
-        `GPS Pinpointed: ±${Math.round(pos.coords.accuracy || 5)}m high-accuracy fix.`
-      );
+      toast.success(`GPS Pinpointed: ±${coords.accuracy}m fix.`);
+
+      // Auto reverse-geocode to update address preview
+      reverseGeocodeCoords(coords.latitude, coords.longitude)
+        .then((addr) => {
+          if (addr?.displayName) {
+            setLocationAddress(addr.displayName);
+          } else if (addr?.name) {
+            setLocationAddress(addr.name);
+          }
+        })
+        .catch(() => {});
     } catch (err: any) {
       console.warn("GPS acquire error:", err);
-      toast.error("Could not capture GPS location from phone sensors.");
+      toast.error(
+        err?.message || "Could not capture GPS location from phone sensors.",
+        { duration: 6000 },
+      );
     } finally {
       setIsLocatingGps(false);
     }
@@ -326,7 +342,9 @@ export const AdminHub: React.FC = () => {
     if (!organization?.id || isSavingAnchors) return;
 
     if (calMode === "HYBRID" && !targetBssid.trim()) {
-      toast.warn("Please scan or enter an office Wi-Fi router BSSID MAC address.");
+      toast.warn(
+        "Please scan or enter an office Wi-Fi router BSSID MAC address.",
+      );
       return;
     }
     if (latitude === 0 && longitude === 0) {
@@ -347,7 +365,7 @@ export const AdminHub: React.FC = () => {
       await refreshOrganization();
       Vibration.vibrate([0, 80, 40, 80]);
       toast.success(
-        "Presence Anchors calibrated & synced to cloud! Web admin portal updated."
+        "Presence Anchors calibrated & synced to cloud! Web admin portal updated.",
       );
     } catch (err: any) {
       console.error("Save anchors error:", err);
@@ -517,7 +535,9 @@ export const AdminHub: React.FC = () => {
                   {onTimeCount}
                 </Text>
                 <Text style={styles.kpiSub}>
-                  {todayRecords.length > 0 ? `${punctualityRate}% rate` : "100% rate"}
+                  {todayRecords.length > 0
+                    ? `${punctualityRate}% rate`
+                    : "100% rate"}
                 </Text>
               </View>
 
@@ -607,15 +627,23 @@ export const AdminHub: React.FC = () => {
             {isAttendanceLoading ? (
               <View style={styles.loadingBox}>
                 <ActivityIndicator size="small" color="#2563EB" />
-                <Text style={styles.loadingText}>Syncing live attendance feed...</Text>
+                <Text style={styles.loadingText}>
+                  Syncing live attendance feed...
+                </Text>
               </View>
             ) : filteredFeedRecords.length === 0 ? (
               <View style={styles.emptyCard}>
                 <View style={styles.emptyIconCircle}>
-                  <Ionicons name="finger-print-outline" size={32} color="#94A3B8" />
+                  <Ionicons
+                    name="finger-print-outline"
+                    size={32}
+                    color="#94A3B8"
+                  />
                 </View>
                 <Text style={styles.emptyTitle}>
-                  {feedSearch ? "No matching records found" : "No Attendance Recorded Today"}
+                  {feedSearch
+                    ? "No matching records found"
+                    : "No Attendance Recorded Today"}
                 </Text>
                 <Text style={styles.emptySub}>
                   {feedSearch
@@ -644,7 +672,10 @@ export const AdminHub: React.FC = () => {
                         </View>
 
                         <View style={styles.punchInfoCol}>
-                          <Text style={styles.punchMemberName} numberOfLines={1}>
+                          <Text
+                            style={styles.punchMemberName}
+                            numberOfLines={1}
+                          >
                             {item.memberName}
                           </Text>
                           <Text style={styles.punchDept} numberOfLines={1}>
@@ -698,19 +729,28 @@ export const AdminHub: React.FC = () => {
 
                         {item.signedOutAt ? (
                           <View style={styles.signOutTag}>
-                            <Ionicons name="log-out" size={12} color="#059669" />
+                            <Ionicons
+                              name="log-out"
+                              size={12}
+                              color="#059669"
+                            />
                             <Text style={styles.signOutTagText}>
                               Out:{" "}
-                              {new Date(item.signedOutAt).toLocaleTimeString([], {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })}
+                              {new Date(item.signedOutAt).toLocaleTimeString(
+                                [],
+                                {
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                },
+                              )}
                             </Text>
                           </View>
                         ) : (
                           <View style={styles.presenceActiveTag}>
                             <View style={styles.activeDot} />
-                            <Text style={styles.presenceActiveText}>Active On-Site</Text>
+                            <Text style={styles.presenceActiveText}>
+                              Active On-Site
+                            </Text>
                           </View>
                         )}
                       </View>
@@ -744,7 +784,9 @@ export const AdminHub: React.FC = () => {
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.statusHeroTitle}>
-                    {isCalibrated ? "Presence Anchors Active" : "Anchors Not Calibrated"}
+                    {isCalibrated
+                      ? "Presence Anchors Active"
+                      : "Anchors Not Calibrated"}
                   </Text>
                   <Text style={styles.statusHeroSub}>
                     {isCalibrated
@@ -791,9 +833,12 @@ export const AdminHub: React.FC = () => {
 
             {/* Architecture Mode Selector */}
             <View style={styles.card}>
-              <Text style={styles.cardSectionTitle}>VERIFICATION ARCHITECTURE</Text>
+              <Text style={styles.cardSectionTitle}>
+                VERIFICATION ARCHITECTURE
+              </Text>
               <Text style={styles.cardSectionSub}>
-                Select the physical security method required for worker clock-ins.
+                Select the physical security method required for worker
+                clock-ins.
               </Text>
 
               <View style={styles.modeCardsRow}>
@@ -809,7 +854,9 @@ export const AdminHub: React.FC = () => {
                     <Ionicons
                       name="navigate"
                       size={20}
-                      color={calMode === "GEOFENCE_ONLY" ? "#2563EB" : "#64748B"}
+                      color={
+                        calMode === "GEOFENCE_ONLY" ? "#2563EB" : "#64748B"
+                      }
                     />
                     <View
                       style={[
@@ -817,7 +864,9 @@ export const AdminHub: React.FC = () => {
                         calMode === "GEOFENCE_ONLY" && styles.radioCircleActive,
                       ]}
                     >
-                      {calMode === "GEOFENCE_ONLY" && <View style={styles.radioDot} />}
+                      {calMode === "GEOFENCE_ONLY" && (
+                        <View style={styles.radioDot} />
+                      )}
                     </View>
                   </View>
                   <Text style={styles.modeChoiceTitle}>Satellite Geofence</Text>
@@ -851,7 +900,8 @@ export const AdminHub: React.FC = () => {
                   </View>
                   <Text style={styles.modeChoiceTitle}>Router + Geofence</Text>
                   <Text style={styles.modeChoiceSub}>
-                    Dual-Tier • Scans office router BSSID MAC address with GPS fallback.
+                    Dual-Tier • Scans office router BSSID MAC address with GPS
+                    fallback.
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -861,9 +911,12 @@ export const AdminHub: React.FC = () => {
             <View style={styles.card}>
               <View style={styles.cardHeaderRow}>
                 <View>
-                  <Text style={styles.cardSectionTitle}>1. GPS PERIMETER COORDINATES</Text>
+                  <Text style={styles.cardSectionTitle}>
+                    1. GPS PERIMETER COORDINATES
+                  </Text>
                   <Text style={styles.cardSectionSub}>
-                    Sample high-accuracy latitude & longitude from device sensors.
+                    Sample high-accuracy latitude & longitude from device
+                    sensors.
                   </Text>
                 </View>
               </View>
@@ -921,7 +974,8 @@ export const AdminHub: React.FC = () => {
             <View style={styles.card}>
               <Text style={styles.cardSectionTitle}>2. PERIMETER RADIUS</Text>
               <Text style={styles.cardSectionSub}>
-                Allowable distance workers can be from the anchor coordinate ({radiusMeters}m selected).
+                Allowable distance workers can be from the anchor coordinate (
+                {radiusMeters}m selected).
               </Text>
 
               <View style={styles.radiusPillsGrid}>
@@ -965,9 +1019,12 @@ export const AdminHub: React.FC = () => {
               <View style={styles.card}>
                 <View style={styles.cardHeaderRow}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.cardSectionTitle}>3. OFFICE WI-FI ROUTER ANCHOR</Text>
+                    <Text style={styles.cardSectionTitle}>
+                      3. OFFICE WI-FI ROUTER ANCHOR
+                    </Text>
                     <Text style={styles.cardSectionSub}>
-                      Pair with your premises Wi-Fi router's unique hardware BSSID.
+                      Pair with your premises Wi-Fi router's unique hardware
+                      BSSID.
                     </Text>
                   </View>
                   <TouchableOpacity
@@ -1030,7 +1087,9 @@ export const AdminHub: React.FC = () => {
                               >
                                 {net.ssid || "Hidden Network"}
                               </Text>
-                              <Text style={styles.networkBssid}>{net.bssid}</Text>
+                              <Text style={styles.networkBssid}>
+                                {net.bssid}
+                              </Text>
                             </View>
                             {isMatch && (
                               <Ionicons
@@ -1058,7 +1117,9 @@ export const AdminHub: React.FC = () => {
                 </View>
 
                 <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>ROUTER BSSID (MAC ADDRESS)</Text>
+                  <Text style={styles.inputLabel}>
+                    ROUTER BSSID (MAC ADDRESS)
+                  </Text>
                   <TextInput
                     style={[styles.textInput, styles.monoInput]}
                     placeholder="e.g. 34:2c:c4:91:a8:20"
@@ -1077,9 +1138,12 @@ export const AdminHub: React.FC = () => {
 
             {/* Map Preview */}
             <View style={styles.card}>
-              <Text style={styles.cardSectionTitle}>PREMISES GEOFENCE PREVIEW</Text>
+              <Text style={styles.cardSectionTitle}>
+                PREMISES GEOFENCE PREVIEW
+              </Text>
               <Text style={styles.cardSectionSub}>
-                Workers must be inside this circular boundary ({radiusMeters}m) to punch in.
+                Workers must be inside this circular boundary ({radiusMeters}m)
+                to punch in.
               </Text>
               <View style={styles.mapFrame}>
                 <PresenceMapMobile
@@ -1117,7 +1181,8 @@ export const AdminHub: React.FC = () => {
             <View style={styles.webSyncHintCard}>
               <Ionicons name="desktop-outline" size={16} color="#64748B" />
               <Text style={styles.webSyncHintText}>
-                Saving here immediately updates your Admin Web Portal in real time via Cloud Firestore.
+                Saving here immediately updates your Admin Web Portal in real
+                time via Cloud Firestore.
               </Text>
             </View>
           </View>
