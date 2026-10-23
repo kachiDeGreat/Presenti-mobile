@@ -68,11 +68,9 @@ export default function OnboardingScreen() {
   } = useAuth();
   const toast = useToast();
 
-  const [churchCodeInput, setChurchCodeInput] = useState(
-    organization?.churchCode || "",
-  );
+  const [churchCodeInput, setChurchCodeInput] = useState("");
   const [isVerifyingCode, setIsVerifyingCode] = useState(false);
-  const [verifiedOrg, setVerifiedOrg] = useState(organization);
+  const [verifiedOrg, setVerifiedOrg] = useState<any>(null);
 
   const [fullName, setFullName] = useState(user?.displayName || "");
   const [phoneNumber, setPhoneNumber] = useState("");
@@ -339,7 +337,18 @@ export default function OnboardingScreen() {
             <View style={styles.stepContainer}>
               {/* Paired Org Confirmation Banner */}
               <View style={styles.orgInfoCard}>
-                <Text style={styles.orgNameText}>{verifiedOrg.churchName}</Text>
+                <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                  <Text style={styles.orgNameText}>{verifiedOrg.churchName}</Text>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setVerifiedOrg(null);
+                      setChurchCodeInput("");
+                    }}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text style={{ fontSize: 12, fontWeight: "700", color: "#2563EB" }}>Change</Text>
+                  </TouchableOpacity>
+                </View>
                 <Text style={styles.orgBranchText}>
                   {verifiedOrg.branchName} • Code: {verifiedOrg.churchCode}
                 </Text>
@@ -377,7 +386,7 @@ export default function OnboardingScreen() {
               <View style={styles.fieldGroup}>
                 <Text style={styles.label}>Department Unit *</Text>
                 <View style={styles.deptChipsContainer}>
-                  {verifiedOrg.departments.map((dept) => {
+                  {verifiedOrg.departments.map((dept: string) => {
                     const isSelected = selectedDept === dept;
                     return (
                       <TouchableOpacity

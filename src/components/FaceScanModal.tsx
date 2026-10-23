@@ -17,6 +17,7 @@ import {
   compareFaceEmbeddings,
   FACE_MATCH_THRESHOLD,
   extractEmbeddingFromBase64,
+  validateFaceFrame,
 } from "../services/faceRecognitionService";
 import {
   FaceBiometricEngine,
@@ -175,6 +176,54 @@ export const FaceScanModal: React.FC<FaceScanModalProps> = ({
           throw new Error("Camera could not capture frame.");
         }
 
+        // 1. Validate Face Presence & Centering in Frame
+        const validation = validateFaceFrame(photo.base64);
+
+        if (!validation.hasFace || !validation.isCentered) {
+          if (mode === "ENROLL") {
+            setStep("REJECTED");
+            setFailureReason(
+              validation.reason || "No face detected in center of oval frame."
+            );
+            setGuidanceTip(
+              validation.isCentered ? "No Face Detected" : "Align Face in Center"
+            );
+            setGuidanceSubtip(
+              validation.reason || "Hold phone at eye level inside the oval frame."
+            );
+            Vibration.vibrate(180);
+            setIsProcessing(false);
+            return;
+          } else {
+            // VERIFY mode
+            if (attemptCountRef.current === 1 && !isManualTrigger) {
+              setStep("ALIGN");
+              setGuidanceTip("Adjust Face: Center in Oval");
+              setGuidanceSubtip(
+                validation.reason || "Look directly into the oval reticle"
+              );
+              setIsProcessing(false);
+              setTimeout(() => {
+                if (isMountedRef.current && visible) {
+                  executeScan(false);
+                }
+              }, 450);
+              return;
+            }
+            setStep("REJECTED");
+            setFailureReason(
+              validation.reason || "No face detected in camera frame."
+            );
+            setGuidanceTip("Face Not Detected");
+            setGuidanceSubtip(
+              "Position your face directly inside the oval and tap 'Scan Face Now'."
+            );
+            Vibration.vibrate(200);
+            setIsProcessing(false);
+            return;
+          }
+        }
+
         // Fast on-device vector extraction
         let vector: number[];
         if (engineRef.current) {
@@ -188,19 +237,21 @@ export const FaceScanModal: React.FC<FaceScanModalProps> = ({
           vector = extractEmbeddingFromBase64(photo.base64);
         }
 
-        // --- ENROLL MODE ---
+        // --- ENROLL MODE (APPLE FACE ID PROGRESSION) ---
         if (mode === "ENROLL") {
           // Animate progress to 100%
           Animated.timing(enrollProgressAnim, {
             toValue: 1,
-            duration: 600,
+            duration: 650,
             useNativeDriver: false,
           }).start();
 
           setStep("SUCCESS");
-          setGuidanceTip("Facial Identity Bound!");
-          setGuidanceSubtip("Account successfully locked to your biometric face profile");
-          Vibration.vibrate([0, 60, 40, 60]);
+          setGuidanceTip("Face ID Profile Bound! ✓");
+          setGuidanceSubtip(
+            "Account successfully locked to your biometric face profile"
+          );
+          Vibration.vibrate([0, 50, 40, 50]);
 
           const thumbnail = `data:image/jpeg;base64,${photo.base64}`;
           setTimeout(() => {
@@ -211,7 +262,7 @@ export const FaceScanModal: React.FC<FaceScanModalProps> = ({
                 thumbnailBase64: thumbnail,
               });
             }
-          }, 650);
+          }, 700);
           return;
         }
 
@@ -265,17 +316,17 @@ export const FaceScanModal: React.FC<FaceScanModalProps> = ({
           // Strict Rejection (Proxy clock-in or wrong face)
           setStep("REJECTED");
           setFailureReason(
-            `Face Mismatch (${match.confidencePercent}% vs ${FACE_MATCH_THRESHOLD * 100}% required). Proxy clock-in blocked.`,
+            `Face Mismatch (${match.confidencePercent}% vs ${FACE_MATCH_THRESHOLD * 100}% required). Proxy clock-in blocked.`
           );
           setGuidanceTip("Proxy Attempt Blocked");
           setGuidanceSubtip(
-            `The live face does not match the enrolled biometrics for ${memberName || "this account"}.`,
+            `The live face does not match the enrolled biometrics for ${memberName || "this account"}.`
           );
           Vibration.vibrate(250);
 
           if (onFailure) {
             onFailure(
-              `Face Mismatch (${match.confidencePercent}% match). Attendance rejected.`,
+              `Face Mismatch (${match.confidencePercent}% match). Attendance rejected.`
             );
           }
         }
@@ -298,21 +349,22 @@ export const FaceScanModal: React.FC<FaceScanModalProps> = ({
       isProcessing,
       visible,
       enrollProgressAnim,
-    ],
+    ]
   );
 
-  // When camera hardware is ready: trigger fast scan immediately!
+  // When camera hardware is ready: ONLY auto-trigger in VERIFY mode!
+  // In ENROLL mode, the user deliberately positions face and taps "Start Face ID Scan"!
   const handleCameraReady = useCallback(() => {
     setCameraReady(true);
-    // Instant scan trigger: small 120ms buffer for camera lens exposure stabilization
-    const timer = setTimeout(() => {
-      if (isMountedRef.current && visible) {
-        executeScan(false);
-      }
-    }, 120);
-
-    return () => clearTimeout(timer);
-  }, [executeScan, visible]);
+    if (mode === "VERIFY") {
+      const timer = setTimeout(() => {
+        if (isMountedRef.current && visible) {
+          executeScan(false);
+        }
+      }, 140);
+      return () => clearTimeout(timer);
+    }
+  }, [executeScan, visible, mode]);
 
   if (!visible) return null;
 
@@ -568,7 +620,7 @@ export const FaceScanModal: React.FC<FaceScanModalProps> = ({
                         <>
                           <Ionicons name="scan-outline" size={18} color="#FFFFFF" />
                           <Text style={styles.captureBtnText}>
-                            {mode === "ENROLL" ? "Capture & Bind Face" : "Scan Face Now"}
+                            {mode === "ENROLL" ? "Start Face ID Scan" : "Scan Face Now"}
                           </Text>
                         </>
                       )}

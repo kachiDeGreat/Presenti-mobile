@@ -114,18 +114,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         let loadedOrg = storedOrg;
         if (loadedOrg) {
-          setOrganization(loadedOrg);
-          fetchFreshOrganizationById(loadedOrg.id)
-            .then((fresh) => {
-              if (fresh) {
-                setOrganization(fresh);
-              } else {
-                setOrganization(null);
-                setCachedAnchors(null);
-                AsyncStorage.multiRemove([STORAGE_KEY_ORG, STORAGE_KEY_ANCHORS]).catch(() => {});
-              }
-            })
-            .catch(() => {});
+          const fresh = await fetchFreshOrganizationById(loadedOrg.id).catch(() => null);
+          if (fresh) {
+            setOrganization(fresh);
+            loadedOrg = fresh;
+          } else {
+            // Organization was deleted or not found in Firestore
+            loadedOrg = null;
+            setOrganization(null);
+            setMember(null);
+            setCachedAnchors(null);
+            await AsyncStorage.multiRemove([
+              STORAGE_KEY_ORG,
+              STORAGE_KEY_ANCHORS,
+              STORAGE_KEY_MEMBER,
+            ]).catch(() => {});
+          }
         }
 
         if (storedMember) {
@@ -320,16 +324,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         existingMember = null;
       }
 
-      // 5. If organization is already paired on this device, check member enrollment
+      // 5. If organization is cached on this device, verify that it still exists in Firestore
       if (activeOrg) {
-        setOrganization(activeOrg);
-        try {
-          const found = await findExistingMember(activeOrg.id, authUser.email, activeDeviceId);
-          if (found) {
-            existingMember = found;
+        const freshOrg = await fetchFreshOrganizationById(activeOrg.id).catch(() => null);
+        if (!freshOrg) {
+          // Organization was deleted in Firestore!
+          activeOrg = null;
+          existingMember = null;
+          setOrganization(null);
+          setCachedAnchors(null);
+          await AsyncStorage.multiRemove([STORAGE_KEY_ORG, STORAGE_KEY_ANCHORS, STORAGE_KEY_MEMBER]);
+        } else {
+          activeOrg = freshOrg;
+          try {
+            const found = await findExistingMember(activeOrg.id, authUser.email, activeDeviceId);
+            if (found) {
+              existingMember = found;
+              setOrganization(activeOrg);
+            } else {
+              // User is NOT an enrolled member of this cached organization!
+              // Do NOT force this organization onto a new user; let them onboard.
+              existingMember = null;
+              activeOrg = null;
+              setOrganization(null);
+              setCachedAnchors(null);
+              await AsyncStorage.multiRemove([STORAGE_KEY_ORG, STORAGE_KEY_ANCHORS, STORAGE_KEY_MEMBER]);
+            }
+          } catch (error) {
+            console.warn('findExistingMember check error:', error);
           }
-        } catch (error) {
-          console.warn('findExistingMember check error:', error);
         }
       }
 
@@ -525,10 +548,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await AsyncStorage.multiRemove([
         STORAGE_KEY_USER,
         STORAGE_KEY_MEMBER,
+        STORAGE_KEY_ORG,
+        STORAGE_KEY_ANCHORS,
         STORAGE_KEY_KNOWN_ACCOUNTS,
       ]);
       setUser(null);
       setMember(null);
+      setOrganization(null);
+      setCachedAnchors(null);
       setKnownAccounts([]);
     } catch (err) {
       console.error('Sign out error:', err);
