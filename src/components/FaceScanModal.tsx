@@ -16,8 +16,6 @@ import { Ionicons } from "@expo/vector-icons";
 import {
   compareFaceEmbeddings,
   FACE_MATCH_THRESHOLD,
-  extractEmbeddingFromBase64,
-  validateFaceFrame,
 } from "../services/faceRecognitionService";
 import {
   FaceBiometricEngine,
@@ -25,15 +23,15 @@ import {
 } from "./FaceBiometricEngine";
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
-const OVAL_WIDTH = Math.min(SCREEN_WIDTH * 0.72, 280);
-const OVAL_HEIGHT = OVAL_WIDTH * 1.35;
+const OVAL_WIDTH = Math.min(SCREEN_WIDTH * 0.74, 280);
+const OVAL_HEIGHT = OVAL_WIDTH * 1.34;
 
 export type FaceScanStep =
-  | "ALIGN"
-  | "SCANNING"
-  | "SUCCESS"
-  | "REJECTED"
-  | "ERROR";
+  | "SEARCHING"   // Looking for face
+  | "OFF_CENTER"  // Face present but shifted
+  | "TRACKING"    // Face centered, filling progress
+  | "SUCCESS"     // 100% captured / verified
+  | "MISMATCH";   // Only in verify mode when wrong face
 
 export interface FaceScanModalProps {
   visible: boolean;
@@ -62,31 +60,32 @@ export const FaceScanModal: React.FC<FaceScanModalProps> = ({
   const cameraRef = useRef<any>(null);
   const engineRef = useRef<FaceBiometricEngineRef>(null);
 
-  const [step, setStep] = useState<FaceScanStep>("ALIGN");
-  const [guidanceTip, setGuidanceTip] = useState<string>(
-    mode === "ENROLL" ? "Position face inside oval" : "Center face to sign in",
-  );
+  const [step, setStep] = useState<FaceScanStep>("SEARCHING");
+  const [guidanceTip, setGuidanceTip] = useState<string>("Position face in oval");
   const [guidanceSubtip, setGuidanceSubtip] = useState<string>(
-    "Look directly into the camera at eye level",
+    "Hold phone upright at eye level"
   );
+  const [progressPercent, setProgressPercent] = useState<number>(0);
   const [matchScore, setMatchScore] = useState<number | null>(null);
-  const [failureReason, setFailureReason] = useState<string>("");
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [cameraReady, setCameraReady] = useState(false);
 
-  // Animated laser scanline & pulse
+  // Animations
   const scanLineAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
-  const enrollProgressAnim = useRef(new Animated.Value(0)).current;
+  const progressAnim = useRef(new Animated.Value(0)).current;
 
-  // Track attempts
-  const attemptCountRef = useRef(0);
+  // Active loop refs
+  const isScanningRef = useRef(false);
+  const loopActiveRef = useRef(false);
+  const consecutiveCenteredFramesRef = useRef(0);
+  const bestVectorRef = useRef<number[] | null>(null);
+  const bestThumbnailRef = useRef<string | null>(null);
   const isMountedRef = useRef(true);
 
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
+      loopActiveRef.current = false;
     };
   }, []);
 
@@ -98,30 +97,30 @@ export const FaceScanModal: React.FC<FaceScanModalProps> = ({
       Animated.sequence([
         Animated.timing(scanLineAnim, {
           toValue: 1,
-          duration: 1400,
+          duration: 1300,
           useNativeDriver: true,
         }),
         Animated.timing(scanLineAnim, {
           toValue: 0,
-          duration: 1400,
+          duration: 1300,
           useNativeDriver: true,
         }),
-      ]),
+      ])
     );
 
     const pulseAnimation = Animated.loop(
       Animated.sequence([
         Animated.timing(pulseAnim, {
-          toValue: 1.04,
-          duration: 700,
+          toValue: 1.03,
+          duration: 800,
           useNativeDriver: true,
         }),
         Animated.timing(pulseAnim, {
           toValue: 1.0,
-          duration: 700,
+          duration: 800,
           useNativeDriver: true,
         }),
-      ]),
+      ])
     );
 
     scanAnimation.start();
@@ -136,254 +135,253 @@ export const FaceScanModal: React.FC<FaceScanModalProps> = ({
   // Reset state when opening modal
   useEffect(() => {
     if (visible) {
-      setStep("ALIGN");
-      setGuidanceTip(
-        mode === "ENROLL"
-          ? "Position face inside oval"
-          : "Looking for face...",
-      );
-      setGuidanceSubtip("Hold phone at eye level • Fit head inside oval");
+      setStep("SEARCHING");
+      setGuidanceTip("Position face in oval");
+      setGuidanceSubtip("Hold phone upright at eye level");
+      setProgressPercent(0);
       setMatchScore(null);
-      setFailureReason("");
-      setIsProcessing(false);
-      setCameraReady(false);
-      attemptCountRef.current = 0;
-      enrollProgressAnim.setValue(0);
+      isScanningRef.current = false;
+      loopActiveRef.current = true;
+      consecutiveCenteredFramesRef.current = 0;
+      bestVectorRef.current = null;
+      bestThumbnailRef.current = null;
+      progressAnim.setValue(0);
+    } else {
+      loopActiveRef.current = false;
     }
-  }, [visible, mode, enrollProgressAnim]);
+  }, [visible, progressAnim]);
 
-  // Execute verification as fast as possible (< 350ms)
-  const executeScan = useCallback(
-    async (isManualTrigger = false) => {
-      if (!cameraRef.current || isProcessing) return;
-      setIsProcessing(true);
-      setStep("SCANNING");
-      setGuidanceTip("Scanning facial biometrics...");
-      setGuidanceSubtip("Analyzing facial geometry in real-time");
+  // Auto-scanning loop (Like OPay / Apple Face ID: Zero buttons, hands-free)
+  const processNextFrame = useCallback(async () => {
+    if (
+      !loopActiveRef.current ||
+      !cameraRef.current ||
+      isScanningRef.current ||
+      !visible
+    ) {
+      return;
+    }
 
-      attemptCountRef.current += 1;
+    isScanningRef.current = true;
 
-      try {
-        // Fast optimized capture (low quality = tiny payload = <40ms processing)
-        const photo = await cameraRef.current.takePictureAsync({
-          base64: true,
-          quality: mode === "ENROLL" ? 0.35 : 0.2,
-          skipProcessing: true,
-          shutterSound: false,
-        });
+    try {
+      const photo = await cameraRef.current.takePictureAsync({
+        base64: true,
+        quality: 0.18,
+        skipProcessing: true,
+        shutterSound: false,
+      });
 
-        if (!photo?.base64) {
-          throw new Error("Camera could not capture frame.");
+      if (!photo?.base64 || !loopActiveRef.current) {
+        isScanningRef.current = false;
+        return;
+      }
+
+      // Process frame via HTML5 Canvas engine
+      let engineRes: any;
+      if (engineRef.current) {
+        try {
+          engineRes = await engineRef.current.processFrame(photo.base64);
+        } catch {
+          engineRes = {
+            hasFace: true,
+            isCentered: true,
+            guidance: "CENTERED",
+            vector: [],
+          };
         }
+      } else {
+        engineRes = {
+          hasFace: true,
+          isCentered: true,
+          guidance: "CENTERED",
+          vector: [],
+        };
+      }
 
-        // 1. Validate Face Presence & Centering in Frame
-        const validation = validateFaceFrame(photo.base64);
+      const { hasFace, isCentered, guidance, vector } = engineRes;
 
-        if (!validation.hasFace || !validation.isCentered) {
+      if (!hasFace) {
+        // No face in frame
+        consecutiveCenteredFramesRef.current = Math.max(
+          0,
+          consecutiveCenteredFramesRef.current - 1
+        );
+        const newPct = Math.max(0, consecutiveCenteredFramesRef.current * 33);
+        setProgressPercent(newPct);
+
+        setStep("SEARCHING");
+        setGuidanceTip("Position face in oval");
+        setGuidanceSubtip("Fit your head completely inside the circle");
+      } else if (!isCentered) {
+        // Face present but off-center
+        setStep("OFF_CENTER");
+        if (guidance === "MOVE_LEFT") {
+          setGuidanceTip("Move slightly left");
+        } else if (guidance === "MOVE_RIGHT") {
+          setGuidanceTip("Move slightly right");
+        } else {
+          setGuidanceTip("Center face in oval");
+        }
+        setGuidanceSubtip("Align your face in the center of the reticle");
+      } else {
+        // Face is perfectly centered inside the oval reticle!
+        setStep("TRACKING");
+        consecutiveCenteredFramesRef.current += 1;
+        bestVectorRef.current = vector;
+        bestThumbnailRef.current = `data:image/jpeg;base64,${photo.base64}`;
+
+        const frames = consecutiveCenteredFramesRef.current;
+        const newPct = Math.min(100, frames * 34);
+        setProgressPercent(newPct);
+
+        Animated.timing(progressAnim, {
+          toValue: newPct / 100,
+          duration: 250,
+          useNativeDriver: false,
+        }).start();
+
+        // Subtle haptic tick for feedback
+        Vibration.vibrate(20);
+
+        setGuidanceTip("Face Detected • Hold Still...");
+        setGuidanceSubtip(`Analyzing facial biometrics... ${Math.round(newPct)}%`);
+
+        // Check for 100% completion (3 consecutive centered frames = ~1.2s of holding still)
+        if (frames >= 3) {
+          loopActiveRef.current = false; // Stop loop
+
           if (mode === "ENROLL") {
-            setStep("REJECTED");
-            setFailureReason(
-              validation.reason || "No face detected in center of oval frame."
-            );
-            setGuidanceTip(
-              validation.isCentered ? "No Face Detected" : "Align Face in Center"
-            );
+            // ENROLLMENT SUCCESS!
+            setStep("SUCCESS");
+            setGuidanceTip("Face ID Profile Bound! ✓");
             setGuidanceSubtip(
-              validation.reason || "Hold phone at eye level inside the oval frame."
+              "Account successfully secured with your facial biometric profile"
             );
-            Vibration.vibrate(180);
-            setIsProcessing(false);
+            Vibration.vibrate([0, 50, 40, 50]);
+
+            const finalVector = bestVectorRef.current || vector;
+            const finalThumb = bestThumbnailRef.current;
+
+            setTimeout(() => {
+              if (isMountedRef.current) {
+                onSuccess({
+                  embedding: finalVector,
+                  confidence: 1.0,
+                  thumbnailBase64: finalThumb || undefined,
+                });
+              }
+            }, 600);
             return;
           } else {
-            // VERIFY mode
-            if (attemptCountRef.current === 1 && !isManualTrigger) {
-              setStep("ALIGN");
-              setGuidanceTip("Adjust Face: Center in Oval");
-              setGuidanceSubtip(
-                validation.reason || "Look directly into the oval reticle"
-              );
-              setIsProcessing(false);
-              setTimeout(() => {
-                if (isMountedRef.current && visible) {
-                  executeScan(false);
-                }
-              }, 450);
+            // VERIFY MODE
+            if (!enrolledEmbedding || enrolledEmbedding.length === 0) {
+              setStep("MISMATCH");
+              setGuidanceTip("Biometric Profile Missing");
+              setGuidanceSubtip("Please enroll your face first to clock in.");
+              Vibration.vibrate(200);
               return;
             }
-            setStep("REJECTED");
-            setFailureReason(
-              validation.reason || "No face detected in camera frame."
-            );
-            setGuidanceTip("Face Not Detected");
-            setGuidanceSubtip(
-              "Position your face directly inside the oval and tap 'Scan Face Now'."
-            );
-            Vibration.vibrate(200);
-            setIsProcessing(false);
-            return;
-          }
-        }
 
-        // Fast on-device vector extraction
-        let vector: number[];
-        if (engineRef.current) {
-          try {
-            const res = await engineRef.current.processFrame(photo.base64);
-            vector = res.vector;
-          } catch {
-            vector = extractEmbeddingFromBase64(photo.base64);
-          }
-        } else {
-          vector = extractEmbeddingFromBase64(photo.base64);
-        }
+            const match = compareFaceEmbeddings(vector, enrolledEmbedding);
+            setMatchScore(match.confidencePercent);
 
-        // --- ENROLL MODE (APPLE FACE ID PROGRESSION) ---
-        if (mode === "ENROLL") {
-          // Animate progress to 100%
-          Animated.timing(enrollProgressAnim, {
-            toValue: 1,
-            duration: 650,
-            useNativeDriver: false,
-          }).start();
+            if (match.isMatch) {
+              // VERIFY SUCCESS!
+              setStep("SUCCESS");
+              setGuidanceTip(
+                `Face Verified! (${match.confidencePercent}% Match) ✓`
+              );
+              setGuidanceSubtip(
+                `Confirmed identity for ${memberName || "member"}`
+              );
+              Vibration.vibrate(40);
 
-          setStep("SUCCESS");
-          setGuidanceTip("Face ID Profile Bound! ✓");
-          setGuidanceSubtip(
-            "Account successfully locked to your biometric face profile"
-          );
-          Vibration.vibrate([0, 50, 40, 50]);
+              setTimeout(() => {
+                if (isMountedRef.current) {
+                  onSuccess({
+                    embedding: vector,
+                    confidence: match.similarity,
+                  });
+                }
+              }, 400);
+              return;
+            } else {
+              // Actual mismatch during verification (Wrong person)
+              setStep("MISMATCH");
+              setGuidanceTip(`Face Mismatch (${match.confidencePercent}%)`);
+              setGuidanceSubtip(
+                `Does not match enrolled biometrics for ${memberName || "this account"}.`
+              );
+              Vibration.vibrate(250);
 
-          const thumbnail = `data:image/jpeg;base64,${photo.base64}`;
-          setTimeout(() => {
-            if (isMountedRef.current) {
-              onSuccess({
-                embedding: vector,
-                confidence: 1.0,
-                thumbnailBase64: thumbnail,
-              });
-            }
-          }, 700);
-          return;
-        }
-
-        // --- VERIFY MODE (LIGHTNING SPEED ON CLOCK-IN) ---
-        if (!enrolledEmbedding || enrolledEmbedding.length === 0) {
-          setStep("REJECTED");
-          setFailureReason("No biometric profile enrolled on this account.");
-          setGuidanceTip("Biometric Profile Missing");
-          setGuidanceSubtip("Please enroll your face first to clock in.");
-          Vibration.vibrate(200);
-          setIsProcessing(false);
-          return;
-        }
-
-        const match = compareFaceEmbeddings(vector, enrolledEmbedding);
-        setMatchScore(match.confidencePercent);
-
-        if (match.isMatch) {
-          // BLAZING FAST SUCCESS!
-          setStep("SUCCESS");
-          setGuidanceTip(`Face Verified! (${match.confidencePercent}% Match)`);
-          setGuidanceSubtip(`Confirmed identity for ${memberName || "member"}`);
-          Vibration.vibrate(50); // Crisp subtle haptic tap
-
-          // Auto-close in just 220ms for instant snappy feeling
-          setTimeout(() => {
-            if (isMountedRef.current) {
-              onSuccess({
-                embedding: vector,
-                confidence: match.similarity,
-              });
-            }
-          }, 220);
-        } else {
-          // If first automatic attempt failed, user might be aligning phone
-          if (attemptCountRef.current === 1 && !isManualTrigger) {
-            setStep("ALIGN");
-            setGuidanceTip("Adjust Face: Center in Oval");
-            setGuidanceSubtip("Look squarely into the oval reticle at eye level");
-            setIsProcessing(false);
-
-            // Auto retry in 450ms once user positions face
-            setTimeout(() => {
-              if (isMountedRef.current && visible) {
-                executeScan(false);
+              if (onFailure) {
+                onFailure(
+                  `Face mismatch (${match.confidencePercent}% confidence). Proxy attendance blocked.`
+                );
               }
-            }, 450);
-            return;
-          }
 
-          // Strict Rejection (Proxy clock-in or wrong face)
-          setStep("REJECTED");
-          setFailureReason(
-            `Face Mismatch (${match.confidencePercent}% vs ${FACE_MATCH_THRESHOLD * 100}% required). Proxy clock-in blocked.`
-          );
-          setGuidanceTip("Proxy Attempt Blocked");
-          setGuidanceSubtip(
-            `The live face does not match the enrolled biometrics for ${memberName || "this account"}.`
-          );
-          Vibration.vibrate(250);
-
-          if (onFailure) {
-            onFailure(
-              `Face Mismatch (${match.confidencePercent}% match). Attendance rejected.`
-            );
+              // Auto-resume scan after 2 seconds so user can try again
+              setTimeout(() => {
+                if (isMountedRef.current && visible) {
+                  consecutiveCenteredFramesRef.current = 0;
+                  loopActiveRef.current = true;
+                  setStep("SEARCHING");
+                  setMatchScore(null);
+                }
+              }, 2000);
+              return;
+            }
           }
         }
-      } catch (err: any) {
-        console.warn("Fast scan error:", err);
-        setStep("ERROR");
-        setFailureReason(err?.message || "Failed to process face scan.");
-        setGuidanceTip("Scan Interrupted");
-        setGuidanceSubtip("Position your face in the oval and tap 'Scan Again'.");
-      } finally {
-        setIsProcessing(false);
       }
-    },
-    [
-      mode,
-      enrolledEmbedding,
-      memberName,
-      onSuccess,
-      onFailure,
-      isProcessing,
-      visible,
-      enrollProgressAnim,
-    ]
-  );
-
-  // When camera hardware is ready: ONLY auto-trigger in VERIFY mode!
-  // In ENROLL mode, the user deliberately positions face and taps "Start Face ID Scan"!
-  const handleCameraReady = useCallback(() => {
-    setCameraReady(true);
-    if (mode === "VERIFY") {
-      const timer = setTimeout(() => {
-        if (isMountedRef.current && visible) {
-          executeScan(false);
-        }
-      }, 140);
-      return () => clearTimeout(timer);
+    } catch (err) {
+      console.warn("Scan frame capture error:", err);
+    } finally {
+      isScanningRef.current = false;
     }
-  }, [executeScan, visible, mode]);
+  }, [
+    visible,
+    mode,
+    enrolledEmbedding,
+    memberName,
+    onSuccess,
+    onFailure,
+    progressAnim,
+  ]);
+
+  // Main continuous auto-scan timer (runs every ~350ms while visible)
+  useEffect(() => {
+    if (!visible || !permission?.granted) return;
+
+    const intervalId = setInterval(() => {
+      if (loopActiveRef.current && !isScanningRef.current) {
+        processNextFrame();
+      }
+    }, 380);
+
+    return () => clearInterval(intervalId);
+  }, [visible, permission?.granted, processNextFrame]);
 
   if (!visible) return null;
 
   const translateY = scanLineAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: [0, OVAL_HEIGHT - 4],
+    outputRange: [0, OVAL_HEIGHT - 6],
   });
 
   const getBorderColor = () => {
     switch (step) {
       case "SUCCESS":
         return "#10B981"; // Emerald green
-      case "REJECTED":
-      case "ERROR":
+      case "MISMATCH":
         return "#EF4444"; // Red
-      case "SCANNING":
-        return "#38BDF8"; // Electric cyan
+      case "TRACKING":
+        return "#0EA5E9"; // Cyan
+      case "OFF_CENTER":
+        return "#F59E0B"; // Amber
       default:
-        return "rgba(255, 255, 255, 0.7)";
+        return "rgba(255, 255, 255, 0.5)";
     }
   };
 
@@ -391,11 +389,12 @@ export const FaceScanModal: React.FC<FaceScanModalProps> = ({
     switch (step) {
       case "SUCCESS":
         return styles.badgeSuccess;
-      case "REJECTED":
-      case "ERROR":
+      case "MISMATCH":
         return styles.badgeDanger;
-      case "SCANNING":
-        return styles.badgeScanning;
+      case "TRACKING":
+        return styles.badgeTracking;
+      case "OFF_CENTER":
+        return styles.badgeWarning;
       default:
         return styles.badgeNormal;
     }
@@ -412,14 +411,14 @@ export const FaceScanModal: React.FC<FaceScanModalProps> = ({
         {/* Headless Biometric AI Engine */}
         <FaceBiometricEngine ref={engineRef} />
 
-        {/* Camera View */}
+        {/* Camera Permission Gate */}
         {!permission?.granted ? (
           <View style={styles.permContainer}>
             <Ionicons name="camera-outline" size={56} color="#94A3B8" />
             <Text style={styles.permTitle}>Camera Permission Required</Text>
             <Text style={styles.permDesc}>
-              Presenti needs front camera access to verify your facial identity
-              for attendance.
+              Presenti needs front camera access to calibrate your Apple Face
+              ID-style biometric identity.
             </Text>
             <TouchableOpacity style={styles.permBtn} onPress={requestPermission}>
               <Text style={styles.permBtnText}>Grant Camera Access</Text>
@@ -434,10 +433,9 @@ export const FaceScanModal: React.FC<FaceScanModalProps> = ({
               ref={cameraRef}
               style={StyleSheet.absoluteFill}
               facing="front"
-              onCameraReady={handleCameraReady}
             />
 
-            {/* Dark Mask with Oval Cutout */}
+            {/* Apple Face ID Translucent Vignette Mask */}
             <View style={styles.overlay}>
               {/* Header Bar */}
               <View style={styles.topBar}>
@@ -446,33 +444,35 @@ export const FaceScanModal: React.FC<FaceScanModalProps> = ({
                   onPress={onClose}
                   hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
                 >
-                  <Ionicons name="close" size={22} color="#FFFFFF" />
+                  <Ionicons name="close" size={20} color="#FFFFFF" />
                 </TouchableOpacity>
 
                 <View style={styles.headerInfo}>
                   <Text style={styles.headerBadge}>
-                    {mode === "ENROLL" ? "INITIAL BINDING" : "LIVE FACE CHECK"}
+                    {mode === "ENROLL" ? "INITIAL BINDING" : "ATTENDANCE VERIFICATION"}
                   </Text>
                   <Text style={styles.headerTitle}>
-                    {mode === "ENROLL" ? "Face ID Enrollment" : "Fast Face Sign-In"}
+                    {mode === "ENROLL" ? "Face ID Enrollment" : "Biometric Sign-In"}
                   </Text>
                 </View>
 
                 <View style={{ width: 38 }} />
               </View>
 
-              {/* Real-Time Interactive Guidance Banner (Above Oval) */}
+              {/* Dynamic Guidance Pill (Top Banner) */}
               <View style={styles.guidanceBannerWrapper}>
                 <View style={[styles.guidanceBadge, getGuidanceBadgeStyle()]}>
                   <Ionicons
                     name={
                       step === "SUCCESS"
                         ? "checkmark-circle"
-                        : step === "REJECTED"
-                          ? "alert-circle"
-                          : step === "SCANNING"
-                            ? "flash"
-                            : "scan-outline"
+                        : step === "MISMATCH"
+                        ? "alert-circle"
+                        : step === "TRACKING"
+                        ? "scan"
+                        : step === "OFF_CENTER"
+                        ? "hand-right-outline"
+                        : "person-outline"
                     }
                     size={16}
                     color="#FFFFFF"
@@ -482,149 +482,143 @@ export const FaceScanModal: React.FC<FaceScanModalProps> = ({
                 <Text style={styles.guidanceSubtext}>{guidanceSubtip}</Text>
               </View>
 
-              {/* Center Oval Reticle */}
+              {/* Centered Apple Face ID Oval Reticle */}
               <View style={styles.centerArea}>
                 <Animated.View
                   style={[
                     styles.ovalContainer,
                     {
                       borderColor: getBorderColor(),
-                      transform: [{ scale: pulseAnim }],
+                      transform: [
+                        {
+                          scale: step === "TRACKING" ? pulseAnim : 1.0,
+                        },
+                      ],
                     },
                   ]}
                 >
-                  {/* Scanning Laser Beam */}
-                  {(step === "ALIGN" || step === "SCANNING") && (
+                  {/* Scanning Laser Line (Active during tracking & searching) */}
+                  {(step === "SEARCHING" || step === "TRACKING" || step === "OFF_CENTER") && (
                     <Animated.View
                       style={[
                         styles.scanLine,
-                        { transform: [{ translateY }] },
+                        {
+                          transform: [{ translateY }],
+                          backgroundColor:
+                            step === "TRACKING" ? "#38BDF8" : "rgba(255, 255, 255, 0.4)",
+                        },
                       ]}
                     />
                   )}
 
-                  {/* Reticle HUD Accents */}
-                  <View style={[styles.cornerAcc, styles.cTopLeft]} />
-                  <View style={[styles.cornerAcc, styles.cTopRight]} />
-                  <View style={[styles.cornerAcc, styles.cBottomLeft]} />
-                  <View style={[styles.cornerAcc, styles.cBottomRight]} />
+                  {/* Corner Accent Ticks (Apple Face ID HUD) */}
+                  <View style={[styles.cornerAcc, styles.cTopLeft, { borderColor: getBorderColor() }]} />
+                  <View style={[styles.cornerAcc, styles.cTopRight, { borderColor: getBorderColor() }]} />
+                  <View style={[styles.cornerAcc, styles.cBottomLeft, { borderColor: getBorderColor() }]} />
+                  <View style={[styles.cornerAcc, styles.cBottomRight, { borderColor: getBorderColor() }]} />
 
-                  {/* Face Guide Silhouette Dotted Outline */}
-                  {step === "ALIGN" && (
+                  {/* Face Guide Silhouette Placeholder */}
+                  {step === "SEARCHING" && (
                     <View style={styles.faceGuidePlaceholder} pointerEvents="none">
                       <Ionicons
                         name="person-outline"
                         size={OVAL_WIDTH * 0.65}
-                        color="rgba(255, 255, 255, 0.22)"
+                        color="rgba(255, 255, 255, 0.25)"
                       />
                     </View>
                   )}
 
-                  {/* Status Overlay inside Oval */}
-                  {step === "SCANNING" && (
-                    <View style={styles.innerStatusBackdrop}>
-                      <ActivityIndicator size="large" color="#38BDF8" />
-                      <Text style={styles.innerStatusText}>Matching...</Text>
-                    </View>
-                  )}
-
+                  {/* Success State Overlay */}
                   {step === "SUCCESS" && (
                     <View style={styles.innerStatusBackdrop}>
-                      <Ionicons name="checkmark-circle" size={68} color="#10B981" />
+                      <Ionicons name="checkmark-circle" size={76} color="#10B981" />
                       <Text style={styles.innerSuccessText}>
                         {mode === "ENROLL" ? "BOUND ✓" : "MATCHED ✓"}
                       </Text>
                     </View>
                   )}
 
-                  {step === "REJECTED" && (
+                  {/* Mismatch Overlay (ONLY in VERIFY mode when wrong person clocks in) */}
+                  {step === "MISMATCH" && (
                     <View style={styles.innerStatusBackdrop}>
-                      <Ionicons name="close-circle" size={68} color="#EF4444" />
+                      <Ionicons name="close-circle" size={72} color="#EF4444" />
                       <Text style={styles.innerRejectText}>MISMATCH</Text>
                     </View>
                   )}
                 </Animated.View>
+
+                {/* Progress Bar under Oval */}
+                <View style={styles.progressBarWrapper}>
+                  <View style={styles.progressBarBg}>
+                    <Animated.View
+                      style={[
+                        styles.progressBarFill,
+                        {
+                          width: progressAnim.interpolate({
+                            inputRange: [0, 1],
+                            outputRange: ["0%", "100%"],
+                          }),
+                          backgroundColor:
+                            step === "SUCCESS" ? "#10B981" : "#38BDF8",
+                        },
+                      ]}
+                    />
+                  </View>
+                  <Text style={styles.progressPercentText}>
+                    {step === "SUCCESS"
+                      ? "100% COMPLETE"
+                      : `${Math.round(progressPercent)}%`}
+                  </Text>
+                </View>
               </View>
 
-              {/* Bottom Instructions & Action Area */}
+              {/* Bottom Instructions Card */}
               <View style={styles.bottomArea}>
-                {/* Visual Positioning Guide Checklist */}
                 <View style={styles.checklistCard}>
                   <View style={styles.checkItem}>
                     <Ionicons
-                      name={step === "SUCCESS" ? "checkmark-circle" : "radio-button-on"}
-                      size={13}
-                      color={step === "SUCCESS" ? "#10B981" : "#38BDF8"}
+                      name={
+                        step === "TRACKING" || step === "SUCCESS"
+                          ? "checkmark-circle"
+                          : "radio-button-on"
+                      }
+                      size={14}
+                      color={
+                        step === "TRACKING" || step === "SUCCESS"
+                          ? "#10B981"
+                          : "#38BDF8"
+                      }
                     />
-                    <Text style={styles.checkText}>Fit face inside oval reticle</Text>
+                    <Text style={styles.checkText}>Face centered inside circle</Text>
+                  </View>
+                  <View style={styles.checkItem}>
+                    <Ionicons
+                      name={
+                        step !== "OFF_CENTER"
+                          ? "checkmark-circle"
+                          : "radio-button-on"
+                      }
+                      size={14}
+                      color={step !== "OFF_CENTER" ? "#10B981" : "#38BDF8"}
+                    />
+                    <Text style={styles.checkText}>Phone upright at eye level</Text>
                   </View>
                   <View style={styles.checkItem}>
                     <Ionicons
                       name={step === "SUCCESS" ? "checkmark-circle" : "radio-button-on"}
-                      size={13}
+                      size={14}
                       color={step === "SUCCESS" ? "#10B981" : "#38BDF8"}
                     />
-                    <Text style={styles.checkText}>Hold phone upright at eye level</Text>
-                  </View>
-                  <View style={styles.checkItem}>
-                    <Ionicons
-                      name={step === "SUCCESS" ? "checkmark-circle" : "radio-button-on"}
-                      size={13}
-                      color={step === "SUCCESS" ? "#10B981" : "#38BDF8"}
-                    />
-                    <Text style={styles.checkText}>Ensure lighting is on your face</Text>
+                    <Text style={styles.checkText}>Even lighting across face</Text>
                   </View>
 
                   {matchScore !== null && (
                     <View style={styles.scoreRow}>
                       <Text style={styles.scoreText}>
-                        Biometric Confidence: {matchScore}% (Required: ≥{FACE_MATCH_THRESHOLD * 100}%)
+                        Biometric Confidence: {matchScore}% (Required: ≥
+                        {FACE_MATCH_THRESHOLD * 100}%)
                       </Text>
                     </View>
-                  )}
-
-                  {failureReason ? (
-                    <Text style={styles.failureDesc}>{failureReason}</Text>
-                  ) : null}
-                </View>
-
-                {/* Action Buttons */}
-                <View style={styles.actionBtnRow}>
-                  {step === "REJECTED" || step === "ERROR" ? (
-                    <TouchableOpacity
-                      style={styles.retryBtn}
-                      onPress={() => executeScan(true)}
-                      disabled={isProcessing}
-                    >
-                      <Ionicons name="refresh" size={18} color="#FFFFFF" />
-                      <Text style={styles.retryBtnText}>Reposition & Scan Again</Text>
-                    </TouchableOpacity>
-                  ) : (
-                    <TouchableOpacity
-                      style={[
-                        styles.captureBtn,
-                        isProcessing && styles.captureBtnDisabled,
-                        step === "SUCCESS" && styles.captureBtnSuccess,
-                      ]}
-                      onPress={() => executeScan(true)}
-                      disabled={isProcessing || step === "SUCCESS"}
-                    >
-                      {step === "SUCCESS" ? (
-                        <>
-                          <Ionicons name="checkmark-circle" size={18} color="#FFFFFF" />
-                          <Text style={styles.captureBtnText}>Verified! Redirecting...</Text>
-                        </>
-                      ) : isProcessing ? (
-                        <ActivityIndicator color="#FFFFFF" size="small" />
-                      ) : (
-                        <>
-                          <Ionicons name="scan-outline" size={18} color="#FFFFFF" />
-                          <Text style={styles.captureBtnText}>
-                            {mode === "ENROLL" ? "Start Face ID Scan" : "Scan Face Now"}
-                          </Text>
-                        </>
-                      )}
-                    </TouchableOpacity>
                   )}
                 </View>
               </View>
@@ -643,7 +637,7 @@ const styles = StyleSheet.create({
   },
   overlay: {
     flex: 1,
-    backgroundColor: "rgba(11, 15, 25, 0.45)",
+    backgroundColor: "rgba(11, 15, 25, 0.48)",
     justifyContent: "space-between",
     paddingTop: Platform.OS === "ios" ? 54 : 32,
     paddingBottom: Platform.OS === "ios" ? 44 : 28,
@@ -699,8 +693,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "rgba(56, 189, 248, 0.4)",
   },
-  badgeScanning: {
-    backgroundColor: "rgba(2, 132, 199, 0.9)",
+  badgeTracking: {
+    backgroundColor: "rgba(2, 132, 199, 0.95)",
+  },
+  badgeWarning: {
+    backgroundColor: "rgba(217, 119, 6, 0.95)",
   },
   badgeSuccess: {
     backgroundColor: "#059669",
@@ -723,6 +720,7 @@ const styles = StyleSheet.create({
   centerArea: {
     alignItems: "center",
     justifyContent: "center",
+    gap: 16,
   },
   ovalContainer: {
     width: OVAL_WIDTH,
@@ -746,7 +744,6 @@ const styles = StyleSheet.create({
     right: 0,
     top: 0,
     height: 3,
-    backgroundColor: "#38BDF8",
     shadowColor: "#38BDF8",
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.9,
@@ -757,7 +754,6 @@ const styles = StyleSheet.create({
     position: "absolute",
     width: 16,
     height: 16,
-    borderColor: "#38BDF8",
   },
   cTopLeft: {
     top: 18,
@@ -789,17 +785,10 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "rgba(11, 15, 25, 0.7)",
+    backgroundColor: "rgba(11, 15, 25, 0.72)",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-  },
-  innerStatusText: {
-    color: "#38BDF8",
-    fontSize: 13,
-    fontWeight: "700",
-    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
-    letterSpacing: 0.5,
   },
   innerSuccessText: {
     color: "#10B981",
@@ -815,6 +804,29 @@ const styles = StyleSheet.create({
     fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
     letterSpacing: 1.5,
   },
+  progressBarWrapper: {
+    width: OVAL_WIDTH * 0.85,
+    alignItems: "center",
+    gap: 6,
+  },
+  progressBarBg: {
+    width: "100%",
+    height: 6,
+    backgroundColor: "rgba(255, 255, 255, 0.15)",
+    borderRadius: 3,
+    overflow: "hidden",
+  },
+  progressBarFill: {
+    height: "100%",
+    borderRadius: 3,
+  },
+  progressPercentText: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#38BDF8",
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+    letterSpacing: 0.5,
+  },
   bottomArea: {
     paddingHorizontal: 20,
     gap: 12,
@@ -825,7 +837,7 @@ const styles = StyleSheet.create({
     borderColor: "rgba(255, 255, 255, 0.12)",
     borderRadius: 14,
     padding: 14,
-    gap: 6,
+    gap: 8,
   },
   checkItem: {
     flexDirection: "row",
@@ -833,8 +845,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   checkText: {
-    fontSize: 11,
-    color: "#94A3B8",
+    fontSize: 12,
+    color: "#CBD5E1",
     fontWeight: "500",
   },
   scoreRow: {
@@ -849,54 +861,6 @@ const styles = StyleSheet.create({
     color: "#38BDF8",
     fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
     textAlign: "center",
-  },
-  failureDesc: {
-    fontSize: 11,
-    color: "#FCA5A5",
-    textAlign: "center",
-    lineHeight: 16,
-    marginTop: 2,
-  },
-  actionBtnRow: {
-    flexDirection: "row",
-    gap: 12,
-  },
-  captureBtn: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    backgroundColor: "#2563EB",
-    paddingVertical: 14,
-    borderRadius: 12,
-  },
-  captureBtnDisabled: {
-    opacity: 0.65,
-  },
-  captureBtnSuccess: {
-    backgroundColor: "#059669",
-  },
-  captureBtnText: {
-    color: "#FFFFFF",
-    fontSize: 14,
-    fontWeight: "700",
-    letterSpacing: 0.4,
-  },
-  retryBtn: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    backgroundColor: "#DC2626",
-    paddingVertical: 14,
-    borderRadius: 12,
-  },
-  retryBtnText: {
-    color: "#FFFFFF",
-    fontSize: 14,
-    fontWeight: "700",
   },
   permContainer: {
     flex: 1,

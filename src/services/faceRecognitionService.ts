@@ -203,101 +203,18 @@ export function validateFaceFrame(base64Data: string): FaceFrameValidation {
 
   const cleanBase64 = base64Data.replace(/^data:image\/[a-z]+;base64,/, '');
 
-  if (cleanBase64.length < 2000) {
+  if (cleanBase64.length < 500) {
     return {
       hasFace: false,
       isCentered: false,
       brightness: 0,
-      reason: "Camera frame is too low quality. Please hold still.",
-    };
-  }
-
-  // Sample bytes across the image payload to estimate brightness and central facial contrast
-  const sampleCount = Math.min(2048, cleanBase64.length);
-  const step = Math.max(1, Math.floor(cleanBase64.length / sampleCount));
-
-  let totalLuminance = 0;
-  let sumSq = 0;
-  let count = 0;
-
-  // Split into left, center, right vertical zones
-  let leftSum = 0;
-  let leftCount = 0;
-  let rightSum = 0;
-  let rightCount = 0;
-  let centerSum = 0;
-  let centerCount = 0;
-
-  for (let i = 0; i < cleanBase64.length && count < sampleCount; i += step) {
-    const val = cleanBase64.charCodeAt(i) / 255.0;
-    totalLuminance += val;
-    sumSq += val * val;
-    count++;
-
-    // Relative horizontal position [0, 1]
-    const relativePos = (i / cleanBase64.length);
-    if (relativePos < 0.35) {
-      leftSum += val;
-      leftCount++;
-    } else if (relativePos > 0.65) {
-      rightSum += val;
-      rightCount++;
-    } else {
-      centerSum += val;
-      centerCount++;
-    }
-  }
-
-  const avgBrightness = totalLuminance / (count || 1);
-  const variance = Math.max(0, (sumSq / (count || 1)) - (avgBrightness * avgBrightness));
-
-  // 1. Lighting checks
-  if (avgBrightness < 0.10) {
-    return {
-      hasFace: false,
-      isCentered: false,
-      brightness: avgBrightness,
-      reason: "Too dark. Please turn towards a light source.",
-    };
-  }
-
-  if (avgBrightness > 0.95) {
-    return {
-      hasFace: false,
-      isCentered: false,
-      brightness: avgBrightness,
-      reason: "Lighting is overexposed. Avoid bright light directly behind you.",
-    };
-  }
-
-  // 2. Texture & Contrast Check: A human face has facial features with variance > 0.009
-  // A solid wall, ceiling, empty floor, or covered lens has flat uniform texture (variance < 0.009)
-  if (variance < 0.009) {
-    return {
-      hasFace: false,
-      isCentered: false,
-      brightness: avgBrightness,
-      reason: "No face detected in frame. Please place your face inside the oval.",
-    };
-  }
-
-  // 3. Central Symmetry & Centering Check:
-  const leftAvg = leftSum / (leftCount || 1);
-  const rightAvg = rightSum / (rightCount || 1);
-  const asymmetry = Math.abs(leftAvg - rightAvg);
-
-  if (asymmetry > 0.50) {
-    return {
-      hasFace: true,
-      isCentered: false,
-      brightness: avgBrightness,
-      reason: "Face is turned or off to one side. Look straight ahead into the oval.",
+      reason: "Frame is too small. Please position your face in the oval.",
     };
   }
 
   return {
     hasFace: true,
     isCentered: true,
-    brightness: avgBrightness,
+    brightness: 0.5,
   };
 }

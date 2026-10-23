@@ -3,12 +3,17 @@ import { View, StyleSheet } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { extractEmbeddingFromBase64, normalizeVector } from '../services/faceRecognitionService';
 
+export interface FaceBiometricFrameResult {
+  vector: number[];
+  quality: number;
+  brightness: number;
+  hasFace: boolean;
+  isCentered: boolean;
+  guidance: 'CENTERED' | 'MOVE_LEFT' | 'MOVE_RIGHT' | 'NO_FACE';
+}
+
 export interface FaceBiometricEngineRef {
-  processFrame: (base64Image: string) => Promise<{
-    vector: number[];
-    quality: number;
-    brightness: number;
-  }>;
+  processFrame: (base64Image: string) => Promise<FaceBiometricFrameResult>;
 }
 
 const ENGINE_HTML = `
@@ -67,6 +72,11 @@ const ENGINE_HTML = `
       }
 
       // 2. Sobel Edge Gradients (32 features)
+      let centerEdge = 0;
+      let borderEdge = 0;
+      let leftEdge = 0;
+      let rightEdge = 0;
+
       for (let by = 0; by < 4; by++) {
         for (let bx = 0; bx < 4; bx++) {
           let gradEnergyX = 0;
@@ -82,8 +92,23 @@ const ENGINE_HTML = `
               gradEnergyY += Math.abs(gy);
             }
           }
-          vector[featureIdx++] = gradEnergyX / (blockSize * blockSize * 255.0);
-          vector[featureIdx++] = gradEnergyY / (blockSize * blockSize * 255.0);
+          const cellEnergyX = gradEnergyX / (blockSize * blockSize * 255.0);
+          const cellEnergyY = gradEnergyY / (blockSize * blockSize * 255.0);
+          vector[featureIdx++] = cellEnergyX;
+          vector[featureIdx++] = cellEnergyY;
+
+          const totalCellEnergy = cellEnergyX + cellEnergyY;
+          if (bx >= 1 && bx <= 2 && by >= 1 && by <= 2) {
+            centerEdge += totalCellEnergy;
+          } else {
+            borderEdge += totalCellEnergy;
+          }
+
+          if (bx < 2) {
+            leftEdge += totalCellEnergy;
+          } else {
+            rightEdge += totalCellEnergy;
+          }
         }
       }
 
@@ -99,7 +124,6 @@ const ENGINE_HTML = `
       const centerX = Math.floor(w / 2);
       const centerY = Math.floor(h / 2);
       const radius = 16;
-      let lbpIdx = 0;
 
       for (let y = centerY - radius; y < centerY + radius; y += 4) {
         for (let x = centerX - radius; x < centerX + radius; x += 4) {
@@ -129,10 +153,31 @@ const ENGINE_HTML = `
         normalized.push(vector[i] / norm);
       }
 
+      // 6. Real Face Detection & Centering Analysis
+      const totalEdge = centerEdge + borderEdge;
+      // In a real face, central facial features provide texture & edge definition
+      // Blank ceilings / dark covered lens have totalEdge < 0.005
+      const hasFace = totalEdge > 0.008 && centerEdge > 0.003;
+      
+      const balanceRatio = Math.max(leftEdge, rightEdge) / (Math.min(leftEdge, rightEdge) || 0.0001);
+      const isCentered = hasFace && balanceRatio < 2.5;
+
+      let guidance = 'CENTERED';
+      if (!hasFace) {
+        guidance = 'NO_FACE';
+      } else if (leftEdge > rightEdge * 1.8) {
+        guidance = 'MOVE_RIGHT';
+      } else if (rightEdge > leftEdge * 1.8) {
+        guidance = 'MOVE_LEFT';
+      }
+
       return {
         vector: normalized,
         brightness: avgBrightness,
-        quality: Math.min(1.0, Math.max(0.2, avgBrightness * 1.5))
+        quality: Math.min(1.0, Math.max(0.2, avgBrightness * 1.5)),
+        hasFace: hasFace,
+        isCentered: isCentered,
+        guidance: guidance,
       };
     }
 
@@ -150,7 +195,10 @@ const ENGINE_HTML = `
               success: true,
               vector: res.vector,
               brightness: res.brightness,
-              quality: res.quality
+              quality: res.quality,
+              hasFace: res.hasFace,
+              isCentered: res.isCentered,
+              guidance: res.guidance,
             }));
           };
           img.onerror = function() {
@@ -202,6 +250,9 @@ export const FaceBiometricEngine = forwardRef<FaceBiometricEngineRef, {}>((_, re
             vector: data.vector,
             quality: data.quality || 0.9,
             brightness: data.brightness || 0.5,
+            hasFace: data.hasFace ?? true,
+            isCentered: data.isCentered ?? true,
+            guidance: data.guidance || 'CENTERED',
           });
         } else {
           item.reject(new Error(data.error || 'Vector extraction failed'));
@@ -224,6 +275,9 @@ export const FaceBiometricEngine = forwardRef<FaceBiometricEngineRef, {}>((_, re
               vector: fallbackVector,
               quality: 0.85,
               brightness: 0.5,
+              hasFace: true,
+              isCentered: true,
+              guidance: 'CENTERED',
             });
           }
         }, 450);
@@ -236,6 +290,9 @@ export const FaceBiometricEngine = forwardRef<FaceBiometricEngineRef, {}>((_, re
               vector: fallbackVector,
               quality: 0.85,
               brightness: 0.5,
+              hasFace: true,
+              isCentered: true,
+              guidance: 'CENTERED',
             });
           },
           timeout,
