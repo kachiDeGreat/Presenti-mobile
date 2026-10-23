@@ -365,6 +365,9 @@ export async function registerMember(
     photoURL?: string;
     department: string;
     boundDeviceId: string;
+    faceEmbedding?: number[];
+    facePhotoURL?: string;
+    isFaceEnrolled?: boolean;
   }
 ): Promise<ChurchMember> {
   try {
@@ -418,11 +421,27 @@ export async function registerMember(
           );
         }
 
+        const updatesToApply: Record<string, any> = {};
         if (!existingMember.boundDeviceId && memberData.boundDeviceId) {
-          await updateDoc(doc(db, 'churches', orgId, 'members', existingMember.id), {
-            boundDeviceId: memberData.boundDeviceId,
-          });
           existingMember.boundDeviceId = memberData.boundDeviceId;
+          updatesToApply.boundDeviceId = memberData.boundDeviceId;
+        }
+
+        if (memberData.faceEmbedding && memberData.faceEmbedding.length > 0) {
+          existingMember.faceEmbedding = memberData.faceEmbedding;
+          existingMember.isFaceEnrolled = true;
+          existingMember.faceEnrolledAt = new Date().toISOString();
+          updatesToApply.faceEmbedding = memberData.faceEmbedding;
+          updatesToApply.isFaceEnrolled = true;
+          updatesToApply.faceEnrolledAt = existingMember.faceEnrolledAt;
+          if (memberData.facePhotoURL) {
+            existingMember.facePhotoURL = memberData.facePhotoURL;
+            updatesToApply.facePhotoURL = memberData.facePhotoURL;
+          }
+        }
+
+        if (Object.keys(updatesToApply).length > 0) {
+          await updateDoc(doc(db, 'churches', orgId, 'members', existingMember.id), updatesToApply);
         }
 
         await AsyncStorage.setItem(STORAGE_KEY_MEMBER, JSON.stringify(existingMember));
@@ -440,10 +459,20 @@ export async function registerMember(
       department: memberData.department,
       boundDeviceId: memberData.boundDeviceId,
       registeredAt: new Date().toISOString(),
+      ...(memberData.faceEmbedding && memberData.faceEmbedding.length > 0
+        ? {
+            faceEmbedding: memberData.faceEmbedding,
+            isFaceEnrolled: true,
+            faceEnrolledAt: new Date().toISOString(),
+            facePhotoURL: memberData.facePhotoURL,
+          }
+        : {
+            isFaceEnrolled: false,
+          }),
     };
 
     const memberDocRef = doc(db, 'churches', orgId, 'members', memberId);
-    await setDoc(memberDocRef, newMember);
+    await setDoc(memberDocRef, cleanFirestorePayload(newMember));
 
     // Register worker role in account_roles registry
     if (cleanEmail) {
@@ -468,6 +497,65 @@ export async function registerMember(
     return newMember;
   } catch (error) {
     console.error('Error registering member:', error);
+    throw error;
+  }
+}
+
+export async function updateMemberFaceEnrollment(
+  orgId: string,
+  memberId: string,
+  faceEmbedding: number[],
+  facePhotoURL?: string
+): Promise<void> {
+  try {
+    const memberDocRef = doc(db, 'churches', orgId, 'members', memberId);
+    const updates: Record<string, any> = {
+      faceEmbedding,
+      isFaceEnrolled: true,
+      faceEnrolledAt: new Date().toISOString(),
+    };
+    if (facePhotoURL) {
+      updates.facePhotoURL = facePhotoURL;
+    }
+
+    await updateDoc(memberDocRef, updates);
+
+    // Update local cache
+    const cached = await getCachedMember();
+    if (cached && cached.id === memberId) {
+      const updatedMember: ChurchMember = {
+        ...cached,
+        faceEmbedding,
+        isFaceEnrolled: true,
+        faceEnrolledAt: updates.faceEnrolledAt,
+        ...(facePhotoURL ? { facePhotoURL } : {}),
+      };
+      await AsyncStorage.setItem(STORAGE_KEY_MEMBER, JSON.stringify(updatedMember));
+    }
+  } catch (error) {
+    console.error('Error updating member face enrollment:', error);
+    throw error;
+  }
+}
+
+export async function clearMemberFaceEnrollment(orgId: string, memberId: string): Promise<void> {
+  try {
+    const memberDocRef = doc(db, 'churches', orgId, 'members', memberId);
+    await updateDoc(memberDocRef, {
+      faceEmbedding: [],
+      isFaceEnrolled: false,
+      faceEnrolledAt: '',
+    });
+
+    const cached = await getCachedMember();
+    if (cached && cached.id === memberId) {
+      cached.faceEmbedding = [];
+      cached.isFaceEnrolled = false;
+      delete cached.faceEnrolledAt;
+      await AsyncStorage.setItem(STORAGE_KEY_MEMBER, JSON.stringify(cached));
+    }
+  } catch (error) {
+    console.error('Error clearing member face enrollment:', error);
     throw error;
   }
 }

@@ -26,6 +26,7 @@ import {
   checkIfUserIsAdmin,
   getAdminOrganization,
   updateOrganizationAnchors as updateOrganizationAnchorsService,
+  updateMemberFaceEnrollment,
 } from '../services/organizationService';
 import type { Organization, CachedAnchors, ChurchMember, MobileUser } from '../types';
 
@@ -48,7 +49,14 @@ interface AuthContextType {
   signInWithGoogleCredential: (idToken: string, profileHint?: Partial<MobileUser>) => Promise<AuthResult>;
   addOrSelectGoogleAccount: (account: MobileUser) => Promise<AuthResult>;
   pairOrganization: (code: string) => Promise<Organization>;
-  completeRegistration: (fullName: string, phone: string, department: string) => Promise<ChurchMember>;
+  completeRegistration: (
+    fullName: string,
+    phone: string,
+    department: string,
+    faceEmbedding?: number[],
+    facePhotoURL?: string
+  ) => Promise<ChurchMember>;
+  enrollFace: (faceEmbedding: number[], facePhotoURL?: string) => Promise<void>;
   checkAdminStatus: (email?: string, uid?: string) => Promise<boolean>;
   signOut: () => Promise<void>;
   refreshOrganization: () => Promise<Organization | null>;
@@ -424,7 +432,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const completeRegistration = async (
     fullName: string,
     phone: string,
-    department: string
+    department: string,
+    faceEmbedding?: number[],
+    facePhotoURL?: string
   ): Promise<ChurchMember> => {
     if (!organization) {
       throw new Error('Please pair an organization first.');
@@ -450,10 +460,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       photoURL: user?.photoURL,
       department,
       boundDeviceId: deviceId, // Silently bound in background
+      faceEmbedding,
+      facePhotoURL,
+      isFaceEnrolled: Boolean(faceEmbedding && faceEmbedding.length > 0),
     });
 
     setMember(newMember);
     return newMember;
+  };
+
+  const enrollFace = async (faceEmbedding: number[], facePhotoURL?: string): Promise<void> => {
+    if (!organization?.id || !member?.id) {
+      throw new Error('No active organization or member profile found.');
+    }
+    await updateMemberFaceEnrollment(organization.id, member.id, faceEmbedding, facePhotoURL);
+    const updatedMember: ChurchMember = {
+      ...member,
+      faceEmbedding,
+      isFaceEnrolled: true,
+      faceEnrolledAt: new Date().toISOString(),
+      ...(facePhotoURL ? { facePhotoURL } : {}),
+    };
+    setMember(updatedMember);
+    await AsyncStorage.setItem(STORAGE_KEY_MEMBER, JSON.stringify(updatedMember));
   };
 
   const checkAdminStatus = useCallback(
@@ -572,6 +601,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         addOrSelectGoogleAccount,
         pairOrganization,
         completeRegistration,
+        enrollFace,
         checkAdminStatus,
         signOut,
         refreshOrganization,

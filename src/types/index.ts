@@ -58,6 +58,12 @@ export interface TodayPunchRecord {
     method: 'BIOMETRIC' | 'DEVICE_PASSCODE';
     biometricType?: string;
   };
+  faceVerification?: {
+    verified: boolean;
+    confidence: number;
+    method: 'IN_APP_FACE_AI';
+    failureReason?: string;
+  };
   signedOutAt?: string;
   signOutDisplayTime?: string;
   signOutStatus?: 'SYNCING' | 'SYNCED' | 'OFFLINE_CACHED';
@@ -87,6 +93,10 @@ export interface ChurchMember {
   department: string;
   boundDeviceId: string;
   registeredAt: string;
+  faceEmbedding?: number[];
+  facePhotoURL?: string;
+  isFaceEnrolled?: boolean;
+  faceEnrolledAt?: string;
 }
 
 export interface MobileUser {
@@ -120,5 +130,11 @@ export interface AttendanceRecordInput {
     verified: boolean;
     method: 'BIOMETRIC' | 'DEVICE_PASSCODE';
     biometricType?: string;
+  };
+  faceVerification?: {
+    verified: boolean;
+    confidence: number;
+    method: 'IN_APP_FACE_AI';
+    failureReason?: string;
   };
 }
