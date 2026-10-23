@@ -16,11 +16,21 @@ import { Ionicons } from "@expo/vector-icons";
 import {
   compareFaceEmbeddings,
   FACE_MATCH_THRESHOLD,
+  extractEmbeddingFromBase64,
 } from "../services/faceRecognitionService";
 import {
   FaceBiometricEngine,
   FaceBiometricEngineRef,
 } from "./FaceBiometricEngine";
+
+// Safe dynamic initialization of Google ML Kit Native Module
+let mlkitDetector: any = null;
+try {
+  const { RNMLKitFaceDetector } = require("@infinitered/react-native-mlkit-face-detection");
+  mlkitDetector = new RNMLKitFaceDetector({ performanceMode: "fast" });
+} catch {
+  // Falls back to Canvas engine if native binary is not yet compiled
+}
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window");
 const OVAL_WIDTH = Math.min(SCREEN_WIDTH * 0.74, 280);
@@ -178,29 +188,50 @@ export const FaceScanModal: React.FC<FaceScanModalProps> = ({
         return;
       }
 
-      // Process frame via HTML5 Canvas engine
-      let engineRes: any;
-      if (engineRef.current) {
+      let hasFace = false;
+      let isCentered = false;
+      let guidance = "NO_FACE";
+      let vector: number[] = [];
+
+      // 1. Primary AI Engine: Google ML Kit (Native On-Device)
+      if (mlkitDetector && photo?.uri) {
         try {
-          engineRes = await engineRef.current.processFrame(photo.base64);
-        } catch {
-          engineRes = {
-            hasFace: false,
-            isCentered: false,
-            guidance: "NO_FACE",
-            vector: [],
-          };
-        }
-      } else {
-        engineRes = {
-          hasFace: false,
-          isCentered: false,
-          guidance: "NO_FACE",
-          vector: [],
-        };
+          const mlkitRes = await mlkitDetector.detectFaces(photo.uri);
+          if (mlkitRes && Array.isArray(mlkitRes.faces)) {
+            if (mlkitRes.faces.length > 0) {
+              hasFace = true;
+              const primaryFace = mlkitRes.faces[0];
+              const yaw = primaryFace.headEulerAngleY || 0;
+              if (yaw > 16) {
+                isCentered = false;
+                guidance = "MOVE_LEFT";
+              } else if (yaw < -16) {
+                isCentered = false;
+                guidance = "MOVE_RIGHT";
+              } else {
+                isCentered = true;
+                guidance = "CENTERED";
+              }
+            }
+          }
+        } catch {}
       }
 
-      const { hasFace, isCentered, guidance, vector } = engineRes;
+      // 2. Secondary Engine: HTML5 Canvas Edge Gradients
+      if (!hasFace && engineRef.current && photo?.base64) {
+        try {
+          const engineRes = await engineRef.current.processFrame(photo.base64);
+          hasFace = Boolean(engineRes.hasFace);
+          isCentered = Boolean(engineRes.isCentered);
+          guidance = engineRes.guidance || "NO_FACE";
+          vector = engineRes.vector || [];
+        } catch {}
+      }
+
+      // 3. Extract 128-D biometric vector for Firestore attendance comparison
+      if (hasFace && (!vector || vector.length === 0)) {
+        vector = extractEmbeddingFromBase64(photo.base64);
+      }
 
       if (!hasFace) {
         // No face in frame
