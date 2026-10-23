@@ -155,12 +155,12 @@ const ENGINE_HTML = `
 
       // 6. Real Face Detection & Centering Analysis
       const totalEdge = centerEdge + borderEdge;
-      // In a real face, central facial features provide texture & edge definition
-      // Blank ceilings / dark covered lens have totalEdge < 0.005
-      const hasFace = totalEdge > 0.008 && centerEdge > 0.003;
+      // In a real human face, eyes, nose, and mouth produce significant edge gradients
+      // Sky, ceilings, walls, or open air produce totalEdge < 0.015
+      const hasFace = totalEdge > 0.035 && centerEdge > 0.018;
       
       const balanceRatio = Math.max(leftEdge, rightEdge) / (Math.min(leftEdge, rightEdge) || 0.0001);
-      const isCentered = hasFace && balanceRatio < 2.5;
+      const isCentered = hasFace && balanceRatio < 2.2;
 
       let guidance = 'CENTERED';
       if (!hasFace) {
@@ -205,6 +205,9 @@ const ENGINE_HTML = `
             window.ReactNativeWebView.postMessage(JSON.stringify({
               id: msg.id,
               success: false,
+              hasFace: false,
+              isCentered: false,
+              guidance: 'NO_FACE',
               error: 'Image decoding failed'
             }));
           };
@@ -250,12 +253,19 @@ export const FaceBiometricEngine = forwardRef<FaceBiometricEngineRef, {}>((_, re
             vector: data.vector,
             quality: data.quality || 0.9,
             brightness: data.brightness || 0.5,
-            hasFace: data.hasFace ?? true,
-            isCentered: data.isCentered ?? true,
-            guidance: data.guidance || 'CENTERED',
+            hasFace: Boolean(data.hasFace),
+            isCentered: Boolean(data.isCentered),
+            guidance: data.guidance || 'NO_FACE',
           });
         } else {
-          item.reject(new Error(data.error || 'Vector extraction failed'));
+          item.resolve({
+            vector: [],
+            quality: 0,
+            brightness: 0,
+            hasFace: false,
+            isCentered: false,
+            guidance: 'NO_FACE',
+          });
         }
       }
     } catch {}
@@ -266,7 +276,7 @@ export const FaceBiometricEngine = forwardRef<FaceBiometricEngineRef, {}>((_, re
       const reqId = 'face_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
 
       return new Promise((resolve) => {
-        // High-speed fallback: If WebView takes > 450ms or is busy, fallback to pure JS extractor
+        // High-speed fallback: Never assume face is present on timeout
         const timeout = setTimeout(() => {
           if (pendingRequests.current.has(reqId)) {
             pendingRequests.current.delete(reqId);
@@ -275,12 +285,12 @@ export const FaceBiometricEngine = forwardRef<FaceBiometricEngineRef, {}>((_, re
               vector: fallbackVector,
               quality: 0.85,
               brightness: 0.5,
-              hasFace: true,
-              isCentered: true,
-              guidance: 'CENTERED',
+              hasFace: false,
+              isCentered: false,
+              guidance: 'NO_FACE',
             });
           }
-        }, 450);
+        }, 1200);
 
         pendingRequests.current.set(reqId, {
           resolve,
@@ -290,9 +300,9 @@ export const FaceBiometricEngine = forwardRef<FaceBiometricEngineRef, {}>((_, re
               vector: fallbackVector,
               quality: 0.85,
               brightness: 0.5,
-              hasFace: true,
-              isCentered: true,
-              guidance: 'CENTERED',
+              hasFace: false,
+              isCentered: false,
+              guidance: 'NO_FACE',
             });
           },
           timeout,

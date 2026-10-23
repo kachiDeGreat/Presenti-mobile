@@ -80,6 +80,7 @@ export const FaceScanModal: React.FC<FaceScanModalProps> = ({
   const bestVectorRef = useRef<number[] | null>(null);
   const bestThumbnailRef = useRef<string | null>(null);
   const isMountedRef = useRef(true);
+  const scanTimerRef = useRef<any>(null);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -184,17 +185,17 @@ export const FaceScanModal: React.FC<FaceScanModalProps> = ({
           engineRes = await engineRef.current.processFrame(photo.base64);
         } catch {
           engineRes = {
-            hasFace: true,
-            isCentered: true,
-            guidance: "CENTERED",
+            hasFace: false,
+            isCentered: false,
+            guidance: "NO_FACE",
             vector: [],
           };
         }
       } else {
         engineRes = {
-          hasFace: true,
-          isCentered: true,
-          guidance: "CENTERED",
+          hasFace: false,
+          isCentered: false,
+          guidance: "NO_FACE",
           vector: [],
         };
       }
@@ -339,6 +340,13 @@ export const FaceScanModal: React.FC<FaceScanModalProps> = ({
       console.warn("Scan frame capture error:", err);
     } finally {
       isScanningRef.current = false;
+      if (loopActiveRef.current && isMountedRef.current && visible) {
+        scanTimerRef.current = setTimeout(() => {
+          if (loopActiveRef.current && isMountedRef.current && visible) {
+            processNextFrame();
+          }
+        }, 320);
+      }
     }
   }, [
     visible,
@@ -350,17 +358,23 @@ export const FaceScanModal: React.FC<FaceScanModalProps> = ({
     progressAnim,
   ]);
 
-  // Main continuous auto-scan timer (runs every ~350ms while visible)
+  // Main continuous auto-scan loop trigger
   useEffect(() => {
     if (!visible || !permission?.granted) return;
 
-    const intervalId = setInterval(() => {
-      if (loopActiveRef.current && !isScanningRef.current) {
+    loopActiveRef.current = true;
+    scanTimerRef.current = setTimeout(() => {
+      if (loopActiveRef.current && isMountedRef.current && visible) {
         processNextFrame();
       }
-    }, 380);
+    }, 450);
 
-    return () => clearInterval(intervalId);
+    return () => {
+      loopActiveRef.current = false;
+      if (scanTimerRef.current) {
+        clearTimeout(scanTimerRef.current);
+      }
+    };
   }, [visible, permission?.granted, processNextFrame]);
 
   if (!visible) return null;
