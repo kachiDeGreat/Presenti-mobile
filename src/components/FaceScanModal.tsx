@@ -217,14 +217,19 @@ export const FaceScanModal: React.FC<FaceScanModalProps> = ({
         } catch {}
       }
 
-      // 2. Secondary Engine: HTML5 Canvas Edge Gradients
-      if (!hasFace && engineRef.current && photo?.base64) {
+      let engineThumb: string | undefined;
+
+      // 2. Secondary Engine: HTML5 Canvas Edge Gradients & Micro-Thumbnail
+      if (engineRef.current && photo?.base64) {
         try {
           const engineRes = await engineRef.current.processFrame(photo.base64);
-          hasFace = Boolean(engineRes.hasFace);
-          isCentered = Boolean(engineRes.isCentered);
-          guidance = engineRes.guidance || "NO_FACE";
-          vector = engineRes.vector || [];
+          if (!hasFace) {
+            hasFace = Boolean(engineRes.hasFace);
+            isCentered = Boolean(engineRes.isCentered);
+            guidance = engineRes.guidance || "NO_FACE";
+            vector = engineRes.vector || [];
+          }
+          engineThumb = engineRes.thumbnail;
         } catch {}
       }
 
@@ -261,7 +266,10 @@ export const FaceScanModal: React.FC<FaceScanModalProps> = ({
         setStep("TRACKING");
         consecutiveCenteredFramesRef.current += 1;
         bestVectorRef.current = vector;
-        bestThumbnailRef.current = `data:image/jpeg;base64,${photo.base64}`;
+        // Use lightweight 3KB canvas thumbnail to strictly respect Firestore 1MB limits
+        bestThumbnailRef.current =
+          engineThumb ||
+          (photo.base64 && photo.base64.length < 80000 ? `data:image/jpeg;base64,${photo.base64}` : null);
 
         const frames = consecutiveCenteredFramesRef.current;
         const newPct = Math.min(100, frames * 34);

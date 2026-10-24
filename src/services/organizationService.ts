@@ -12,12 +12,62 @@ import {
   onSnapshot,
   limit,
 } from 'firebase/firestore';
-import { db } from '../config/firebase';
+import { db, storage } from '../config/firebase';
+import { ref as storageRef, uploadString, getDownloadURL } from 'firebase/storage';
 import type { Organization, CachedAnchors, ChurchMember, AttendanceRecordInput } from '../types';
 
 const STORAGE_KEY_ANCHORS = '@sanctuary_cached_anchors';
 const STORAGE_KEY_ORG = '@sanctuary_active_org';
 const STORAGE_KEY_MEMBER = '@sanctuary_member_profile';
+
+/**
+ * Safely sanitizes or uploads a face photo to Firebase Storage.
+ * Ensures the value written to Firestore NEVER exceeds Firestore's 1,048,487 byte document/field limit.
+ * If rawPhoto is a large data URI, it attempts to upload to Firebase Storage and returns the download URL.
+ * If Storage is unavailable or fails, it only retains data URIs if they are under 70KB (e.g. 64x64 micro-thumbnails).
+ * Any payload larger than 70KB is safely discarded so member registration never fails.
+ */
+export async function sanitizeOrUploadFacePhoto(
+  orgId: string,
+  memberId: string,
+  rawPhoto?: string
+): Promise<string | undefined> {
+  if (!rawPhoto) return undefined;
+
+  const trimmed = rawPhoto.trim();
+  if (!trimmed) return undefined;
+
+  // 1. External or Firebase Storage URL (e.g., https://...)
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return trimmed;
+  }
+
+  // 2. Data URI (data:image/...)
+  if (trimmed.startsWith('data:image/')) {
+    // If Firebase Storage is configured, try uploading it for permanent high-res storage
+    if (storage) {
+      try {
+        const fileRef = storageRef(storage, `churches/${orgId}/members/${memberId}/face_avatar.jpg`);
+        await uploadString(fileRef, trimmed, 'data_url');
+        const downloadUrl = await getDownloadURL(fileRef);
+        return downloadUrl;
+      } catch (storageErr) {
+        console.warn('Firebase Storage upload failed or not enabled, evaluating data URL fallback:', storageErr);
+      }
+    }
+
+    // 3. Fallback: only keep inline base64 if it is lightweight (< 70,000 chars, ~50KB)
+    // Firestore strictly enforces a 1,048,487 byte per-document limit.
+    if (trimmed.length < 70000) {
+      return trimmed;
+    }
+
+    console.warn(`Face photo data URL is too large (${trimmed.length} bytes) and Firebase Storage was unavailable. Discarding raw photo to protect Firestore document size.`);
+    return undefined;
+  }
+
+  return trimmed.length < 70000 ? trimmed : undefined;
+}
 
 export async function fetchOrganizationByCode(rawCode: string): Promise<Organization | null> {
   const cleanCode = rawCode.trim().toUpperCase();
@@ -435,13 +485,20 @@ export async function registerMember(
           updatesToApply.isFaceEnrolled = true;
           updatesToApply.faceEnrolledAt = existingMember.faceEnrolledAt;
           if (memberData.facePhotoURL) {
-            existingMember.facePhotoURL = memberData.facePhotoURL;
-            updatesToApply.facePhotoURL = memberData.facePhotoURL;
+            const sanitizedPhoto = await sanitizeOrUploadFacePhoto(
+              orgId,
+              existingMember.id,
+              memberData.facePhotoURL
+            );
+            if (sanitizedPhoto) {
+              existingMember.facePhotoURL = sanitizedPhoto;
+              updatesToApply.facePhotoURL = sanitizedPhoto;
+            }
           }
         }
 
         if (Object.keys(updatesToApply).length > 0) {
-          await updateDoc(doc(db, 'churches', orgId, 'members', existingMember.id), updatesToApply);
+          await updateDoc(doc(db, 'churches', orgId, 'members', existingMember.id), cleanFirestorePayload(updatesToApply));
         }
 
         await AsyncStorage.setItem(STORAGE_KEY_MEMBER, JSON.stringify(existingMember));
@@ -450,6 +507,10 @@ export async function registerMember(
     }
 
     const memberId = 'mem_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+    const sanitizedFacePhoto = memberData.facePhotoURL
+      ? await sanitizeOrUploadFacePhoto(orgId, memberId, memberData.facePhotoURL)
+      : undefined;
+
     const newMember: ChurchMember = {
       id: memberId,
       fullName: memberData.fullName.trim(),
@@ -464,7 +525,7 @@ export async function registerMember(
             faceEmbedding: memberData.faceEmbedding,
             isFaceEnrolled: true,
             faceEnrolledAt: new Date().toISOString(),
-            facePhotoURL: memberData.facePhotoURL,
+            facePhotoURL: sanitizedFacePhoto,
           }
         : {
             isFaceEnrolled: false,
@@ -509,16 +570,20 @@ export async function updateMemberFaceEnrollment(
 ): Promise<void> {
   try {
     const memberDocRef = doc(db, 'churches', orgId, 'members', memberId);
+    const sanitizedFacePhoto = facePhotoURL
+      ? await sanitizeOrUploadFacePhoto(orgId, memberId, facePhotoURL)
+      : undefined;
+
     const updates: Record<string, any> = {
       faceEmbedding,
       isFaceEnrolled: true,
       faceEnrolledAt: new Date().toISOString(),
     };
-    if (facePhotoURL) {
-      updates.facePhotoURL = facePhotoURL;
+    if (sanitizedFacePhoto) {
+      updates.facePhotoURL = sanitizedFacePhoto;
     }
 
-    await updateDoc(memberDocRef, updates);
+    await updateDoc(memberDocRef, cleanFirestorePayload(updates));
 
     // Update local cache
     const cached = await getCachedMember();
@@ -528,7 +593,7 @@ export async function updateMemberFaceEnrollment(
         faceEmbedding,
         isFaceEnrolled: true,
         faceEnrolledAt: updates.faceEnrolledAt,
-        ...(facePhotoURL ? { facePhotoURL } : {}),
+        ...(sanitizedFacePhoto ? { facePhotoURL: sanitizedFacePhoto } : {}),
       };
       await AsyncStorage.setItem(STORAGE_KEY_MEMBER, JSON.stringify(updatedMember));
     }
@@ -629,8 +694,9 @@ export async function findExistingMember(orgId: string, email?: string, deviceId
 }
 
 /**
- * Recursively cleans an object/array to remove all undefined values.
- * Firestore strictly throws an exception if any field or nested property is undefined.
+ * Recursively cleans an object/array to remove all undefined values and discard oversized fields.
+ * Firestore strictly throws an exception if any field or nested property is undefined,
+ * or if any document/field exceeds 1,048,487 bytes.
  */
 function cleanFirestorePayload<T>(data: T): T {
   if (data === null || data === undefined) {
@@ -647,6 +713,9 @@ function cleanFirestorePayload<T>(data: T): T {
       if (value !== undefined) {
         if (typeof value === 'object' && value !== null && !(value instanceof Date)) {
           clean[key] = cleanFirestorePayload(value);
+        } else if (typeof value === 'string' && value.length > 500000) {
+          // Guard: String size exceeds safe limit (1,048,487 bytes limit on Firestore)
+          console.warn(`Dropped property "${key}" from Firestore payload because size (${value.length} bytes) exceeds limit.`);
         } else {
           clean[key] = value;
         }

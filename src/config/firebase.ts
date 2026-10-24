@@ -46,8 +46,17 @@ try {
 } catch {
   db = getFirestore(app);
 }
+import { getStorage, type FirebaseStorage } from 'firebase/storage';
+
+let storage: FirebaseStorage;
+try {
+  storage = getStorage(app);
+} catch {
+  // Storage fallback
+}
+
 const googleProvider = new FirebaseAuth.GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
-export { app, auth, db, googleProvider };
+export { app, auth, db, storage, googleProvider };
 

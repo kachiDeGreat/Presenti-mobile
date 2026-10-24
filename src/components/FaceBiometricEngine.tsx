@@ -10,6 +10,7 @@ export interface FaceBiometricFrameResult {
   hasFace: boolean;
   isCentered: boolean;
   guidance: 'CENTERED' | 'MOVE_LEFT' | 'MOVE_RIGHT' | 'NO_FACE';
+  thumbnail?: string;
 }
 
 export interface FaceBiometricEngineRef {
@@ -28,6 +29,7 @@ const ENGINE_HTML = `
   <script>
     const canvas = document.getElementById('c');
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
 
     function computeSobelAndLBP(ctx, w, h) {
       const imgData = ctx.getImageData(0, 0, w, h);
@@ -190,6 +192,7 @@ const ENGINE_HTML = `
             ctx.clearRect(0, 0, 64, 64);
             ctx.drawImage(img, 0, 0, 64, 64);
             const res = computeSobelAndLBP(ctx, 64, 64);
+            const thumb = canvas.toDataURL('image/jpeg', 0.65);
             window.ReactNativeWebView.postMessage(JSON.stringify({
               id: msg.id,
               success: true,
@@ -199,6 +202,7 @@ const ENGINE_HTML = `
               hasFace: res.hasFace,
               isCentered: res.isCentered,
               guidance: res.guidance,
+              thumbnail: thumb,
             }));
           };
           img.onerror = function() {
@@ -256,6 +260,7 @@ export const FaceBiometricEngine = forwardRef<FaceBiometricEngineRef, {}>((_, re
             hasFace: Boolean(data.hasFace),
             isCentered: Boolean(data.isCentered),
             guidance: data.guidance || 'NO_FACE',
+            thumbnail: data.thumbnail,
           });
         } else {
           item.resolve({
