@@ -61,7 +61,9 @@ export default function DashboardScreen() {
 
   // In-App Facial Recognition & Anti-Spoofing Modal State
   const [showFaceModal, setShowFaceModal] = useState(false);
-  const [faceScanMode, setFaceScanMode] = useState<"ENROLL" | "VERIFY">("VERIFY");
+  const [faceScanMode, setFaceScanMode] = useState<"ENROLL" | "VERIFY">(
+    "VERIFY",
+  );
   const pendingClockInRef = React.useRef<{
     punchedAtISO: string;
     timeDisplay: string;
@@ -92,7 +94,11 @@ export default function DashboardScreen() {
 
   // Evaluate policy window in real-time
   const windowEval: WindowEvaluationResult = useMemo(() => {
-    return evaluateAttendanceWindow(organization?.policySettings, currentTime, todayPunch);
+    return evaluateAttendanceWindow(
+      organization?.policySettings,
+      currentTime,
+      todayPunch,
+    );
   }, [organization?.policySettings, currentTime, todayPunch]);
 
   // Load existing punch on mount
@@ -132,7 +138,8 @@ export default function DashboardScreen() {
             }),
             serviceDate: todayServiceDate,
             status: "SYNCED",
-            attendanceStatus: cloudDoc.status || (local?.attendanceStatus ?? "ON_TIME"),
+            attendanceStatus:
+              cloudDoc.status || (local?.attendanceStatus ?? "ON_TIME"),
             verificationMethod: cloudDoc.verificationMethod || "WIFI_BSSID",
             bssidDetected: cloudDoc.bssidDetected,
             attendanceDocId: cloudDoc.id,
@@ -381,7 +388,11 @@ export default function DashboardScreen() {
 
     setIsSyncingToCloud(false);
 
-    if (!member.isFaceEnrolled || !member.faceEmbedding || member.faceEmbedding.length === 0) {
+    if (
+      !member.isFaceEnrolled ||
+      !member.faceEmbedding ||
+      member.faceEmbedding.length === 0
+    ) {
       // First-time facial binding
       setFaceScanMode("ENROLL");
       setShowFaceModal(true);
@@ -486,11 +497,17 @@ export default function DashboardScreen() {
       setTodayPunch(syncedRecord);
       await saveTodayPunchRecord(syncedRecord);
 
-      const statusTag = windowEval.attendanceStatus === "LATE" ? " (Marked Late)" : " (On Time)";
+      const statusTag =
+        windowEval.attendanceStatus === "LATE"
+          ? " (Marked Late)"
+          : " (On Time)";
       toast.success(
         `Face verified (${Math.round(result.confidence * 100)}%) & on-premise confirmed! Attendance synced at ${pending.timeDisplay}${statusTag}.`,
         {
-          title: windowEval.attendanceStatus === "LATE" ? "Late Check-In Confirmed" : "Check-In Confirmed",
+          title:
+            windowEval.attendanceStatus === "LATE"
+              ? "Late Check-In Confirmed"
+              : "Check-In Confirmed",
           duration: 4500,
         },
       );
@@ -517,10 +534,10 @@ export default function DashboardScreen() {
     setShowFaceModal(false);
     pendingClockInRef.current = null;
     setIsSyncingToCloud(false);
-    toast.error(
-      reason || "Face verification failed. Attendance blocked.",
-      { title: "Proxy Check-In Rejected", duration: 6000 }
-    );
+    toast.error(reason || "Face verification failed. Attendance blocked.", {
+      title: "Proxy Check-In Rejected",
+      duration: 6000,
+    });
   };
 
   const handleFaceScanClose = () => {
@@ -539,14 +556,16 @@ export default function DashboardScreen() {
     }
 
     if (todayPunch.signedOutAt) {
-      toast.info(`Already signed out today at ${todayPunch.signOutDisplayTime || "earlier"}.`);
+      toast.info(
+        `Already signed out today at ${todayPunch.signOutDisplayTime || "earlier"}.`,
+      );
       return;
     }
 
     if (!windowEval.canSignOut) {
       toast.warn(
         `Sign-out opens at ${windowEval.signOutTimeFormatted || "the scheduled departure time"}. You cannot sign out yet.`,
-        { title: "Sign-Out Not Open", duration: 4500 }
+        { title: "Sign-Out Not Open", duration: 4500 },
       );
       return;
     }
@@ -565,7 +584,9 @@ export default function DashboardScreen() {
               style: "default",
               onPress: () => {
                 if (Platform.OS === "android") {
-                  Linking.sendIntent("android.settings.SECURITY_SETTINGS").catch(() => {
+                  Linking.sendIntent(
+                    "android.settings.SECURITY_SETTINGS",
+                  ).catch(() => {
                     Linking.openSettings().catch(() => {});
                   });
                 } else {
@@ -578,7 +599,8 @@ export default function DashboardScreen() {
       } else {
         const fullMessage = biometricAuth.instruction
           ? `${biometricAuth.error} ${biometricAuth.instruction}`
-          : (biometricAuth.error || "Please scan your registered finger or face to confirm sign out.");
+          : biometricAuth.error ||
+            "Please scan your registered finger or face to confirm sign out.";
 
         toast.warn(fullMessage, {
           title: biometricAuth.errorTitle || "Biometric Verification Required",
@@ -618,7 +640,7 @@ export default function DashboardScreen() {
           signedOutAt: signOutAtISO,
           signOutDisplayTime: signOutTimeDisplay,
         },
-        todayPunch.attendanceDocId
+        todayPunch.attendanceDocId,
       );
 
       const finalRecord: TodayPunchRecord = {
@@ -633,7 +655,7 @@ export default function DashboardScreen() {
         {
           title: "Signed Out Successfully",
           duration: 4000,
-        }
+        },
       );
     } catch (err) {
       console.warn("Could not sync sign-out immediately, stored locally:", err);
@@ -646,7 +668,7 @@ export default function DashboardScreen() {
 
       toast.warn(
         `Sign-out recorded at ${signOutTimeDisplay}. Will sync to cloud once connection is stable.`,
-        { title: "Sign-Out Trapped Locally", duration: 4500 }
+        { title: "Sign-Out Trapped Locally", duration: 4500 },
       );
     } finally {
       setIsSyncingSignOut(false);
@@ -694,7 +716,7 @@ export default function DashboardScreen() {
             }}
           >
             <Image
-              source={require("../image/logo-dark.png")}
+              source={require("../image/app-icon.png")}
               style={styles.brandLogo}
               resizeMode="contain"
             />
@@ -799,7 +821,8 @@ export default function DashboardScreen() {
             {windowEval.openTimeFormatted &&
               windowEval.openTimeFormatted !== "--" && (
                 <Text style={styles.shiftHoursText}>
-                  {windowEval.openTimeFormatted} – {windowEval.closeTimeFormatted}
+                  {windowEval.openTimeFormatted} –{" "}
+                  {windowEval.closeTimeFormatted}
                 </Text>
               )}
           </View>
@@ -1558,4 +1581,3 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 });
-
