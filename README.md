@@ -12,20 +12,44 @@
 
 ## Core Capabilities & Features
 
-### 1. Dual-Tier Biometric Security & On-Device Face AI
-- **Native OS Biometrics:** Mandatory hardware-isolated scans via `expo-local-authentication` (`AndroidX BiometricPrompt` & iOS `LocalAuthentication`) with `disableDeviceFallback: true`.
-- **On-Device Facial Biometrics & Liveness Verification:**
-  - Extracts 128-dimensional biometric embeddings using Google ML Kit landmarks.
-  - Multi-frame 3D liveness and anti-spoofing engine detects natural physiological variance (micro-saccades, breathing expansion) to block printed 2D photos, tablet screen replays, and photo proxies.
-  - Smooth Apple Face ID-inspired circular reticle overlay with real-time feedback.
-  - Payload safety: Compresses face photos and routes storage to Firebase Storage or micro-thumbnails (<70KB), strictly preventing Firestore document size limit exceptions.
-- **Graceful Fallback & Settings Deep Link:** Automatic fallback to device lockscreen credentials on budget devices without biometric sensors. One-tap "Go to Settings" deep links directly to system biometrics enrollment.
+### 1. Hands-Free On-Device Face Recognition AI (Apple Face ID & Banking App Style)
+- **128-Dimensional Landmark Embedding:** Detects 3D facial landmarks and contours using Google ML Kit and extracts a normalized, rotation-invariant 128-dimensional facial biometric embedding vector.
+- **Ultra-Fast On-Device Matching:** Computes vector Cosine Similarity on device in under 350ms, comparing the live scan directly against the worker's enrolled facial vector.
+- **3D Liveness & Anti-Spoofing Engine:** Compares frame variance over time to detect natural physiological micro-movements (breathing, micro-saccades). Strictly detects and rejects printed 2D paper photographs, tablet/laptop screen replays, and photo proxies.
+- **Smooth Apple Face ID-Inspired Modal:** Clean circular oval reticle with real-time positioning feedback ("Hold steady", "Move closer", "Face centered") for a frictionless, banking-grade experience.
+- **Firestore Payload Safety:** Automatically compresses captured face photos and uploads them to Firebase Storage (or retains micro-thumbnails <70KB), strictly preventing Firestore's 1,048,487-byte document limit from ever being exceeded.
 
-### 2. Instant Clock-In Timestamp Trapping
-- **Zero-Latency Trapping:** Traps the exact sub-second timestamp the millisecond the worker taps **"Tap to Clock In"**.
-- **Tamper-Resistant Clock:** Trapped arrival timestamps are stored in memory before background network or presence verification starts. Workers are never penalized for cellular latency or brief network drops.
+### 2. Zero-Proxy Mandatory Native Biometrics
+- **Hardware Isolation:** Scans run through native OS security boundaries (`AndroidX BiometricPrompt` & iOS `LocalAuthentication`) inside the Apple Secure Enclave / Android StrongBox.
+- **Strict Enforcement (`disableDeviceFallback: true`):** Devices with fingerprint or Face ID hardware strictly require biometric scans, preventing workers from lending their unlocked phone and PIN to coworkers.
+- **Graceful Fallback & Settings Deep Link:** Budget devices without biometric sensors automatically fall back to lockscreen credentials. When biometrics are not yet enrolled, an interactive dialog provides a one-tap **"Go to Settings"** button that deep-links directly into device Security & Biometrics Settings.
 
-### 3. Smart Policy Enforcement, Late Tagging & Biometric Sign-Out
+### 3. Mobile Leadership Command Center (`AdminHub.tsx`)
+Administrators can toggle between Worker Mode (instant clock-in) and the **Admin Hub**:
+- **Tab 1: Live Attendance Feed:**
+  - Real-time stream of all worker clock-ins for today.
+  - Live KPI cards: **Total Present**, **On-Time Arrivals**, **Late Arrivals**, and **Punctuality Rate**.
+  - Worker search bar and department filtering tabs.
+  - Feed clear action.
+- **Tab 2: Presence Anchors & Direct On-Site Calibration:**
+  - On-site sensor calibration performed directly on the phone without needing a computer.
+  - Toggle between **Satellite Geofence (`GEOFENCE_ONLY`)** and **Hybrid Wi-Fi (`HYBRID`)**.
+  - Physical Wi-Fi spectrum scanner automatically detects nearby access points and BSSID MAC addresses for office router binding.
+  - Multi-tier satellite GPS acquisition with Android network provider prompt and indoor fallback.
+  - Radius perimeter selector (10m, 20m, 30m, 50m, 100m).
+  - Tapping **Save & Anchor** immediately writes configuration to Cloud Firestore with instant auto-sync back to the Admin Web Portal.
+
+### 4. Dual Physical Presence Engine
+The mobile application dynamically evaluates the organization's calibrated architecture:
+- **Mode 1: Router-Free Satellite GPS Geofence (Default & Recommended):**
+  - High-precision GPS perimeter checks (10m to 100m radius).
+  - Sub-second verification with zero hardware overhead—ideal for modern offices, field operations, and pop-up venues.
+- **Mode 2: Hybrid Physical Office Router (Dual-Tier):**
+  - **Tier 1 — Hardware Wi-Fi Anchor (BSSID):** Scans the device's physical Wi-Fi radio for the organization's calibrated router MAC address (`targetBssid`).
+  - **20-Second Hardware Scan Timeout:** If physical Wi-Fi scanning times out, the app automatically fails over to Tier 2 geofencing.
+  - **Tier 2 — GPS Perimeter Geofencing:** Calculates distance from calibrated coordinates using high-accuracy native GPS (`expo-location`). Clock-in is approved only if within the calibrated perimeter.
+
+### 5. Smart Policy Enforcement, Late Tagging & Biometric Sign-Out
 - **Dynamic Day-Specific vs. Unified Schedules:**
   - Evaluates today's operating rules dynamically using `evaluateAttendanceWindow`.
   - When the organization uses **Different Times per Day (`PER_DAY`)**, the app automatically resolves today's specific day-of-week settings (`arrivalCutoff`, `lateTolerance`, `allowLateSignIn`, `enableSignOut`, and `signOutTime`).
@@ -41,36 +65,9 @@
 - **Automatic Queue Flushing:**
   - Automatically caches punches locally in `AsyncStorage` and flushes all pending records to Cloud Firestore on app mount, foreground resume (`AppState === 'active'`), and manual pull-to-refresh.
 
-### 4. Dual-Mode Physical Presence Engine
-The mobile application dynamically reads the organization's calibrated architecture:
-- **Mode 1: Router-Free Satellite GPS Geofence (Default & Recommended):**
-  - Bypasses physical router scanning for modern offices, field teams, and pop-up events.
-  - Verifies presence directly against high-accuracy satellite GPS coordinates with sub-second response times.
-- **Mode 2: Hybrid Physical Office Router (Optional Dual-Tier):**
-  - **Tier 1 — Hardware Wi-Fi Anchor (BSSID):** Scans the device's physical Wi-Fi radio for the organization's calibrated router MAC address (`targetBssid`).
-  - **20-Second Hardware Scan Timeout:** If physical Wi-Fi scanning times out, the app automatically fails over to Tier 2 geofencing.
-  - **Tier 2 — GPS Perimeter Geofencing:** Calculates distance from calibrated coordinates using high-accuracy native GPS (`expo-location`). Clock-in is approved only if within the calibrated perimeter (10m to 100m).
-
-### 5. Role-Based Governance & Mobile Leadership Hub
-- **Mobile Admin Hub (`AdminHub.tsx`):** Authorized administrators can toggle to the Admin Hub to:
-  - Monitor the live workforce attendance feed in real time.
-  - Inspect key performance indicators (Total Present, On-Time, Late, Attendance Rate).
-  - Filter attendance records by department.
-  - Calibrate presence anchors (GPS Geofence or Hybrid Wi-Fi) directly on their smartphone.
-- **Hardware Device Binding:** Workers' accounts are permanently bound to their smartphone's unique hardware identifier, preventing multiple workers from clocking in from a single phone.
-
-### 6. Administrator Premises Calibration Suite
-- **Secret 5-Second Logo Gesture:** Calibration mode is completely invisible to regular workers. Administrators access it by pressing and holding the Presenti logo for 5 seconds.
-- **QR Code Pairing Gateway:** Administrators scan a live session QR code displayed on the Admin Web Portal to pair their phone.
-- **Multi-Tiered Geocoding Engine:** Global and local venue search powered by OpenStreetMap Nominatim, Photon (Komoot), and Google Play Services Geocoder.
-- **Interactive Search Suggestions Dropdown:** Displays instant matching locations and landmarks below the search bar with one-tap pinning.
-- **Smooth Satellite Map Fly-To:** Automatically glides the satellite view directly to the selected venue or coordinates.
-- **Physical Spectrum Scanner:** Discovers nearby Wi-Fi access points, signal strength (RSSI), and exact router BSSID MAC addresses for binding.
-
-### 7. Streamlined Worker Onboarding & Google Sign-In
-- **Native Google SSO:** Single sign-on powered by `@react-native-google-signin/google-signin` on Android/iOS and Firebase Auth.
-- **Automated Organization Code Formatting:** Auto-inserts hyphens as workers type their organization code (`XX-XXX-XXX`, e.g., `KW-RTX-482`).
-- **Dynamic Department Enrollment:** Dynamically loads department listings from the organization's cloud profile.
+### 6. Sub-Second Timestamp Trapping & Hardware Device Binding
+- **Zero-Latency Trapping:** Traps the exact sub-second timestamp the millisecond the worker taps **"Tap to Clock In"**, shielding employees from slow cellular networks.
+- **Hardware Device Lock:** Workers' accounts are permanently bound to their smartphone's unique hardware identifier, preventing multiple workers from clocking in from a single phone.
 
 ---
 
@@ -86,7 +83,7 @@ sequenceDiagram
     participant Cloud as Cloud Firestore
 
     Worker->>Mobile: Tap "Tap to Clock In"
-    Mobile->>Mobile: 1. Trap local timestamp immediately
+    Mobile->>Mobile: 1. Trap arrival timestamp immediately
     Mobile->>NativeSec: 2. Request native biometric verification (Fingerprint / Face ID)
     alt Biometrics Failed or Cancelled
         NativeSec-->>Mobile: Authentication Denied
@@ -134,9 +131,9 @@ sequenceDiagram
 | **Authentication** | Google Sign-In Native SDK (`@react-native-google-signin/google-signin`) + Firebase Auth |
 | **Database** | Firebase Firestore (Real-time snapshots & offline cache) + Firebase Storage |
 | **Wi-Fi Hardware Scanner** | `react-native-wifi-reborn` / Native Network APIs |
-| **Location & Geofencing** | `expo-location` (High accuracy native GPS) |
+| **Location & Geofencing** | `expo-location` (High accuracy native GPS with indoor fallback) |
 | **Geocoding & Search** | Multi-tier engine: Google Maps API + Android Google Play Geocoder + Photon (Nigeria BBox) + Nominatim |
-| **Camera & QR** | `expo-camera` (`CameraView`) |
+| **Camera** | `expo-camera` (`CameraView`) |
 | **Local Storage** | `@react-native-async-storage/async-storage` |
 
 ---
