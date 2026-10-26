@@ -20,13 +20,7 @@ const STORAGE_KEY_ANCHORS = '@sanctuary_cached_anchors';
 const STORAGE_KEY_ORG = '@sanctuary_active_org';
 const STORAGE_KEY_MEMBER = '@sanctuary_member_profile';
 
-/**
- * Safely sanitizes or uploads a face photo to Firebase Storage.
- * Ensures the value written to Firestore NEVER exceeds Firestore's 1,048,487 byte document/field limit.
- * If rawPhoto is a large data URI, it attempts to upload to Firebase Storage and returns the download URL.
- * If Storage is unavailable or fails, it only retains data URIs if they are under 70KB (e.g. 64x64 micro-thumbnails).
- * Any payload larger than 70KB is safely discarded so member registration never fails.
- */
+// Uploads face photo to Firebase Storage or validates payload size limits
 export async function sanitizeOrUploadFacePhoto(
   orgId: string,
   memberId: string,
@@ -693,11 +687,7 @@ export async function findExistingMember(orgId: string, email?: string, deviceId
   }
 }
 
-/**
- * Recursively cleans an object/array to remove all undefined values and discard oversized fields.
- * Firestore strictly throws an exception if any field or nested property is undefined,
- * or if any document/field exceeds 1,048,487 bytes.
- */
+// Recursively strips undefined values and oversized fields from Firestore payloads
 function cleanFirestorePayload<T>(data: T): T {
   if (data === null || data === undefined) {
     return null as any;
@@ -738,9 +728,7 @@ export async function recordAttendance(orgId: string, input: AttendanceRecordInp
   }
 }
 
-/**
- * Updates an attendance record with worker's sign-out timestamp and display string.
- */
+// Updates an attendance record with member sign-out timestamp
 export async function recordSignOut(
   orgId: string,
   memberId: string,
@@ -774,10 +762,7 @@ export async function recordSignOut(
   }
 }
 
-/**
- * Flushes all offline-cached punches or sign-outs to the cloud backend.
- * Guarantees that any attendance logged offline is synchronized before the next working day.
- */
+// Flushes offline-cached punches and sign-outs to cloud
 export async function flushPendingAttendanceQueue(orgId: string): Promise<number> {
   try {
     const allKeys = await AsyncStorage.getAllKeys();

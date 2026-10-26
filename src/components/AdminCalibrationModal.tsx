@@ -431,9 +431,7 @@ export const AdminCalibrationModal: React.FC<AdminCalibrationModalProps> = ({
           <View style={{ width: 40 }} />
         </View>
 
-        {/* ========================================================
-            MODE A: QR CAMERA SCANNER
-            ======================================================== */}
+        {/* Mode A: QR camera scanner */}
         {mode === "SCANNER" ? (
           <View style={styles.scannerWrapper}>
             {!permission ? (
@@ -488,10 +486,8 @@ export const AdminCalibrationModal: React.FC<AdminCalibrationModalProps> = ({
             )}
           </View>
         ) : (
-          /* ========================================================
-             MODE B: CALIBRATION CONFIGURATION SCREEN
-             ======================================================== */
           <ScrollView contentContainerStyle={styles.calibrateScroll}>
+            {/* Mode B: Calibration configuration screen */}
             {/* Live Link Badge */}
             <View style={styles.connectedCard}>
               <View style={styles.connectedIcon}>

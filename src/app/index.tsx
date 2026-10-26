@@ -262,8 +262,7 @@ export default function DashboardScreen() {
     );
   }
 
-  // --- Clock In Execution (Instant Time Trap + Presence Verification + Cloud Sync) ---
-  // --- Clock In Execution (Instant Time Trap + Physical Presence + Face Recognition Binding) ---
+  // Clock-in execution with presence verification and face check
   const handleClockIn = async () => {
     // 1. Safety check: prevent double punch if already recorded
     if (todayPunch) {
@@ -546,7 +545,7 @@ export default function DashboardScreen() {
     setIsSyncingToCloud(false);
   };
 
-  // --- Sign Out Execution (Traps Sign-Out Timestamp + Biometric Check + Updates Cloud) ---
+  // Sign-out execution with biometric check
   const handleSignOut = async () => {
     if (!todayPunch) {
       toast.error("You must sign in for today first before signing out.", {

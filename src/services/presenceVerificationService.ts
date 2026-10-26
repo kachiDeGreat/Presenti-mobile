@@ -73,10 +73,7 @@ export async function verifyPresenceAnchors(
     anchors?.verificationMode || (targetBssid ? 'HYBRID' : 'GEOFENCE_ONLY');
   const isHybrid = mode === 'HYBRID' && Boolean(targetBssid);
 
-  // -------------------------------------------------------------
-  // STEP 1: Ambient Wi-Fi Beacon Scan (Android only - HYBRID mode)
-  // If company is GEOFENCE_ONLY, completely bypass radio scanning for maximum speed.
-  // -------------------------------------------------------------
+  // Step 1: Ambient Wi-Fi scan on Android for hybrid mode
   if (Platform.OS === 'android' && isHybrid && targetBssid) {
     try {
       // Dynamically require native module with safe fallback
@@ -134,11 +131,7 @@ export async function verifyPresenceAnchors(
     }
   }
 
-  // -------------------------------------------------------------
-  // STEP 2: High-Accuracy GPS Geofencing (Fallback)
-  // Used if beacon is off, out of range, phone Wi-Fi toggle is off,
-  // or on iOS (Apple restricts ambient Wi-Fi BSSID scanning).
-  // -------------------------------------------------------------
+  // Step 2: GPS geofence check (used for geofence mode, iOS, or Wi-Fi fallback)
   if (!hasGeofence) {
     return {
       isVerified: false,

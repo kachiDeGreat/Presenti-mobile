@@ -1,12 +1,4 @@
-/**
- * Face Recognition & Biometric Vector Service (Option 1: 100% Free / On-Device AI)
- * 
- * Provides:
- * 1. 128-dimensional biometric embedding extraction from camera image frames.
- * 2. High-precision Cosine Similarity comparison against enrolled account embeddings.
- * 3. 3D Liveness & Anti-Spoofing analysis (blocks printed photos and screen replays).
- * 4. Zero recurring cloud fees, zero external server latency, 100% offline-ready.
- */
+// Face recognition and biometric vector service
 
 export interface FaceBiometricResult {
   embedding: number[];
@@ -28,10 +20,7 @@ export interface FaceMatchResult {
 // Calibrated threshold: 0.78 provides high security against proxy clock-in while ensuring smooth match
 export const FACE_MATCH_THRESHOLD = 0.78;
 
-/**
- * Computes Cosine Similarity between two 128-D biometric vectors:
- * Cosine Similarity = (A • B) / (||A|| * ||B||)
- */
+// Computes cosine similarity between two biometric vectors
 export function computeCosineSimilarity(vectorA: number[], vectorB: number[]): number {
   if (!vectorA || !vectorB || vectorA.length === 0 || vectorB.length === 0) {
     return 0;
@@ -101,11 +90,7 @@ export function compareFaceEmbeddings(
   };
 }
 
-/**
- * Evaluates 3D Liveness & Anti-Spoofing by comparing two quick frames spaced ~300-500ms apart.
- * Living human faces possess natural micro-saccades, breathing expansion, and micro-tremor.
- * Static 2D paper photographs or static tablet screens exhibit zero natural organic variance.
- */
+// Evaluates 3D liveness and anti-spoofing between consecutive frames
 export function verifyLivenessDelta(
   vectorFrame1: number[],
   vectorFrame2: number[]
@@ -138,9 +123,7 @@ export function verifyLivenessDelta(
   };
 }
 
-/**
- * Normalizes a raw vector to unit length (L2 norm = 1.0)
- */
+// Normalizes a raw vector to unit length
 export function normalizeVector(vector: number[]): number[] {
   let sumSq = 0;
   for (let i = 0; i < vector.length; i++) {
@@ -150,18 +133,7 @@ export function normalizeVector(vector: number[]): number[] {
   return vector.map((v) => v / norm);
 }
 
-/**
- * High-Precision Anthropometric Facial Biometric Vector Extractor
- * Uses 3D facial landmarks and contours detected by Google ML Kit.
- * 
- * 1. Computes inter-pupillary distance (IOD) and roll angle between eyes.
- * 2. Normalizes all landmark coordinates into a canonical, scale-invariant,
- *    rotation-invariant face plane.
- * 3. Extracts invariant geometric descriptors (inter-feature distances,
- *    facial aspect ratios, jawline contour curvature, and symmetry indices).
- * 4. Yields high cosine similarity (91% - 98%) for the same person under varied
- *    distance and angles, while rejecting proxy impostors (< 65%).
- */
+// Anthropometric facial biometric vector extractor using ML Kit landmarks
 export function extractEmbeddingFromMLKit(face: any): number[] {
   if (!face) return [];
 
@@ -345,10 +317,7 @@ export function extractEmbeddingFromMLKit(face: any): number[] {
   return normalizeVector(rawFeatures.slice(0, 48));
 }
 
-/**
- * Pure JavaScript Base64 Image Feature Extractor (Fallback)
- * Computes a stable 48-dimensional normalized facial spatial projection.
- */
+// Fallback image feature extractor from base64 data
 export function extractEmbeddingFromBase64(base64Data: string): number[] {
   const cleanBase64 = base64Data.replace(/^data:image\/[a-z]+;base64,/, '');
   if (!cleanBase64 || cleanBase64.length < 100) return new Array(48).fill(0);
@@ -379,10 +348,7 @@ export interface FaceFrameValidation {
   reason?: string;
 }
 
-/**
- * Validates that an actual human face is present, adequately lit, and centered in the frame.
- * Prevents blank images, covered cameras, ceilings, or side-turned faces from binding.
- */
+// Validates face presence, lighting, and centering in camera frame
 export function validateFaceFrame(base64Data: string): FaceFrameValidation {
   if (!base64Data) {
     return {

@@ -1,19 +1,6 @@
 import * as Location from 'expo-location';
 
-/**
- * High-performance Geocoding and Location Search Service for Mobile App.
- *
- * Multi-Tiered Architecture:
- * 1. Google Maps Geocoding API (Direct Google Cloud integration when API key is provided)
- * 2. Android Native Google Play Geocoder (Expo Location.geocodeAsync - 100% free, device-powered Google backend)
- * 3. Nigerian State Abbreviation Expansion + Scoped Photon (Komoot fast fuzzy search with Nigeria bounding box)
- * 4. OpenStreetMap Nominatim with Nigeria country restriction
- *
- * Guarantees:
- * - Abbreviations like "Calabar, CRS", "Wuse 2, FCT", "GRA, PH" resolve with 100% accuracy.
- * - Nigeria-scoped queries never drift overseas (e.g. Manila, Philippines).
- * - 100% free operation if no Google Cloud billing is configured.
- */
+// Geocoding and location search service supporting native device, Google, Photon, and OSM
 
 export interface GeocodedLocation {
   id: string;
@@ -260,10 +247,7 @@ export async function searchGlobalLocations(
       .finally(() => clearTimeout(timeout));
   };
 
-  // -------------------------------------------------------------
-  // TIER 1: Native Device Geocoder (Android Google Play Geocoder)
-  // 100% Free, runs on device, powered by Google Play Services
-  // -------------------------------------------------------------
+  // Tier 1: Native device geocoder
   const nativeDevicePromise = (async () => {
     try {
       // Query both expanded and original clean query in parallel
@@ -295,11 +279,7 @@ export async function searchGlobalLocations(
     }
   })();
 
-  // -------------------------------------------------------------
-  // TIER 2: Google Maps Geocoding API (Direct Google Cloud integration)
-  // Uses EXPO_PUBLIC_GOOGLE_MAPS_API_KEY or EXPO_PUBLIC_GOOGLE_SERVICES_API_KEY
-  // Free tier covers ~40,000 monthly requests ($200 monthly credit)
-  // -------------------------------------------------------------
+  // Tier 2: Google Maps geocoding API
   const googleApiKey =
     process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY ||
     process.env.EXPO_PUBLIC_GOOGLE_SERVICES_API_KEY ||
@@ -341,10 +321,7 @@ export async function searchGlobalLocations(
     }
   })();
 
-  // -------------------------------------------------------------
-  // TIER 3: Photon (Komoot) with Nigeria Bounding Box
-  // Fast, fuzzy autocomplete, zero API keys
-  // -------------------------------------------------------------
+  // Tier 3: Photon geocoding with Nigeria bounding box
   const photonQuery = isNigerian
     ? `https://photon.komoot.io/api/?q=${encodeURIComponent(
         expanded
@@ -382,9 +359,7 @@ export async function searchGlobalLocations(
     }
   });
 
-  // -------------------------------------------------------------
-  // TIER 4: OpenStreetMap Nominatim with Nigeria Country Code
-  // -------------------------------------------------------------
+  // Tier 4: OpenStreetMap Nominatim geocoding
   const nominatimQuery = isNigerian
     ? `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
         expanded

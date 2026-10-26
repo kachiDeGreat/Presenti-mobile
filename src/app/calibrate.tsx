@@ -563,10 +563,7 @@ export default function CalibrateScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      {/* ========================================================
-          MODE 1: QR CODE AUTHENTICATION SCANNER
-          Locked until the admin scans the active Web Portal QR code
-          ======================================================== */}
+      {/* Mode 1: QR authentication scanner */}
       {!isQrPaired ? (
         <View style={styles.scannerWrapper}>
           {/* Header */}
@@ -710,11 +707,8 @@ export default function CalibrateScreen() {
           )}
         </View>
       ) : (
-        /* ========================================================
-            MODE 2: CALIBRATION CONFIGURATION SCREEN
-            Unlocked after scanning the Admin Web Portal QR Code
-            ======================================================== */
         <View style={{ flex: 1 }}>
+          {/* Mode 2: Calibration configuration */}
           <View style={styles.header}>
             <TouchableOpacity
               style={styles.backButton}

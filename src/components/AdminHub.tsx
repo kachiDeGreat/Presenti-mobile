@@ -67,9 +67,7 @@ export const AdminHub: React.FC = () => {
   const [activeTab, setActiveTab] = useState<"feed" | "anchors">("feed");
   const [refreshing, setRefreshing] = useState(false);
 
-  // ---------------------------------------------------------------------------
-  // TAB 1: LIVE ATTENDANCE FEED
-  // ---------------------------------------------------------------------------
+  // Tab 1: Live attendance feed
   const [attendance, setAttendance] = useState<LiveAttendanceRecord[]>([]);
   const [isAttendanceLoading, setIsAttendanceLoading] = useState(true);
   const [feedSearch, setFeedSearch] = useState("");
@@ -192,9 +190,7 @@ export const AdminHub: React.FC = () => {
     );
   };
 
-  // ---------------------------------------------------------------------------
-  // TAB 2: HARDWARE PRESENCE ANCHORS & DIRECT MOBILE CALIBRATION
-  // ---------------------------------------------------------------------------
+  // Tab 2: Hardware presence anchors & direct mobile calibration
   const [calMode, setCalMode] = useState<"GEOFENCE_ONLY" | "HYBRID">(
     organization?.beaconConfig?.verificationMode === "HYBRID"
       ? "HYBRID"
@@ -516,9 +512,7 @@ export const AdminHub: React.FC = () => {
           />
         }
       >
-        {/* ================================================================= */}
-        {/* TAB 1: LIVE ATTENDANCE STREAM */}
-        {/* ================================================================= */}
+        {/* Tab 1: Live attendance stream */}
         {activeTab === "feed" && (
           <View style={styles.tabSection}>
             {/* Quick KPI Overview */}
@@ -762,9 +756,7 @@ export const AdminHub: React.FC = () => {
           </View>
         )}
 
-        {/* ================================================================= */}
-        {/* TAB 2: PRESENCE ANCHORS & DIRECT CALIBRATION */}
-        {/* ================================================================= */}
+        {/* Tab 2: Presence anchors & direct calibration */}
         {activeTab === "anchors" && (
           <View style={styles.tabSection}>
             {/* Status Hero Card */}
@@ -1192,9 +1184,7 @@ export const AdminHub: React.FC = () => {
   );
 };
 
-// =============================================================================
-// MODERN SLEEK STYLESHEET
-// =============================================================================
+// Styles
 const styles = StyleSheet.create({
   container: {
     flex: 1,
