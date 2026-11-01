@@ -23,7 +23,6 @@ import {
   AppPermissionsStatus,
 } from "../services/permissionService";
 import { checkIfUserIsAdmin } from "../services/organizationService";
-import { FaceScanModal } from "../components/FaceScanModal";
 
 export function formatOrgCode(raw: string, prev: string = ""): string {
   // If user deleted (backspace) and hit a hyphen
@@ -75,9 +74,6 @@ export default function OnboardingScreen() {
   const [fullName, setFullName] = useState(user?.displayName || "");
   const [phoneNumber, setPhoneNumber] = useState("");
   const [selectedDept, setSelectedDept] = useState("");
-  const [faceEmbedding, setFaceEmbedding] = useState<number[] | null>(null);
-  const [facePhotoURL, setFacePhotoURL] = useState<string | null>(null);
-  const [showFaceModal, setShowFaceModal] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
   const [permissions, setPermissions] = useState<AppPermissionsStatus | null>(null);
   const codeInputRef = React.useRef<TextInput>(null);
@@ -198,12 +194,6 @@ export default function OnboardingScreen() {
       return;
     }
 
-    if (!faceEmbedding) {
-      toast.info("Facial biometrics binding is required to protect your attendance account.");
-      setShowFaceModal(true);
-      return;
-    }
-
     // Ensure location permission has been requested before completing setup
     if (!permissions?.locationGranted) {
       const updated = await requestAllAppPermissions(true);
@@ -215,9 +205,7 @@ export default function OnboardingScreen() {
       await completeRegistration(
         fullName,
         phoneNumber,
-        selectedDept,
-        faceEmbedding,
-        facePhotoURL || undefined
+        selectedDept
       );
       toast.success(
         "Welcome to " + (verifiedOrg?.churchName || "the organization") + "!",
@@ -412,53 +400,7 @@ export default function OnboardingScreen() {
                 </View>
               </View>
 
-              {/* Facial Biometrics Identity Binding Card */}
-              <View style={styles.fieldGroup}>
-                <Text style={styles.label}>Facial Biometrics Binding *</Text>
-                {faceEmbedding ? (
-                  <View style={styles.faceEnrolledCard}>
-                    {facePhotoURL ? (
-                      <Image source={{ uri: facePhotoURL }} style={styles.faceThumbnail} />
-                    ) : (
-                      <View style={styles.faceThumbnailPlaceholder}>
-                        <Ionicons name="person" size={22} color="#059669" />
-                      </View>
-                    )}
-                    <View style={{ flex: 1, gap: 2 }}>
-                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
-                        <Ionicons name="shield-checkmark" size={15} color="#059669" />
-                        <Text style={styles.faceEnrolledTitle}>Face Biometric Bound</Text>
-                      </View>
-                      <Text style={styles.faceEnrolledDesc}>
-                        128D mathematical vector enrolled. Anti-spoofing active.
-                      </Text>
-                    </View>
-                    <TouchableOpacity
-                      style={styles.faceRescanBtn}
-                      onPress={() => setShowFaceModal(true)}
-                    >
-                      <Text style={styles.faceRescanText}>Re-scan</Text>
-                    </TouchableOpacity>
-                  </View>
-                ) : (
-                  <TouchableOpacity
-                    style={styles.faceEnrollPromptCard}
-                    onPress={() => setShowFaceModal(true)}
-                    activeOpacity={0.8}
-                  >
-                    <View style={styles.faceScanIconCircle}>
-                      <Ionicons name="scan-outline" size={24} color="#142748" />
-                    </View>
-                    <View style={{ flex: 1, gap: 2 }}>
-                      <Text style={styles.faceEnrollPromptTitle}>Scan & Bind Face ID</Text>
-                      <Text style={styles.faceEnrollPromptDesc}>
-                        Binds your facial geometry to your account to prevent buddy punching.
-                      </Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={18} color="#94A3B8" />
-                  </TouchableOpacity>
-                )}
-              </View>
+
 
               {/* Permission Status Banner */}
               <View
@@ -537,24 +479,7 @@ export default function OnboardingScreen() {
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* Face Scan Modal */}
-      <FaceScanModal
-        visible={showFaceModal}
-        mode="ENROLL"
-        memberName={fullName || user?.displayName || "Workforce Member"}
-        onSuccess={(result) => {
-          setFaceEmbedding(result.embedding);
-          if (result.thumbnailBase64) {
-            setFacePhotoURL(result.thumbnailBase64);
-          }
-          setShowFaceModal(false);
-          toast.success("Facial identity bound to your account!");
-        }}
-        onFailure={(reason) => {
-          toast.error(reason || "Face scan failed.");
-        }}
-        onClose={() => setShowFaceModal(false)}
-      />
+
     </SafeAreaView>
   );
 }
@@ -827,82 +752,5 @@ const styles = StyleSheet.create({
     fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
     textTransform: "uppercase",
   },
-  faceEnrolledCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    borderRadius: 0,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: "#059669",
-    backgroundColor: "#ffffff",
-  },
-  faceThumbnail: {
-    width: 44,
-    height: 44,
-    borderRadius: 0,
-    borderWidth: 1,
-    borderColor: "#059669",
-  },
-  faceThumbnailPlaceholder: {
-    width: 44,
-    height: 44,
-    borderRadius: 0,
-    backgroundColor: "#f2f1ee",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  faceEnrolledTitle: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#059669",
-    letterSpacing: 0.3,
-  },
-  faceEnrolledDesc: {
-    fontSize: 11,
-    color: "#52525b",
-    lineHeight: 15,
-  },
-  faceRescanBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: "#f2f1ee",
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-  },
-  faceRescanText: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#142748",
-    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
-    textTransform: "uppercase",
-  },
-  faceEnrollPromptCard: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    borderRadius: 0,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: "rgba(20, 39, 72, 0.3)",
-    backgroundColor: "#ffffff",
-  },
-  faceScanIconCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 0,
-    backgroundColor: "#f2f1ee",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  faceEnrollPromptTitle: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#142748",
-  },
-  faceEnrollPromptDesc: {
-    fontSize: 11,
-    color: "#52525b",
-    lineHeight: 16,
-  },
+
 });

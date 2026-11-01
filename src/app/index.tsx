@@ -39,7 +39,6 @@ import { verifyIdentityForClockIn } from "../services/biometricAuthService";
 import type { TodayPunchRecord } from "../types";
 import { AdminCalibrationModal } from "../components/AdminCalibrationModal";
 import { AdminHub } from "../components/AdminHub";
-import { FaceScanModal } from "../components/FaceScanModal";
 
 export default function DashboardScreen() {
   const {
@@ -52,23 +51,11 @@ export default function DashboardScreen() {
     isAdmin,
     signOut,
     refreshOrganization,
-    enrollFace,
   } = useAuth();
   const toast = useToast();
 
   // Calibration Modal State
   const [showCalibrationModal, setShowCalibrationModal] = useState(false);
-
-  // In-App Facial Recognition & Anti-Spoofing Modal State
-  const [showFaceModal, setShowFaceModal] = useState(false);
-  const [faceScanMode, setFaceScanMode] = useState<"ENROLL" | "VERIFY">(
-    "VERIFY",
-  );
-  const pendingClockInRef = React.useRef<{
-    punchedAtISO: string;
-    timeDisplay: string;
-    presence: any;
-  } | null>(null);
 
   // Real-time clock ticking every second
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -262,7 +249,7 @@ export default function DashboardScreen() {
     );
   }
 
-  // Clock-in execution with presence verification and face check
+  // Clock-in execution with presence verification and native device biometrics
   const handleClockIn = async () => {
     // 1. Safety check: prevent double punch if already recorded
     if (todayPunch) {
@@ -280,7 +267,47 @@ export default function DashboardScreen() {
       return;
     }
 
-    // 3. INSTANT TIME TRAPPING: Lock exact timestamp right at button press
+    // 3. MANDATORY BIOMETRIC VERIFICATION (Anti-Proxy Identity Check)
+    const biometricAuth = await verifyIdentityForClockIn();
+    if (!biometricAuth.success) {
+      if (biometricAuth.needsSetup) {
+        Alert.alert(
+          biometricAuth.errorTitle || "Security Setup Required",
+          `${biometricAuth.error}\n\nWhat to do:\n${biometricAuth.instruction}`,
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Go to Settings",
+              style: "default",
+              onPress: () => {
+                if (Platform.OS === "android") {
+                  Linking.sendIntent(
+                    "android.settings.SECURITY_SETTINGS",
+                  ).catch(() => {
+                    Linking.openSettings().catch(() => {});
+                  });
+                } else {
+                  Linking.openSettings().catch(() => {});
+                }
+              },
+            },
+          ],
+        );
+      } else {
+        const fullMessage = biometricAuth.instruction
+          ? `${biometricAuth.error} ${biometricAuth.instruction}`
+          : biometricAuth.error ||
+            "Please scan your registered finger or face to confirm clock in.";
+
+        toast.warn(fullMessage, {
+          title: biometricAuth.errorTitle || "Biometric Verification Required",
+          duration: 6500,
+        });
+      }
+      return;
+    }
+
+    // 4. INSTANT TIME TRAPPING: Lock exact timestamp right at button press
     const punchedDate = new Date();
     const punchedAtISO = punchedDate.toISOString();
     const timeDisplay = punchedDate.toLocaleTimeString([], {
@@ -289,7 +316,7 @@ export default function DashboardScreen() {
       second: "2-digit",
     });
 
-    // 3b. Check if Admin has calibrated this account's presence anchors
+    // 4b. Check if Admin has calibrated this account's presence anchors
     const isCalibrated = Boolean(
       organization.isCalibrated ||
       organization.geoFallback?.isCalibrated ||
@@ -331,7 +358,7 @@ export default function DashboardScreen() {
       },
     );
 
-    // 4. Physical Presence Verification (Wi-Fi Anchor or Geofence fallback)
+    // 5. Physical Presence Verification (Wi-Fi Anchor or Geofence fallback)
     const effectiveAnchors = {
       verificationMode: effectiveMode,
       targetBssid:
@@ -378,64 +405,20 @@ export default function DashboardScreen() {
       return;
     }
 
-    // 5. Physical Presence Confirmed! Launch In-App Face Recognition & Liveness Verification
-    pendingClockInRef.current = {
-      punchedAtISO,
-      timeDisplay,
-      presence,
-    };
-
-    setIsSyncingToCloud(false);
-
-    if (
-      !member.isFaceEnrolled ||
-      !member.faceEmbedding ||
-      member.faceEmbedding.length === 0
-    ) {
-      // First-time facial binding
-      setFaceScanMode("ENROLL");
-      setShowFaceModal(true);
-    } else {
-      // Identity verification against enrolled biometric vector
-      setFaceScanMode("VERIFY");
-      setShowFaceModal(true);
-    }
-  };
-
-  const handleFaceScanSuccess = async (result: {
-    embedding: number[];
-    confidence: number;
-    thumbnailBase64?: string;
-  }) => {
-    setShowFaceModal(false);
-    const pending = pendingClockInRef.current;
-    if (!pending) return;
-
-    setIsSyncingToCloud(true);
-
-    // If first-time enrollment during clock in, persist to member profile
-    if (faceScanMode === "ENROLL") {
-      try {
-        await enrollFace(result.embedding, result.thumbnailBase64);
-        toast.success("Facial identity enrolled and bound to your account!");
-      } catch (enrollErr: any) {
-        console.warn("Could not save face enrollment to member:", enrollErr);
-      }
-    }
-
+    // 6. Confirmed on-premise! Set local state with trapped time & verified biometric method
     const initialRecord: TodayPunchRecord = {
       memberId: member.id,
-      punchedAt: pending.punchedAtISO,
-      displayTime: pending.timeDisplay,
+      punchedAt: punchedAtISO,
+      displayTime: timeDisplay,
       serviceDate: todayServiceDate,
       status: "SYNCING",
       attendanceStatus: windowEval.attendanceStatus,
-      verificationMethod: pending.presence.method,
-      bssidDetected: pending.presence.bssidDetected,
-      faceVerification: {
+      verificationMethod: presence.method,
+      bssidDetected: presence.bssidDetected,
+      biometricVerification: {
         verified: true,
-        confidence: result.confidence,
-        method: "IN_APP_FACE_AI",
+        method: biometricAuth.method,
+        biometricType: biometricAuth.biometricType,
       },
     };
 
@@ -443,45 +426,45 @@ export default function DashboardScreen() {
     await saveTodayPunchRecord(initialRecord);
 
     toast.syncing(
-      `Face verified & on-premise confirmed (${pending.presence.method === "GEO_FALLBACK" ? "GPS Geofence" : "Wi-Fi Anchor"})! Syncing to dashboard...`,
+      `Biometrics verified & on-premise confirmed (${presence.method === "GEO_FALLBACK" ? "GPS Geofence" : "Wi-Fi Anchor"})! Syncing to dashboard...`,
       {
         title: "Syncing to Cloud",
       },
     );
 
-    // Asynchronous Cloud Persistence
+    // 7. Asynchronous Cloud Persistence
     try {
       const docId = await recordAttendance(organization.id, {
         memberId: member.id,
         memberName: member.fullName,
         department: member.department,
         serviceDate: todayServiceDate,
-        timestamp: pending.punchedAtISO,
-        punchedAt: pending.punchedAtISO,
+        timestamp: punchedAtISO,
+        punchedAt: punchedAtISO,
         syncedAt: new Date().toISOString(),
-        verificationMethod: pending.presence.method,
+        verificationMethod: presence.method,
         status: windowEval.attendanceStatus,
         deviceId,
-        faceVerification: {
+        biometricVerification: {
           verified: true,
-          confidence: result.confidence,
-          method: "IN_APP_FACE_AI",
+          method: biometricAuth.method,
+          biometricType: biometricAuth.biometricType,
         },
-        ...(pending.presence.bssidDetected
-          ? { bssidDetected: pending.presence.bssidDetected }
+        ...(presence.bssidDetected
+          ? { bssidDetected: presence.bssidDetected }
           : {}),
-        ...(pending.presence.coordinates &&
-        typeof pending.presence.coordinates.latitude === "number" &&
-        !isNaN(pending.presence.coordinates.latitude) &&
-        typeof pending.presence.coordinates.longitude === "number" &&
-        !isNaN(pending.presence.coordinates.longitude)
+        ...(presence.coordinates &&
+        typeof presence.coordinates.latitude === "number" &&
+        !isNaN(presence.coordinates.latitude) &&
+        typeof presence.coordinates.longitude === "number" &&
+        !isNaN(presence.coordinates.longitude)
           ? {
               coordinatesDetected: {
-                latitude: pending.presence.coordinates.latitude,
-                longitude: pending.presence.coordinates.longitude,
-                ...(typeof pending.presence.coordinates.accuracy === "number" &&
-                !isNaN(pending.presence.coordinates.accuracy)
-                  ? { accuracy: pending.presence.coordinates.accuracy }
+                latitude: presence.coordinates.latitude,
+                longitude: presence.coordinates.longitude,
+                ...(typeof presence.coordinates.accuracy === "number" &&
+                !isNaN(presence.coordinates.accuracy)
+                  ? { accuracy: presence.coordinates.accuracy }
                   : {}),
               },
             }
@@ -501,7 +484,7 @@ export default function DashboardScreen() {
           ? " (Marked Late)"
           : " (On Time)";
       toast.success(
-        `Face verified (${Math.round(result.confidence * 100)}%) & on-premise confirmed! Attendance synced at ${pending.timeDisplay}${statusTag}.`,
+        `Biometric & on-premise confirmed! Attendance synced at ${timeDisplay}${statusTag}.`,
         {
           title:
             windowEval.attendanceStatus === "LATE"
@@ -520,29 +503,12 @@ export default function DashboardScreen() {
       await saveTodayPunchRecord(offlineRecord);
 
       toast.warn(
-        `Face verified & trapped at ${pending.timeDisplay}. Will sync to dashboard once connection is stable.`,
+        `Biometric verified & trapped at ${timeDisplay}. Will sync to dashboard once connection is stable.`,
         { title: "Punch Trapped Locally", duration: 4500 },
       );
     } finally {
       setIsSyncingToCloud(false);
-      pendingClockInRef.current = null;
     }
-  };
-
-  const handleFaceScanFailure = (reason: string) => {
-    setShowFaceModal(false);
-    pendingClockInRef.current = null;
-    setIsSyncingToCloud(false);
-    toast.error(reason || "Face verification failed. Attendance blocked.", {
-      title: "Proxy Check-In Rejected",
-      duration: 6000,
-    });
-  };
-
-  const handleFaceScanClose = () => {
-    setShowFaceModal(false);
-    pendingClockInRef.current = null;
-    setIsSyncingToCloud(false);
   };
 
   // Sign-out execution with biometric check
@@ -753,31 +719,10 @@ export default function DashboardScreen() {
             </Text>
           </View>
 
-          <TouchableOpacity
-            style={[
-              styles.faceIdPill,
-              !member.isFaceEnrolled && styles.faceIdPillUnbound,
-            ]}
-            onPress={() => {
-              setFaceScanMode("ENROLL");
-              setShowFaceModal(true);
-            }}
-            activeOpacity={0.7}
-          >
-            <Ionicons
-              name={member.isFaceEnrolled ? "shield-checkmark" : "scan-outline"}
-              size={13}
-              color={member.isFaceEnrolled ? "#059669" : "#D97706"}
-            />
-            <Text
-              style={[
-                styles.faceIdPillText,
-                !member.isFaceEnrolled && styles.faceIdPillTextUnbound,
-              ]}
-            >
-              {member.isFaceEnrolled ? "Face Bound" : "Bind Face ID"}
-            </Text>
-          </TouchableOpacity>
+          <View style={styles.biometricBadge}>
+            <Ionicons name="finger-print" size={13} color="#059669" />
+            <Text style={styles.biometricBadgeText}>Device Biometrics</Text>
+          </View>
         </View>
 
         {/* Hero Clock & Shift Surface (Material 3 Surface) */}
@@ -1033,9 +978,7 @@ export default function DashboardScreen() {
               />
             </View>
             <Text style={styles.gridTitle}>Security Protection</Text>
-            <Text style={styles.gridDesc}>
-              {member.isFaceEnrolled ? "Face & Phone Bound" : "Device Bound"}
-            </Text>
+            <Text style={styles.gridDesc}>Device Biometrics Active</Text>
           </View>
         </View>
 
@@ -1065,17 +1008,6 @@ export default function DashboardScreen() {
         onSuccess={() => {
           refreshOrganization();
         }}
-      />
-
-      {/* In-App Facial Recognition & Anti-Spoofing Modal */}
-      <FaceScanModal
-        visible={showFaceModal}
-        mode={faceScanMode}
-        memberName={member?.fullName || "Workforce Member"}
-        enrolledEmbedding={member?.faceEmbedding}
-        onSuccess={handleFaceScanSuccess}
-        onFailure={handleFaceScanFailure}
-        onClose={handleFaceScanClose}
       />
     </SafeAreaView>
   );
@@ -1188,7 +1120,7 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     marginTop: 2,
   },
-  faceIdPill: {
+  biometricBadge: {
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
@@ -1199,17 +1131,10 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     borderRadius: 20,
   },
-  faceIdPillUnbound: {
-    backgroundColor: "#FFFBEB",
-    borderColor: "#FDE68A",
-  },
-  faceIdPillText: {
+  biometricBadgeText: {
     fontSize: 11,
     fontWeight: "700",
     color: "#059669",
-  },
-  faceIdPillTextUnbound: {
-    color: "#D97706",
   },
 
   // 3. Hero Clock & Shift Surface (Material 3 Elevated Surface)

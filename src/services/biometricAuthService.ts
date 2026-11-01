@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import * as LocalAuthentication from 'expo-local-authentication';
 
 export interface BiometricCapabilities {
@@ -27,10 +28,15 @@ export async function getBiometricCapabilities(): Promise<BiometricCapabilities>
     const supportedTypes = await LocalAuthentication.supportedAuthenticationTypesAsync();
 
     let biometricLabel = 'Device Security';
-    if (supportedTypes.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION)) {
-      biometricLabel = 'Face ID';
-    } else if (supportedTypes.includes(LocalAuthentication.AuthenticationType.FINGERPRINT)) {
-      biometricLabel = 'Fingerprint';
+    const hasFace = supportedTypes.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION);
+    const hasFingerprint = supportedTypes.includes(LocalAuthentication.AuthenticationType.FINGERPRINT);
+
+    if (hasFace && hasFingerprint) {
+      biometricLabel = 'Fingerprint or Face ID';
+    } else if (hasFace) {
+      biometricLabel = Platform.OS === 'ios' ? 'Face ID' : 'Face Unlock';
+    } else if (hasFingerprint) {
+      biometricLabel = Platform.OS === 'ios' ? 'Touch ID' : 'Fingerprint';
     } else if (hasHardware) {
       biometricLabel = 'Biometrics';
     }
@@ -57,7 +63,7 @@ export async function getBiometricCapabilities(): Promise<BiometricCapabilities>
  * - If phone has physical biometric hardware (Face ID / Fingerprint) & enrolled:
  *   STRICTLY forces biometric scan with disableDeviceFallback: true (passcode blocked).
  * - If phone has biometric hardware but nothing enrolled:
- *   Instructs worker to register fingerprint in phone settings.
+ *   Falls back to device PIN / Pattern so budget phone users aren't locked out.
  * - If phone physically lacks biometric sensor (budget phone):
  *   Falls back to phone's secure device PIN / pattern / password.
  */
@@ -120,14 +126,38 @@ export async function verifyIdentityForClockIn(): Promise<BiometricAuthResult> {
       };
     }
 
-    // Case 2: Phone has biometric sensor hardware, but user hasn't enrolled any fingerprints
+    // Case 2: Phone has biometric sensor hardware, but user hasn't enrolled any fingerprints/face
     if (capabilities.hasHardware && !capabilities.isEnrolled) {
+      // First attempt device screen lock (PIN/Password/Pattern) so budget phones or users with unconfigured sensors aren't hard-blocked
+      const pinFallback = await LocalAuthentication.authenticateAsync({
+        promptMessage: 'Confirm attendance with device PIN / Pattern',
+        cancelLabel: 'Cancel',
+        disableDeviceFallback: false,
+      });
+
+      if (pinFallback.success) {
+        return {
+          success: true,
+          method: 'DEVICE_PASSCODE',
+        };
+      }
+
+      if (pinFallback.error === 'user_cancel' || pinFallback.error === 'system_cancel') {
+        return {
+          success: false,
+          method: 'DEVICE_PASSCODE',
+          errorTitle: 'Authentication Cancelled',
+          error: 'Identity verification is required to confirm attendance.',
+          instruction: "Tap 'Tap to Clock In' again and complete device verification.",
+        };
+      }
+
       return {
         success: false,
         method: 'BIOMETRIC',
         errorTitle: `${capabilities.biometricLabel} Setup Required`,
-        error: `Your phone has a ${capabilities.biometricLabel.toLowerCase()} sensor, but no biometric profiles are registered in your device settings.`,
-        instruction: `Go to your Phone Settings > Security & Biometrics, register your ${capabilities.biometricLabel.toLowerCase()}, then return here to clock in.`,
+        error: `Your phone has a ${capabilities.biometricLabel.toLowerCase()} sensor, but no biometric profiles or screen locks are registered in your device settings.`,
+        instruction: `Go to your Phone Settings > Security & Biometrics, register your ${capabilities.biometricLabel.toLowerCase()} or Screen Lock, then return here to clock in.`,
         needsSetup: true,
       };
     }
