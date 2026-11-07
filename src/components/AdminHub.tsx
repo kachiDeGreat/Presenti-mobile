@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   View,
   Text,
@@ -14,6 +14,7 @@ import {
   Vibration,
   Modal,
   Pressable,
+  Dimensions,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -72,13 +73,34 @@ interface LiveAttendanceRecord {
   deviceId?: string;
 }
 
+const TABS = [
+  { key: "feed" as const, label: "Live Feed", icon: "pulse-outline" as const, activeIcon: "pulse" as const },
+  { key: "anchors" as const, label: "Anchors", icon: "location-outline" as const, activeIcon: "location" as const },
+  { key: "workforce" as const, label: "Workforce", icon: "people-outline" as const, activeIcon: "people" as const },
+];
+
 export const AdminHub: React.FC = () => {
   const { user, organization, refreshOrganization, signOut } = useAuth();
   const toast = useToast();
 
-  // Navigation: 3 Core Tabs on Mobile (Live Feed, Presence Anchors, Registered Workforce)
+  // Navigation: 3 Core Tabs on Mobile with WhatsApp-style Swiping
   const [activeTab, setActiveTab] = useState<"feed" | "anchors" | "workforce">("feed");
   const [refreshing, setRefreshing] = useState(false);
+  const [screenWidth, setScreenWidth] = useState(Dimensions.get("window").width);
+  const horizontalPagerRef = useRef<ScrollView>(null);
+
+  const handleTabPress = (tabKey: "feed" | "anchors" | "workforce", index: number) => {
+    setActiveTab(tabKey);
+    horizontalPagerRef.current?.scrollTo({ x: index * screenWidth, animated: true });
+  };
+
+  const handlePageChange = (e: any) => {
+    const offsetX = e.nativeEvent.contentOffset.x;
+    const newIndex = Math.round(offsetX / screenWidth);
+    if (newIndex === 0) setActiveTab("feed");
+    else if (newIndex === 1) setActiveTab("anchors");
+    else if (newIndex === 2) setActiveTab("workforce");
+  };
 
   // ----------------------------------------------------------------------
   // TAB 1: LIVE ATTENDANCE FEED
@@ -88,72 +110,127 @@ export const AdminHub: React.FC = () => {
   const [feedSearch, setFeedSearch] = useState("");
   const [selectedDeptFilter, setSelectedDeptFilter] = useState<string>("ALL");
   const [isClearingFeed, setIsClearingFeed] = useState(false);
+  const [feedTimeScope, setFeedTimeScope] = useState<"TODAY" | "ALL">("TODAY");
 
   // Modal 1: Attendance Record Detail Modal
   const [selectedPunch, setSelectedPunch] = useState<LiveAttendanceRecord | null>(null);
 
+  // Auto-retry resolving organization if missing
   useEffect(() => {
-    if (!organization?.id || !db) return;
+    if (!organization?.id && refreshOrganization) {
+      refreshOrganization().catch(() => {});
+    }
+  }, [organization?.id, refreshOrganization]);
+
+  useEffect(() => {
+    if (!organization?.id || !db) {
+      setIsAttendanceLoading(false);
+      return;
+    }
     setIsAttendanceLoading(true);
 
+    const safetyTimeout = setTimeout(() => {
+      setIsAttendanceLoading(false);
+    }, 3500);
+
+    const attRef = collection(db, "churches", organization.id, "attendance");
+
+    // Immediate direct query for instant rendering
+    getDocs(attRef)
+      .then((snap) => {
+        const records: LiveAttendanceRecord[] = snap.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as any),
+        }));
+        records.sort((a, b) => {
+          const tA = new Date(a.punchedAt || (a as any).timestamp || 0).getTime();
+          const tB = new Date(b.punchedAt || (b as any).timestamp || 0).getTime();
+          return tB - tA;
+        });
+        setAttendance(records);
+        setIsAttendanceLoading(false);
+      })
+      .catch((err) => {
+        console.warn("Immediate attendance fetch notice:", err);
+        setIsAttendanceLoading(false);
+      });
+
     try {
-      const attRef = collection(db, "churches", organization.id, "attendance");
-      const q = query(attRef, orderBy("punchedAt", "desc"));
       const unsubscribe = onSnapshot(
-        q,
+        attRef,
         (snap) => {
+          clearTimeout(safetyTimeout);
           const records: LiveAttendanceRecord[] = snap.docs.map((d) => ({
             id: d.id,
             ...(d.data() as any),
           }));
+          records.sort((a, b) => {
+            const tA = new Date(a.punchedAt || (a as any).timestamp || 0).getTime();
+            const tB = new Date(b.punchedAt || (b as any).timestamp || 0).getTime();
+            return tB - tA;
+          });
           setAttendance(records);
           setIsAttendanceLoading(false);
         },
         (err) => {
+          clearTimeout(safetyTimeout);
           console.warn("Live attendance stream notice:", err);
           setIsAttendanceLoading(false);
         }
       );
-      return () => unsubscribe();
+      return () => {
+        clearTimeout(safetyTimeout);
+        unsubscribe();
+      };
     } catch (e) {
+      clearTimeout(safetyTimeout);
       console.warn("Error subscribing to attendance:", e);
       setIsAttendanceLoading(false);
     }
   }, [organization?.id]);
 
-  const todayDateStr = useMemo(() => {
-    return new Date().toISOString().split("T")[0];
+  const localTodayStr = useMemo(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   }, []);
+  const utcTodayStr = useMemo(() => new Date().toISOString().split("T")[0], []);
 
   const todayRecords = useMemo(() => {
-    return attendance.filter((r) => r.serviceDate === todayDateStr);
-  }, [attendance, todayDateStr]);
+    return attendance.filter(
+      (r) => r.serviceDate === localTodayStr || r.serviceDate === utcTodayStr
+    );
+  }, [attendance, localTodayStr, utcTodayStr]);
+
+  const activeRecords = useMemo(() => {
+    if (feedTimeScope === "ALL") return attendance;
+    return todayRecords;
+  }, [feedTimeScope, attendance, todayRecords]);
 
   const onTimeCount = useMemo(() => {
-    return todayRecords.filter((r) => r.status === "ON_TIME").length;
-  }, [todayRecords]);
+    return activeRecords.filter((r) => r.status === "ON_TIME").length;
+  }, [activeRecords]);
 
   const lateCount = useMemo(() => {
-    return todayRecords.filter((r) => r.status === "LATE").length;
-  }, [todayRecords]);
+    return activeRecords.filter((r) => r.status === "LATE").length;
+  }, [activeRecords]);
 
   const punctualityRate = useMemo(() => {
-    if (todayRecords.length === 0) return 100;
-    return Math.round((onTimeCount / todayRecords.length) * 100);
-  }, [todayRecords, onTimeCount]);
+    if (activeRecords.length === 0) return 100;
+    return Math.round((onTimeCount / activeRecords.length) * 100);
+  }, [activeRecords, onTimeCount]);
 
   const departmentList = useMemo(() => {
     const set = new Set<string>();
-    todayRecords.forEach((r) => {
+    activeRecords.forEach((r) => {
       if (r.department && r.department.trim()) {
         set.add(r.department.trim());
       }
     });
     return ["ALL", ...Array.from(set)];
-  }, [todayRecords]);
+  }, [activeRecords]);
 
   const filteredFeedRecords = useMemo(() => {
-    return todayRecords.filter((rec) => {
+    return activeRecords.filter((rec) => {
       const matchSearch =
         !feedSearch.trim() ||
         rec.memberName?.toLowerCase().includes(feedSearch.toLowerCase()) ||
@@ -162,7 +239,7 @@ export const AdminHub: React.FC = () => {
         selectedDeptFilter === "ALL" || rec.department === selectedDeptFilter;
       return matchSearch && matchDept;
     });
-  }, [todayRecords, feedSearch, selectedDeptFilter]);
+  }, [activeRecords, feedSearch, selectedDeptFilter]);
 
   const handleClearFeed = async () => {
     if (!organization?.id || isClearingFeed) return;
@@ -388,29 +465,67 @@ export const AdminHub: React.FC = () => {
 
   // Real-time listener for registered organization members
   useEffect(() => {
-    if (!organization?.id || !db) return;
+    if (!organization?.id || !db) {
+      setIsMembersLoading(false);
+      return;
+    }
     setIsMembersLoading(true);
 
+    const safetyTimeout = setTimeout(() => {
+      setIsMembersLoading(false);
+    }, 3500);
+
+    const membersRef = collection(db, "churches", organization.id, "members");
+
+    // Immediate direct query for instant rendering
+    getDocs(membersRef)
+      .then((snap) => {
+        const list: ChurchMember[] = snap.docs.map((d) => ({
+          id: d.id,
+          ...(d.data() as any),
+        }));
+        list.sort((a, b) =>
+          (a.fullName || (a as any).name || "").localeCompare(
+            b.fullName || (b as any).name || ""
+          )
+        );
+        setMembers(list);
+        setIsMembersLoading(false);
+      })
+      .catch((err) => {
+        console.warn("Immediate workforce fetch notice:", err);
+        setIsMembersLoading(false);
+      });
+
     try {
-      const membersRef = collection(db, "churches", organization.id, "members");
-      const q = query(membersRef, orderBy("fullName", "asc"));
       const unsubscribe = onSnapshot(
-        q,
+        membersRef,
         (snap) => {
+          clearTimeout(safetyTimeout);
           const list: ChurchMember[] = snap.docs.map((d) => ({
             id: d.id,
             ...(d.data() as any),
           }));
+          list.sort((a, b) =>
+            (a.fullName || (a as any).name || "").localeCompare(
+              b.fullName || (b as any).name || ""
+            )
+          );
           setMembers(list);
           setIsMembersLoading(false);
         },
         (err) => {
+          clearTimeout(safetyTimeout);
           console.warn("Workforce listener notice:", err);
           setIsMembersLoading(false);
         }
       );
-      return () => unsubscribe();
+      return () => {
+        clearTimeout(safetyTimeout);
+        unsubscribe();
+      };
     } catch (e) {
+      clearTimeout(safetyTimeout);
       console.warn("Error subscribing to workforce:", e);
       setIsMembersLoading(false);
     }
@@ -577,8 +692,48 @@ export const AdminHub: React.FC = () => {
 
   const handlePullRefresh = async () => {
     setRefreshing(true);
-    await refreshOrganization().catch(() => {});
-    setRefreshing(false);
+    try {
+      await refreshOrganization().catch(() => {});
+      if (organization?.id && db) {
+        const attRef = collection(db, "churches", organization.id, "attendance");
+        const membersRef = collection(db, "churches", organization.id, "members");
+        const [attSnap, memSnap] = await Promise.all([
+          getDocs(attRef).catch(() => null),
+          getDocs(membersRef).catch(() => null),
+        ]);
+        if (attSnap) {
+          const records: LiveAttendanceRecord[] = attSnap.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as any),
+          }));
+          records.sort((a, b) => {
+            const tA = new Date(a.punchedAt || (a as any).timestamp || 0).getTime();
+            const tB = new Date(b.punchedAt || (b as any).timestamp || 0).getTime();
+            return tB - tA;
+          });
+          setAttendance(records);
+        }
+        if (memSnap) {
+          const list: ChurchMember[] = memSnap.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as any),
+          }));
+          list.sort((a, b) =>
+            (a.fullName || (a as any).name || "").localeCompare(
+              b.fullName || (b as any).name || ""
+            )
+          );
+          setMembers(list);
+        }
+      }
+      toast.success("Feed & workforce refreshed.");
+    } catch (e) {
+      console.warn("Pull refresh notice:", e);
+    } finally {
+      setIsAttendanceLoading(false);
+      setIsMembersLoading(false);
+      setRefreshing(false);
+    }
   };
 
   return (
@@ -619,25 +774,107 @@ export const AdminHub: React.FC = () => {
       </View>
 
       {/* ---------------------------------------------------------------- */}
-      {/* SCROLLABLE MAIN CONTENT (TABS)                                   */}
+      {/* WHATSAPP-STYLE TOP TAB NAVIGATION WITH ACTIVE SECTION HIGHLIGHT   */}
       {/* ---------------------------------------------------------------- */}
-      <ScrollView
-        style={styles.scrollArea}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={handlePullRefresh}
-            tintColor="#142748"
-          />
-        }
+      <View style={styles.topTabBar}>
+        {TABS.map((tab, idx) => {
+          const isActive = activeTab === tab.key;
+          return (
+            <TouchableOpacity
+              key={tab.key}
+              style={[styles.topTabItem, isActive && styles.topTabItemActive]}
+              onPress={() => handleTabPress(tab.key, idx)}
+              activeOpacity={0.75}
+            >
+              <View style={styles.topTabContentRow}>
+                <Ionicons
+                  name={isActive ? tab.activeIcon : tab.icon}
+                  size={15}
+                  color={isActive ? "#142748" : "#64748b"}
+                  style={{ marginRight: 5 }}
+                />
+                <Text
+                  style={[
+                    styles.topTabLabel,
+                    isActive && styles.topTabLabelActive,
+                  ]}
+                >
+                  {tab.label}
+                </Text>
+                {tab.key === "feed" && todayRecords.length > 0 && (
+                  <View style={[styles.tabCounterBadge, isActive && styles.tabCounterBadgeActive]}>
+                    <Text style={[styles.tabCounterText, isActive && styles.tabCounterTextActive]}>
+                      {todayRecords.length}
+                    </Text>
+                  </View>
+                )}
+                {tab.key === "anchors" && (
+                  <View
+                    style={[
+                      styles.tabStatusDot,
+                      { backgroundColor: isCalibrated ? "#10b981" : "#f59e0b" },
+                    ]}
+                  />
+                )}
+                {tab.key === "workforce" && totalMembersCount > 0 && (
+                  <View style={[styles.tabCounterBadge, isActive && styles.tabCounterBadgeActive]}>
+                    <Text style={[styles.tabCounterText, isActive && styles.tabCounterTextActive]}>
+                      {totalMembersCount}
+                    </Text>
+                  </View>
+                )}
+              </View>
+              {/* WhatsApp Active Section Underline Indicator */}
+              <View
+                style={[
+                  styles.activeSectionIndicator,
+                  isActive && styles.activeSectionIndicatorVisible,
+                ]}
+              />
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      {/* ---------------------------------------------------------------- */}
+      {/* HORIZONTAL SWIPEABLE PAGER (WHATSAPP-STYLE TAB SWIPING)          */}
+      {/* ---------------------------------------------------------------- */}
+      <View
+        style={styles.pagerContainer}
+        onLayout={(e) => {
+          const w = e.nativeEvent.layout.width;
+          if (w > 0 && Math.abs(w - screenWidth) > 1) {
+            setScreenWidth(w);
+          }
+        }}
       >
-        {/* ============================================================== */}
-        {/* TAB 1: LIVE ATTENDANCE FEED                                    */}
-        {/* ============================================================== */}
-        {activeTab === "feed" && (
-          <View style={styles.tabContent}>
+        <ScrollView
+          ref={horizontalPagerRef}
+          horizontal
+          pagingEnabled
+          showsHorizontalScrollIndicator={false}
+          onMomentumScrollEnd={handlePageChange}
+          style={{ flex: 1 }}
+          contentContainerStyle={{ flexGrow: 1 }}
+        >
+          {/* ============================================================== */}
+          {/* TAB 1: LIVE ATTENDANCE FEED (PAGE 0)                           */}
+          {/* ============================================================== */}
+          <View style={{ width: screenWidth, flex: 1 }}>
+            <ScrollView
+              style={styles.scrollArea}
+              contentContainerStyle={styles.scrollContent}
+              showsVerticalScrollIndicator={false}
+              nestedScrollEnabled
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={handlePullRefresh}
+                  tintColor="#142748"
+                />
+              }
+            >
+              <View style={styles.tabContent}>
             {/* KPI Metrics Row */}
             <View style={styles.kpiRow}>
               <View style={styles.kpiCard}>
@@ -663,13 +900,13 @@ export const AdminHub: React.FC = () => {
               </View>
             </View>
 
-            {/* Search & Actions Bar */}
+            {/* Search & Actions Bar with Time Scope Toggle */}
             <View style={styles.searchRow}>
               <View style={styles.searchBox}>
                 <Ionicons name="search-outline" size={16} color="#64748b" />
                 <TextInput
                   style={styles.searchInput}
-                  placeholder="Search worker or department..."
+                  placeholder={feedTimeScope === "TODAY" ? "Search today's punches..." : "Search all attendance..."}
                   placeholderTextColor="#94a3b8"
                   value={feedSearch}
                   onChangeText={setFeedSearch}
@@ -681,7 +918,29 @@ export const AdminHub: React.FC = () => {
                 )}
               </View>
 
-              {todayRecords.length > 0 && (
+              <View style={styles.timeScopeToggle}>
+                <TouchableOpacity
+                  style={[styles.timeScopeBtn, feedTimeScope === "TODAY" && styles.timeScopeBtnActive]}
+                  onPress={() => setFeedTimeScope("TODAY")}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.timeScopeText, feedTimeScope === "TODAY" && styles.timeScopeTextActive]}>
+                    TODAY
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.timeScopeBtn, feedTimeScope === "ALL" && styles.timeScopeBtnActive]}
+                  onPress={() => setFeedTimeScope("ALL")}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.timeScopeText, feedTimeScope === "ALL" && styles.timeScopeTextActive]}>
+                    ALL ({attendance.length})
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {activeRecords.length > 0 && (
                 <TouchableOpacity
                   style={styles.actionIconBtn}
                   onPress={handleClearFeed}
@@ -734,13 +993,41 @@ export const AdminHub: React.FC = () => {
                   <Ionicons name="finger-print-outline" size={28} color="#64748b" />
                 </View>
                 <Text style={styles.emptyTitle}>
-                  {feedSearch ? "No matching records found" : "No Attendance Recorded Today"}
+                  {feedSearch
+                    ? "No matching records found"
+                    : feedTimeScope === "TODAY"
+                    ? "No Attendance Recorded Today"
+                    : "No Attendance Records in Database"}
                 </Text>
                 <Text style={styles.emptySub}>
                   {feedSearch
                     ? "Try adjusting your search query."
+                    : feedTimeScope === "TODAY" && attendance.length > 0
+                    ? `No punches found for today (${localTodayStr}). You have ${attendance.length} total attendance punch${attendance.length === 1 ? '' : 'es'} in the database.`
                     : "Workers' verified check-in punches will appear here live as they clock in."}
                 </Text>
+
+                {feedTimeScope === "TODAY" && attendance.length > 0 && (
+                  <TouchableOpacity
+                    style={styles.switchScopeBtn}
+                    onPress={() => setFeedTimeScope("ALL")}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="time-outline" size={15} color="#ffffff" style={{ marginRight: 6 }} />
+                    <Text style={styles.switchScopeBtnText}>VIEW ALL {attendance.length} ATTENDANCE RECORDS</Text>
+                  </TouchableOpacity>
+                )}
+
+                {!organization?.id && (
+                  <TouchableOpacity
+                    style={styles.reconnectBtn}
+                    onPress={handlePullRefresh}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="refresh-outline" size={15} color="#142748" style={{ marginRight: 6 }} />
+                    <Text style={styles.reconnectBtnText}>RECONNECT WORKSPACE</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             ) : (
               <View style={styles.feedCardList}>
@@ -835,14 +1122,28 @@ export const AdminHub: React.FC = () => {
                 })}
               </View>
             )}
+              </View>
+            </ScrollView>
           </View>
-        )}
 
-        {/* ============================================================== */}
-        {/* TAB 2: PRESENCE ANCHORS & CALIBRATION                          */}
-        {/* ============================================================== */}
-        {activeTab === "anchors" && (
-          <View style={styles.tabContent}>
+          {/* ============================================================== */}
+          {/* TAB 2: PRESENCE ANCHORS & CALIBRATION (PAGE 1)                 */}
+          {/* ============================================================== */}
+          <View style={{ width: screenWidth, flex: 1 }}>
+            <ScrollView
+              style={styles.scrollArea}
+              contentContainerStyle={styles.scrollContent}
+              showsVerticalScrollIndicator={false}
+              nestedScrollEnabled
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={handlePullRefresh}
+                  tintColor="#142748"
+                />
+              }
+            >
+              <View style={styles.tabContent}>
             {/* Status Hero Card */}
             <View style={styles.statusHeroCard}>
               <View style={styles.statusHeroTop}>
@@ -1167,14 +1468,28 @@ export const AdminHub: React.FC = () => {
                 {isSavingAnchors ? "COMMITTING & SYNCING..." : "SAVE CALIBRATED ANCHORS"}
               </Text>
             </TouchableOpacity>
+              </View>
+            </ScrollView>
           </View>
-        )}
 
-        {/* ============================================================== */}
-        {/* TAB 3: REGISTERED WORKFORCE USERS (Directory & Management)      */}
-        {/* ============================================================== */}
-        {activeTab === "workforce" && (
-          <View style={styles.tabContent}>
+          {/* ============================================================== */}
+          {/* TAB 3: REGISTERED WORKFORCE USERS (PAGE 2)                     */}
+          {/* ============================================================== */}
+          <View style={{ width: screenWidth, flex: 1 }}>
+            <ScrollView
+              style={styles.scrollArea}
+              contentContainerStyle={styles.scrollContent}
+              showsVerticalScrollIndicator={false}
+              nestedScrollEnabled
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={handlePullRefresh}
+                  tintColor="#142748"
+                />
+              }
+            >
+              <View style={styles.tabContent}>
             {/* Workforce KPI Summary */}
             <View style={styles.kpiRow}>
               <View style={styles.kpiCard}>
@@ -1309,6 +1624,16 @@ export const AdminHub: React.FC = () => {
                     ? "Try adjusting your search terms or filter."
                     : "Workers who register on the mobile app will appear here."}
                 </Text>
+                {!organization?.id && (
+                  <TouchableOpacity
+                    style={styles.reconnectBtn}
+                    onPress={handlePullRefresh}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="refresh-outline" size={15} color="#142748" style={{ marginRight: 6 }} />
+                    <Text style={styles.reconnectBtnText}>RECONNECT WORKSPACE</Text>
+                  </TouchableOpacity>
+                )}
               </View>
             ) : (
               <View style={styles.feedCardList}>
@@ -1389,98 +1714,10 @@ export const AdminHub: React.FC = () => {
                 })}
               </View>
             )}
-          </View>
-        )}
-      </ScrollView>
-
-      {/* ---------------------------------------------------------------- */}
-      {/* BOLT-STYLE BOTTOM TAB BAR NAVIGATION                             */}
-      {/* ---------------------------------------------------------------- */}
-      <View style={styles.bottomTabBar}>
-        {/* Tab 1: Live Feed */}
-        <TouchableOpacity
-          style={[styles.bottomTabItem, activeTab === "feed" && styles.bottomTabItemActive]}
-          onPress={() => setActiveTab("feed")}
-          activeOpacity={0.8}
-        >
-          <View style={styles.tabIconWrap}>
-            <Ionicons
-              name={activeTab === "feed" ? "pulse" : "pulse-outline"}
-              size={20}
-              color={activeTab === "feed" ? "#142748" : "#94a3b8"}
-            />
-            {todayRecords.length > 0 && (
-              <View style={styles.tabBadgeDot}>
-                <Text style={styles.tabBadgeDotText}>{todayRecords.length}</Text>
               </View>
-            )}
+            </ScrollView>
           </View>
-          <Text
-            style={[styles.bottomTabLabel, activeTab === "feed" && styles.bottomTabLabelActive]}
-          >
-            Live Feed
-          </Text>
-        </TouchableOpacity>
-
-        {/* Tab 2: Presence Anchors */}
-        <TouchableOpacity
-          style={[styles.bottomTabItem, activeTab === "anchors" && styles.bottomTabItemActive]}
-          onPress={() => setActiveTab("anchors")}
-          activeOpacity={0.8}
-        >
-          <View style={styles.tabIconWrap}>
-            <Ionicons
-              name={activeTab === "anchors" ? "location" : "location-outline"}
-              size={20}
-              color={activeTab === "anchors" ? "#142748" : "#94a3b8"}
-            />
-            <View
-              style={[
-                styles.anchorStatusIndicator,
-                { backgroundColor: isCalibrated ? "#10b981" : "#f59e0b" },
-              ]}
-            />
-          </View>
-          <Text
-            style={[
-              styles.bottomTabLabel,
-              activeTab === "anchors" && styles.bottomTabLabelActive,
-            ]}
-          >
-            Anchors
-          </Text>
-        </TouchableOpacity>
-
-        {/* Tab 3: Workforce Directory */}
-        <TouchableOpacity
-          style={[
-            styles.bottomTabItem,
-            activeTab === "workforce" && styles.bottomTabItemActive,
-          ]}
-          onPress={() => setActiveTab("workforce")}
-          activeOpacity={0.8}
-        >
-          <View style={styles.tabIconWrap}>
-            <Ionicons
-              name={activeTab === "workforce" ? "people" : "people-outline"}
-              size={20}
-              color={activeTab === "workforce" ? "#142748" : "#94a3b8"}
-            />
-            {totalMembersCount > 0 && (
-              <View style={styles.tabCountPill}>
-                <Text style={styles.tabCountPillText}>{totalMembersCount}</Text>
-              </View>
-            )}
-          </View>
-          <Text
-            style={[
-              styles.bottomTabLabel,
-              activeTab === "workforce" && styles.bottomTabLabelActive,
-            ]}
-          >
-            Workforce
-          </Text>
-        </TouchableOpacity>
+        </ScrollView>
       </View>
 
       {/* ---------------------------------------------------------------- */}
@@ -1942,12 +2179,145 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "800",
   },
+  pagerContainer: {
+    flex: 1,
+  },
+  topTabBar: {
+    flexDirection: "row",
+    backgroundColor: "#ffffff",
+    borderBottomWidth: 1,
+    borderBottomColor: "#e5e7eb",
+  },
+  topTabItem: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingTop: 12,
+    position: "relative",
+  },
+  topTabItemActive: {
+    backgroundColor: "#f8fafc",
+  },
+  topTabContentRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingBottom: 10,
+    gap: 4,
+  },
+  topTabLabel: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#64748b",
+    letterSpacing: -0.2,
+  },
+  topTabLabelActive: {
+    color: "#142748",
+    fontWeight: "800",
+  },
+  activeSectionIndicator: {
+    position: "absolute",
+    bottom: 0,
+    left: 10,
+    right: 10,
+    height: 3,
+    backgroundColor: "transparent",
+    borderTopLeftRadius: 3,
+    borderTopRightRadius: 3,
+  },
+  activeSectionIndicatorVisible: {
+    backgroundColor: "#2d81ff",
+  },
+  tabCounterBadge: {
+    backgroundColor: "#e2e8f0",
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 8,
+    marginLeft: 3,
+  },
+  tabCounterBadgeActive: {
+    backgroundColor: "#2d81ff",
+  },
+  tabCounterText: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: "#475569",
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+  },
+  tabCounterTextActive: {
+    color: "#ffffff",
+  },
+  tabStatusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginLeft: 4,
+  },
   scrollArea: {
     flex: 1,
   },
   scrollContent: {
     padding: 16,
-    paddingBottom: 90,
+    paddingBottom: 28,
+  },
+  timeScopeToggle: {
+    flexDirection: "row",
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    padding: 2,
+    gap: 2,
+  },
+  timeScopeBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  timeScopeBtnActive: {
+    backgroundColor: "#142748",
+  },
+  timeScopeText: {
+    fontSize: 9,
+    fontWeight: "700",
+    color: "#64748b",
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+  },
+  timeScopeTextActive: {
+    color: "#ffffff",
+    fontWeight: "800",
+  },
+  switchScopeBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#2d81ff",
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    marginTop: 14,
+  },
+  switchScopeBtnText: {
+    color: "#ffffff",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.6,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+  },
+  reconnectBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "#f2f1ee",
+    borderWidth: 1,
+    borderColor: "#142748",
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    marginTop: 14,
+  },
+  reconnectBtnText: {
+    color: "#142748",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.6,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
   tabContent: {
     gap: 16,
