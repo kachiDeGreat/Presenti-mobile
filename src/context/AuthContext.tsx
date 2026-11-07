@@ -9,6 +9,8 @@ import {
   where,
   getDocs,
   getDoc,
+  setDoc,
+  doc,
   limit,
 } from 'firebase/firestore';
 import { auth, db, googleProvider } from '../config/firebase';
@@ -28,6 +30,13 @@ import {
   updateOrganizationAnchors as updateOrganizationAnchorsService,
   updateMemberFaceEnrollment,
 } from '../services/organizationService';
+import {
+  sendMobileSignupOtp,
+  sendMobilePasswordResetOtp,
+  verifyMobileOtp,
+  sendMobileWelcomeEmail,
+  type SendMobileOtpResult,
+} from '../services/mobileEmailService';
 import type { Organization, CachedAnchors, ChurchMember, MobileUser } from '../types';
 
 export interface AuthResult {
@@ -45,6 +54,16 @@ interface AuthContextType {
   isLoading: boolean;
   isAdmin: boolean;
   knownAccounts: MobileUser[];
+  loginWithEmailPassword: (email: string, password: string) => Promise<AuthResult>;
+  registerWithEmailPassword: (
+    email: string,
+    password: string,
+    displayName: string,
+    role: 'ADMIN' | 'WORKER'
+  ) => Promise<AuthResult>;
+  sendMobileOtp: (email: string, purpose: 'SIGNUP' | 'RESET_PASSWORD') => Promise<SendMobileOtpResult>;
+  verifyMobileOtpCode: (email: string, code: string, purpose: 'SIGNUP' | 'RESET_PASSWORD') => Promise<boolean>;
+  resetPasswordWithOtp: (email: string, code: string, newPassword: string) => Promise<void>;
   signInWithGoogle: (customUser?: Partial<MobileUser>) => Promise<AuthResult>;
   signInWithGoogleCredential: (idToken: string, profileHint?: Partial<MobileUser>) => Promise<AuthResult>;
   addOrSelectGoogleAccount: (account: MobileUser) => Promise<AuthResult>;
@@ -356,6 +375,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
+      // 5b. If activeOrg not yet known on this device, check if worker is already registered across any organization
+      if (!activeOrg && cleanEmail && db) {
+        try {
+          const membersGroupQuery = query(
+            collectionGroup(db, 'members'),
+            where('email', '==', cleanEmail),
+            limit(1)
+          );
+          const groupSnap = await getDocs(membersGroupQuery);
+          if (!groupSnap.empty) {
+            const memberDoc = groupSnap.docs[0];
+            const churchDocRef = memberDoc.ref.parent.parent;
+            if (churchDocRef) {
+              const freshOrg = await fetchFreshOrganizationById(churchDocRef.id);
+              if (freshOrg) {
+                activeOrg = freshOrg;
+                existingMember = {
+                  id: memberDoc.id,
+                  fullName: memberDoc.data().fullName || authUser.displayName || 'Worker',
+                  phone: memberDoc.data().phone || '',
+                  email: memberDoc.data().email || cleanEmail,
+                  department: memberDoc.data().department || 'General',
+                  boundDeviceId: memberDoc.data().boundDeviceId || activeDeviceId,
+                  registeredAt: memberDoc.data().registeredAt || new Date().toISOString(),
+                  isFaceEnrolled: memberDoc.data().isFaceEnrolled || false,
+                  faceEmbedding: memberDoc.data().faceEmbedding || [],
+                };
+                setOrganization(activeOrg);
+                await cacheOrganizationAnchors(activeOrg);
+              }
+            }
+          }
+        } catch (cgErr) {
+          console.warn('Cross-organization member lookup notice:', cgErr);
+        }
+      }
+
       if (existingMember) {
         setMember(existingMember);
         await AsyncStorage.setItem(STORAGE_KEY_MEMBER, JSON.stringify(existingMember));
@@ -377,10 +433,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       if (Platform.OS === 'web' && !customUser) {
         const cred = await FirebaseAuth.signInWithPopup(auth, googleProvider);
+        const isNewUser = FirebaseAuth.getAdditionalUserInfo(cred)?.isNewUser;
+        const effectiveEmail = cred.user.email || 'user@gmail.com';
+        const effectiveName = cred.user.displayName || cred.user.email?.split('@')[0] || 'Workforce Member';
+
+        if (isNewUser && effectiveEmail) {
+          const isAdminUser = await checkIfUserIsAdmin(effectiveEmail, cred.user.uid);
+          const role: 'ADMIN' | 'WORKER' = isAdminUser ? 'ADMIN' : 'WORKER';
+          if (db) {
+            await setDoc(
+              doc(db, isAdminUser ? 'admins' : 'workers', cred.user.uid),
+              {
+                uid: cred.user.uid,
+                email: effectiveEmail.toLowerCase(),
+                displayName: effectiveName,
+                role,
+                authProvider: 'google',
+                createdAt: Date.now(),
+              },
+              { merge: true }
+            ).catch(() => {});
+          }
+          sendMobileWelcomeEmail(effectiveEmail, effectiveName, role).catch((e) =>
+            console.warn('[Welcome Email Mobile - Google Web] Dispatch notice:', e)
+          );
+        }
+
         const authUser: MobileUser = {
           uid: cred.user.uid,
-          email: cred.user.email || 'user@gmail.com',
-          displayName: cred.user.displayName || cred.user.email?.split('@')[0] || 'Workforce Member',
+          email: effectiveEmail,
+          displayName: effectiveName,
           photoURL: cred.user.photoURL || undefined,
         };
         return await handleUserAuthenticated(authUser);
@@ -407,6 +489,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const credential = FirebaseAuth.GoogleAuthProvider.credential(idToken);
       const cred = await FirebaseAuth.signInWithCredential(auth, credential);
+      const isNewUser = FirebaseAuth.getAdditionalUserInfo(cred)?.isNewUser;
       const effectiveEmail = (cred.user.email || profileHint?.email || '').trim();
       const effectiveName =
         cred.user.displayName ||
@@ -414,6 +497,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         effectiveEmail.split('@')[0] ||
         'Workforce Member';
       const effectivePhoto = cred.user.photoURL || profileHint?.photoURL || undefined;
+
+      if (isNewUser && effectiveEmail) {
+        const isAdminUser = await checkIfUserIsAdmin(effectiveEmail, cred.user.uid);
+        const role: 'ADMIN' | 'WORKER' = isAdminUser ? 'ADMIN' : 'WORKER';
+        if (db) {
+          await setDoc(
+            doc(db, isAdminUser ? 'admins' : 'workers', cred.user.uid),
+            {
+              uid: cred.user.uid,
+              email: effectiveEmail.toLowerCase(),
+              displayName: effectiveName,
+              role,
+              authProvider: 'google',
+              createdAt: Date.now(),
+            },
+            { merge: true }
+          ).catch(() => {});
+        }
+        sendMobileWelcomeEmail(effectiveEmail, effectiveName, role).catch((e) =>
+          console.warn('[Welcome Email Mobile - Google] Dispatch notice:', e)
+        );
+      }
 
       const authUser: MobileUser = {
         uid: cred.user.uid,
@@ -430,6 +535,127 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const addOrSelectGoogleAccount = async (selectedAccount: MobileUser): Promise<AuthResult> => {
     return await handleUserAuthenticated(selectedAccount);
+  };
+
+  // Email & Password Authentication: Sign In (Auto-detects role on login)
+  const loginWithEmailPassword = async (email: string, password: string): Promise<AuthResult> => {
+    const cleanEmail = email.trim().toLowerCase();
+    try {
+      const cred = await FirebaseAuth.signInWithEmailAndPassword(auth, cleanEmail, password);
+      const authUser: MobileUser = {
+        uid: cred.user.uid,
+        email: cred.user.email || cleanEmail,
+        displayName: cred.user.displayName || cred.user.email?.split('@')[0] || 'User',
+        photoURL: cred.user.photoURL || undefined,
+      };
+      // handleUserAuthenticated auto-detects Admin vs Worker role!
+      return await handleUserAuthenticated(authUser);
+    } catch (error: any) {
+      console.error('[Login] Email & Password login failed:', error);
+      throw error;
+    }
+  };
+
+  // Role-Based Registration: Create Account with chosen role ('ADMIN' or 'WORKER')
+  const registerWithEmailPassword = async (
+    email: string,
+    password: string,
+    displayName: string,
+    role: 'ADMIN' | 'WORKER'
+  ): Promise<AuthResult> => {
+    const cleanEmail = email.trim().toLowerCase();
+    try {
+      const cred = await FirebaseAuth.createUserWithEmailAndPassword(auth, cleanEmail, password);
+
+      if (cred.user && displayName.trim()) {
+        await FirebaseAuth.updateProfile(cred.user, {
+          displayName: displayName.trim(),
+        }).catch(() => {});
+      }
+
+      // Persist role metadata in Firestore
+      if (db) {
+        if (role === 'ADMIN') {
+          await setDoc(
+            doc(db, 'admins', cred.user.uid),
+            {
+              uid: cred.user.uid,
+              email: cleanEmail,
+              displayName: displayName.trim(),
+              role: 'ADMIN',
+              createdAt: Date.now(),
+            },
+            { merge: true }
+          );
+        } else {
+          await setDoc(
+            doc(db, 'workers', cred.user.uid),
+            {
+              uid: cred.user.uid,
+              email: cleanEmail,
+              displayName: displayName.trim(),
+              role: 'WORKER',
+              createdAt: Date.now(),
+            },
+            { merge: true }
+          );
+        }
+      }
+
+      // Send Welcome Email immediately upon successful account creation
+      sendMobileWelcomeEmail(cleanEmail, displayName, role).catch((err) =>
+        console.warn('[Welcome Email Mobile] Dispatch notice:', err)
+      );
+
+      const authUser: MobileUser = {
+        uid: cred.user.uid,
+        email: cleanEmail,
+        displayName: displayName.trim() || cleanEmail.split('@')[0],
+        isAdmin: role === 'ADMIN',
+      };
+
+      return await handleUserAuthenticated(authUser);
+    } catch (error: any) {
+      console.error('[Register] Email registration error:', error);
+      throw error;
+    }
+  };
+
+  // Send 6-digit OTP code to email
+  const sendMobileOtp = async (
+    email: string,
+    purpose: 'SIGNUP' | 'RESET_PASSWORD'
+  ): Promise<SendMobileOtpResult> => {
+    if (purpose === 'SIGNUP') {
+      return await sendMobileSignupOtp(email);
+    } else {
+      return await sendMobilePasswordResetOtp(email);
+    }
+  };
+
+  // Verify 6-digit OTP code
+  const verifyMobileOtpCode = async (
+    email: string,
+    code: string,
+    purpose: 'SIGNUP' | 'RESET_PASSWORD'
+  ): Promise<boolean> => {
+    return await verifyMobileOtp(email, code, purpose);
+  };
+
+  // Reset password using 6-digit code
+  const resetPasswordWithOtp = async (
+    email: string,
+    code: string,
+    newPassword: string
+  ): Promise<void> => {
+    await verifyMobileOtp(email, code, 'RESET_PASSWORD');
+    const cleanEmail = email.trim().toLowerCase();
+    if (auth.currentUser && auth.currentUser.email?.toLowerCase() === cleanEmail) {
+      await FirebaseAuth.updatePassword(auth.currentUser, newPassword);
+    } else {
+      // Send Firebase reset email or update in backend
+      await FirebaseAuth.sendPasswordResetEmail(auth, cleanEmail);
+    }
   };
 
   const pairOrganization = async (code: string): Promise<Organization> => {
@@ -623,6 +849,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isLoading,
         isAdmin: Boolean(user?.isAdmin),
         knownAccounts,
+        loginWithEmailPassword,
+        registerWithEmailPassword,
+        sendMobileOtp,
+        verifyMobileOtpCode,
+        resetPasswordWithOtp,
         signInWithGoogle,
         signInWithGoogleCredential,
         addOrSelectGoogleAccount,

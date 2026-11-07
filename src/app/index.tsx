@@ -17,6 +17,7 @@ import {
 import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
+import * as Clipboard from "expo-clipboard";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { LoadingIndicator } from "../components/LoadingIndicator";
@@ -685,12 +686,26 @@ export default function DashboardScreen() {
               style={styles.brandLogo}
               resizeMode="contain"
             />
-            <View style={{ flex: 1 }}>
+            <View style={{ flex: 1, gap: 2 }}>
+              <View style={styles.brandBadgeRow}>
+                <View style={styles.livePulseDot} />
+                <Text style={styles.brandTag}>WORKFORCE PRESENCE</Text>
+                <TouchableOpacity
+                  onPress={async () => {
+                    if (organization.churchCode) {
+                      await Clipboard.setStringAsync(organization.churchCode);
+                      toast.success("Organization code copied!");
+                    }
+                  }}
+                  style={styles.orgCodePill}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.orgCodeText}>{organization.churchCode || "ORG"}</Text>
+                  <Ionicons name="copy-outline" size={10} color="#142748" />
+                </TouchableOpacity>
+              </View>
               <Text style={styles.orgName} numberOfLines={1}>
                 {organization.churchName}
-              </Text>
-              <Text style={styles.branchName} numberOfLines={1}>
-                {organization.branchName} • {organization.churchCode}
               </Text>
             </View>
           </TouchableOpacity>
@@ -701,31 +716,31 @@ export default function DashboardScreen() {
             ) : (
               <View style={styles.topAvatarFallback}>
                 <Text style={styles.topAvatarLetter}>
-                  {(member.fullName?.[0] || "U").toUpperCase()}
+                  {(member.fullName?.[0] || "W").toUpperCase()}
                 </Text>
               </View>
             )}
           </View>
         </View>
 
-        {/* Member Profile Quick Chip Card */}
+        {/* Worker Profile Quick Card */}
         <View style={styles.profileChipCard}>
-          <View style={{ flex: 1 }}>
+          <View style={{ flex: 1, gap: 2 }}>
             <Text style={styles.profileName} numberOfLines={1}>
               {member.fullName}
             </Text>
             <Text style={styles.profileDept} numberOfLines={1}>
-              {member.department}
+              {member.department || "General Workforce"} • Bound Device
             </Text>
           </View>
 
           <View style={styles.biometricBadge}>
-            <Ionicons name="finger-print" size={13} color="#059669" />
+            <Ionicons name="finger-print" size={12} color="#10b981" />
             <Text style={styles.biometricBadgeText}>Device Biometrics</Text>
           </View>
         </View>
 
-        {/* Hero Clock & Shift Surface (Material 3 Surface) */}
+        {/* Hero Digital Shift Clock Card (ArtCraft Brutalist Surface) */}
         <View style={styles.clockSurface}>
           <Text style={styles.clockDateText}>{dateString}</Text>
           <Text style={styles.clockTimeText}>{hoursString}</Text>
@@ -765,14 +780,13 @@ export default function DashboardScreen() {
             {windowEval.openTimeFormatted &&
               windowEval.openTimeFormatted !== "--" && (
                 <Text style={styles.shiftHoursText}>
-                  {windowEval.openTimeFormatted} –{" "}
-                  {windowEval.closeTimeFormatted}
+                  {windowEval.openTimeFormatted} – {windowEval.closeTimeFormatted}
                 </Text>
               )}
           </View>
         </View>
 
-        {/* Primary Action / Attendance Status Section */}
+        {/* Primary Action / Attendance Status Section (Bolt / InDrive Style) */}
         {todayPunch ? (
           /* STATE A: SIGNED IN TODAY */
           <View style={styles.punchedCard}>
@@ -780,43 +794,38 @@ export default function DashboardScreen() {
               <View
                 style={[
                   styles.checkCircle,
-                  todayPunch.attendanceStatus === "LATE" &&
-                    styles.checkCircleLate,
+                  todayPunch.attendanceStatus === "LATE" && styles.checkCircleLate,
                 ]}
               >
                 <Ionicons
-                  name={
-                    todayPunch.attendanceStatus === "LATE"
-                      ? "alert"
-                      : "checkmark"
-                  }
-                  size={22}
-                  color="#FFFFFF"
+                  name={todayPunch.attendanceStatus === "LATE" ? "alert" : "checkmark"}
+                  size={20}
+                  color="#ffffff"
                 />
               </View>
-              <View style={{ flex: 1 }}>
+              <View style={{ flex: 1, gap: 2 }}>
                 <Text style={styles.punchedTitle}>
                   {todayPunch.attendanceStatus === "LATE"
                     ? "Signed In (Late)"
-                    : "Signed In Today"}
+                    : "Verified On-Site"}
                 </Text>
                 <Text style={styles.punchedSubtitle}>
                   Arrival trapped at {todayPunch.displayTime}
                 </Text>
               </View>
               <View
-                style={
-                  todayPunch.attendanceStatus === "LATE"
-                    ? styles.pillLate
-                    : styles.pillOnTime
-                }
+                style={[
+                  styles.pillGeneric,
+                  todayPunch.attendanceStatus === "LATE" ? styles.pillLate : styles.pillOnTime,
+                ]}
               >
                 <Text
-                  style={
+                  style={[
+                    styles.pillTextGeneric,
                     todayPunch.attendanceStatus === "LATE"
                       ? styles.pillTextLate
-                      : styles.pillTextOnTime
-                  }
+                      : styles.pillTextOnTime,
+                  ]}
                 >
                   {todayPunch.attendanceStatus === "LATE" ? "LATE" : "ON TIME"}
                 </Text>
@@ -832,29 +841,23 @@ export default function DashboardScreen() {
                       : "wifi"
                   }
                   size={14}
-                  color="#059669"
+                  color="#2d81ff"
                 />
                 <Text style={styles.metaText}>
                   {todayPunch.verificationMethod === "GEO_FALLBACK"
-                    ? "GPS Geofence Verified"
-                    : "Office Wi-Fi Verified"}
+                    ? "GPS Satellite Geofence"
+                    : "Office Wi-Fi Anchor"}
                 </Text>
               </View>
 
               <View style={styles.metaItem}>
                 <Ionicons
-                  name={
-                    todayPunch.status === "SYNCED"
-                      ? "cloud-done"
-                      : "cloud-upload"
-                  }
+                  name={todayPunch.status === "SYNCED" ? "cloud-done" : "cloud-upload"}
                   size={14}
-                  color={todayPunch.status === "SYNCED" ? "#059669" : "#2563EB"}
+                  color={todayPunch.status === "SYNCED" ? "#10b981" : "#142748"}
                 />
                 <Text style={styles.metaText}>
-                  {todayPunch.status === "SYNCED"
-                    ? "Cloud Synced"
-                    : "Syncing..."}
+                  {todayPunch.status === "SYNCED" ? "Cloud Synced" : "Syncing..."}
                 </Text>
               </View>
             </View>
@@ -864,7 +867,7 @@ export default function DashboardScreen() {
               <View style={styles.signOutBox}>
                 {todayPunch.signedOutAt ? (
                   <View style={styles.signOutCompletedRow}>
-                    <Ionicons name="log-out" size={16} color="#059669" />
+                    <Ionicons name="log-out" size={16} color="#10b981" />
                     <Text style={styles.signOutCompletedText}>
                       Signed out at {todayPunch.signOutDisplayTime}
                     </Text>
@@ -874,26 +877,20 @@ export default function DashboardScreen() {
                     style={styles.signOutActionBtn}
                     onPress={handleSignOut}
                     disabled={isSyncingSignOut}
-                    activeOpacity={0.8}
+                    activeOpacity={0.85}
                   >
                     {isSyncingSignOut ? (
-                      <ActivityIndicator size="small" color="#FFFFFF" />
+                      <ActivityIndicator size="small" color="#f2f1ee" />
                     ) : (
                       <>
-                        <Ionicons
-                          name="log-out-outline"
-                          size={18}
-                          color="#FFFFFF"
-                        />
-                        <Text style={styles.signOutActionText}>
-                          Tap to Sign Out
-                        </Text>
+                        <Ionicons name="log-out-outline" size={18} color="#f2f1ee" />
+                        <Text style={styles.signOutActionText}>CLOCK OUT / END SHIFT</Text>
                       </>
                     )}
                   </TouchableOpacity>
                 ) : (
                   <View style={styles.signOutWaitingRow}>
-                    <Ionicons name="time-outline" size={14} color="#64748B" />
+                    <Ionicons name="time-outline" size={14} color="#64748b" />
                     <Text style={styles.signOutWaitingText}>
                       Sign-out opens at {windowEval.signOutTimeFormatted}
                     </Text>
@@ -905,7 +902,7 @@ export default function DashboardScreen() {
         ) : !windowEval.isAllowed ? (
           /* STATE B: ATTENDANCE WINDOW CLOSED */
           <View style={styles.blockedCard}>
-            <Ionicons name="lock-closed-outline" size={32} color="#DC2626" />
+            <Ionicons name="lock-closed-outline" size={32} color="#d92d20" />
             <Text style={styles.blockedTitle}>
               {windowEval.status === "PAST_WINDOW"
                 ? "Sign-In Window Closed"
@@ -914,12 +911,11 @@ export default function DashboardScreen() {
                   : "No Scheduled Session"}
             </Text>
             <Text style={styles.blockedSubtitle}>
-              {windowEval.rejectionReason ||
-                "Attendance is not available outside policy hours."}
+              {windowEval.rejectionReason || "Attendance is not available outside policy hours."}
             </Text>
           </View>
         ) : (
-          /* STATE C: WINDOW OPEN - TAP TO CLOCK IN */
+          /* STATE C: WINDOW OPEN - TAP TO CLOCK IN (Bolt Style Hero Action) */
           <TouchableOpacity
             style={[
               styles.primaryPunchBtn,
@@ -928,75 +924,77 @@ export default function DashboardScreen() {
             ]}
             onPress={handleClockIn}
             disabled={isSyncingToCloud}
-            activeOpacity={0.85}
+            activeOpacity={0.88}
           >
             {isSyncingToCloud ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
+              <View style={styles.punchBtnLoadingRow}>
+                <ActivityIndicator size="small" color="#f2f1ee" />
+                <Text style={styles.punchBtnTitle}>VERIFYING ON-PREMISE...</Text>
+              </View>
             ) : (
               <>
                 <View style={styles.punchIconCircle}>
-                  <Ionicons name="finger-print" size={26} color="#FFFFFF" />
+                  <Ionicons name="finger-print" size={24} color="#f2f1ee" />
                 </View>
-                <View style={{ flex: 1 }}>
+                <View style={{ flex: 1, gap: 2 }}>
                   <Text style={styles.punchBtnTitle}>
                     {windowEval.status === "WINDOW_OPEN_LATE"
-                      ? "Tap to Clock In (Late)"
-                      : "Tap to Clock In"}
+                      ? "CLOCK IN FOR SHIFT (LATE)"
+                      : "CLOCK IN FOR SHIFT"}
                   </Text>
                   <Text style={styles.punchBtnSubtitle}>
-                    Facial Biometrics & Premises Check
+                    Facial Biometrics & Hardware Isolation
                   </Text>
                 </View>
-                <Ionicons
-                  name="arrow-forward"
-                  size={18}
-                  color="rgba(255, 255, 255, 0.7)"
-                />
+                <Ionicons name="arrow-forward" size={18} color="rgba(242, 241, 238, 0.7)" />
               </>
             )}
           </TouchableOpacity>
         )}
 
-        {/* Quick Info Grid (2 Modern Minimal Tiles) */}
+        {/* Quick Info Grid (ArtCraft Brutalist Tiles) */}
         <View style={styles.gridRow}>
           <View style={styles.gridTile}>
             <View style={styles.gridIconWrap}>
-              <Ionicons name="location-outline" size={18} color="#2563EB" />
+              <Ionicons name="compass-outline" size={18} color="#142748" />
             </View>
             <Text style={styles.gridTitle}>Premises Anchor</Text>
             <Text style={styles.gridDesc}>
-              {organization.geoFallback?.radiusMeters || 30}m Geofence Perimeter
+              {organization.geoFallback?.radiusMeters || 20}m Geofence Perimeter
             </Text>
           </View>
 
           <View style={styles.gridTile}>
             <View style={styles.gridIconWrap}>
-              <Ionicons
-                name="shield-checkmark-outline"
-                size={18}
-                color="#059669"
-              />
+              <Ionicons name="shield-checkmark-outline" size={18} color="#10b981" />
             </View>
-            <Text style={styles.gridTitle}>Security Protection</Text>
-            <Text style={styles.gridDesc}>Device Biometrics Active</Text>
+            <Text style={styles.gridTitle}>Security Isolation</Text>
+            <Text style={styles.gridDesc}>Bound to Smartphone Hardware</Text>
           </View>
         </View>
 
-        {/* Minimal Footer */}
+        {/* Minimal Sign Out Footer */}
         <View style={styles.bottomFooter}>
           <TouchableOpacity
             style={styles.minimalSignOut}
             onPress={async () => {
-              await signOut();
-              toast.info("Signed out of workforce session.");
-              router.replace("/login");
+              Alert.alert("Sign Out", "Sign out of your workforce session?", [
+                { text: "Cancel", style: "cancel" },
+                {
+                  text: "Sign Out",
+                  style: "destructive",
+                  onPress: async () => {
+                    await signOut();
+                    toast.info("Signed out of workforce session.");
+                    router.replace("/login");
+                  },
+                },
+              ]);
             }}
             activeOpacity={0.7}
           >
-            <Ionicons name="log-out-outline" size={16} color="#94A3B8" />
-            <Text style={styles.minimalSignOutText}>
-              Sign Out of {member.fullName}
-            </Text>
+            <Ionicons name="log-out-outline" size={16} color="#64748b" />
+            <Text style={styles.minimalSignOutText}>Sign Out ({member.fullName})</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -1016,13 +1014,13 @@ export default function DashboardScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: "#F8FAFC",
+    backgroundColor: "#f2f1ee",
   },
   scrollContent: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
+    paddingHorizontal: 18,
+    paddingTop: 12,
     paddingBottom: 40,
-    gap: 16,
+    gap: 14,
     maxWidth: 540,
     width: "100%",
     alignSelf: "center",
@@ -1038,26 +1036,54 @@ const styles = StyleSheet.create({
   brandRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 12,
+    gap: 10,
     flex: 1,
-    marginRight: 12,
+    marginRight: 10,
   },
   brandLogo: {
     height: 38,
     width: 38,
-    borderRadius: 10,
+    borderRadius: 0,
+  },
+  brandBadgeRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  livePulseDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: "#10b981",
+  },
+  brandTag: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: "#142748",
+    letterSpacing: 0.8,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+  },
+  orgCodePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  orgCodeText: {
+    fontSize: 9,
+    fontWeight: "700",
+    color: "#142748",
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
   orgName: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#0F172A",
-    letterSpacing: -0.2,
-  },
-  branchName: {
-    fontSize: 12,
-    color: "#64748B",
-    fontWeight: "500",
-    marginTop: 1,
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#142748",
+    letterSpacing: -0.3,
   },
   topBarRight: {
     flexDirection: "row",
@@ -1066,143 +1092,114 @@ const styles = StyleSheet.create({
   topAvatar: {
     width: 38,
     height: 38,
-    borderRadius: 19,
-    borderWidth: 2,
-    borderColor: "#E2E8F0",
+    borderRadius: 0,
+    borderWidth: 1.5,
+    borderColor: "#142748",
   },
   topAvatarFallback: {
     width: 38,
     height: 38,
-    borderRadius: 19,
-    backgroundColor: "#EFF6FF",
-    borderWidth: 1.5,
-    borderColor: "#BFDBFE",
+    borderRadius: 0,
+    backgroundColor: "#142748",
     alignItems: "center",
     justifyContent: "center",
   },
   topAvatarLetter: {
-    color: "#2563EB",
-    fontSize: 15,
-    fontWeight: "700",
+    color: "#f2f1ee",
+    fontSize: 14,
+    fontWeight: "800",
   },
 
   // 2. Profile Quick Chip Card
   profileChipCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 16,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    padding: 14,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
-    ...Platform.select({
-      ios: {
-        shadowColor: "#0F172A",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.04,
-        shadowRadius: 6,
-      },
-      android: {
-        elevation: 1,
-      },
-    }),
   },
   profileName: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#0F172A",
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#142748",
   },
   profileDept: {
-    fontSize: 12,
-    color: "#64748B",
-    fontWeight: "500",
-    marginTop: 2,
+    fontSize: 11,
+    color: "#64748b",
   },
   biometricBadge: {
     flexDirection: "row",
     alignItems: "center",
     gap: 5,
-    backgroundColor: "#ECFDF5",
+    backgroundColor: "#ecfdf5",
     borderWidth: 1,
-    borderColor: "#A7F3D0",
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    borderRadius: 20,
+    borderColor: "#a7f3d0",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
   },
   biometricBadgeText: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: "700",
-    color: "#059669",
+    color: "#10b981",
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
 
-  // 3. Hero Clock & Shift Surface (Material 3 Elevated Surface)
+  // 3. Hero Clock & Shift Surface (Material Brutalist Surface)
   clockSurface: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 20,
-    paddingVertical: 24,
-    paddingHorizontal: 20,
-    alignItems: "center",
+    backgroundColor: "#ffffff",
     borderWidth: 1,
-    borderColor: "#E2E8F0",
-    ...Platform.select({
-      ios: {
-        shadowColor: "#0F172A",
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.05,
-        shadowRadius: 10,
-      },
-      android: {
-        elevation: 2,
-      },
-    }),
+    borderColor: "#e5e7eb",
+    paddingVertical: 20,
+    paddingHorizontal: 16,
+    alignItems: "center",
   },
   clockDateText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#64748B",
+    fontSize: 11,
+    fontWeight: "700",
+    color: "#64748b",
     textTransform: "uppercase",
-    letterSpacing: 0.6,
+    letterSpacing: 0.8,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
   clockTimeText: {
-    fontSize: 44,
+    fontSize: 42,
     fontWeight: "800",
-    color: "#0F172A",
+    color: "#142748",
     letterSpacing: -1,
-    marginVertical: 6,
+    marginVertical: 4,
     fontVariant: ["tabular-nums"],
   },
   shiftBadgeRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    marginTop: 6,
+    marginTop: 4,
   },
   statusBadge: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 14,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
     borderWidth: 1,
   },
   badgeActive: {
-    backgroundColor: "#ECFDF5",
-    borderColor: "#A7F3D0",
+    backgroundColor: "#ecfdf5",
+    borderColor: "#a7f3d0",
   },
   badgeWarning: {
-    backgroundColor: "#FFFBEB",
-    borderColor: "#FDE68A",
+    backgroundColor: "#fffbeb",
+    borderColor: "#fde68a",
   },
   badgeError: {
-    backgroundColor: "#FEF2F2",
-    borderColor: "#FECACA",
+    backgroundColor: "#fef2f2",
+    borderColor: "#fecaca",
   },
   badgeNeutral: {
-    backgroundColor: "#F1F5F9",
-    borderColor: "#E2E8F0",
+    backgroundColor: "#f1f5f9",
+    borderColor: "#e2e8f0",
   },
   badgeDot: {
     width: 6,
@@ -1210,111 +1207,94 @@ const styles = StyleSheet.create({
     borderRadius: 3,
   },
   dotActive: {
-    backgroundColor: "#059669",
+    backgroundColor: "#10b981",
   },
   dotWarning: {
-    backgroundColor: "#D97706",
+    backgroundColor: "#f59e0b",
   },
   dotError: {
-    backgroundColor: "#DC2626",
+    backgroundColor: "#d92d20",
   },
   dotNeutral: {
-    backgroundColor: "#64748B",
+    backgroundColor: "#64748b",
   },
   badgeText: {
-    fontSize: 11,
-    fontWeight: "700",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.4,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
   textActive: {
-    color: "#059669",
+    color: "#10b981",
   },
   textWarning: {
-    color: "#D97706",
+    color: "#f59e0b",
   },
   textError: {
-    color: "#DC2626",
+    color: "#d92d20",
   },
   textNeutral: {
-    color: "#64748B",
+    color: "#64748b",
   },
   shiftHoursText: {
-    fontSize: 12,
-    fontWeight: "500",
-    color: "#64748B",
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#64748b",
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
 
-  // 4. Primary Punch Button (Tactile Action)
+  // 4. Primary Punch Button (Bolt Style Hero Action)
   primaryPunchBtn: {
-    backgroundColor: "#2563EB",
-    borderRadius: 18,
+    backgroundColor: "#142748",
+    borderWidth: 1,
+    borderColor: "#142748",
     paddingVertical: 18,
-    paddingHorizontal: 20,
+    paddingHorizontal: 18,
     flexDirection: "row",
     alignItems: "center",
     gap: 14,
-    ...Platform.select({
-      ios: {
-        shadowColor: "#2563EB",
-        shadowOffset: { width: 0, height: 6 },
-        shadowOpacity: 0.35,
-        shadowRadius: 12,
-      },
-      android: {
-        elevation: 4,
-      },
-    }),
   },
   punchBtnLate: {
-    backgroundColor: "#D97706",
-    ...Platform.select({
-      ios: {
-        shadowColor: "#D97706",
-      },
-    }),
+    backgroundColor: "#d97706",
+    borderColor: "#b45309",
   },
   punchBtnDisabled: {
     opacity: 0.7,
   },
+  punchBtnLoadingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    width: "100%",
+  },
   punchIconCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: "rgba(255, 255, 255, 0.2)",
+    width: 44,
+    height: 44,
+    backgroundColor: "rgba(255, 255, 255, 0.15)",
     alignItems: "center",
     justifyContent: "center",
   },
   punchBtnTitle: {
-    fontSize: 16,
+    fontSize: 13,
     fontWeight: "800",
-    color: "#FFFFFF",
-    letterSpacing: -0.2,
+    color: "#f2f1ee",
+    letterSpacing: 0.6,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
   punchBtnSubtitle: {
-    fontSize: 12,
-    color: "rgba(255, 255, 255, 0.85)",
+    fontSize: 11,
+    color: "rgba(242, 241, 238, 0.8)",
     fontWeight: "500",
-    marginTop: 2,
   },
 
   // 5. Signed-In Status Card
   punchedCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 18,
-    padding: 18,
+    backgroundColor: "#ffffff",
     borderWidth: 1,
-    borderColor: "#E2E8F0",
-    gap: 14,
-    ...Platform.select({
-      ios: {
-        shadowColor: "#0F172A",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.04,
-        shadowRadius: 6,
-      },
-      android: {
-        elevation: 1,
-      },
-    }),
+    borderColor: "#e5e7eb",
+    padding: 16,
+    gap: 12,
   },
   punchedHeaderRow: {
     flexDirection: "row",
@@ -1322,57 +1302,59 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   checkCircle: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: "#059669",
+    width: 38,
+    height: 38,
+    backgroundColor: "#10b981",
     alignItems: "center",
     justifyContent: "center",
   },
   checkCircleLate: {
-    backgroundColor: "#D97706",
+    backgroundColor: "#f59e0b",
   },
   punchedTitle: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: "800",
-    color: "#0F172A",
+    color: "#142748",
   },
   punchedSubtitle: {
-    fontSize: 12,
-    color: "#64748B",
-    fontWeight: "500",
-    marginTop: 2,
+    fontSize: 11,
+    color: "#64748b",
+  },
+  pillGeneric: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
   },
   pillOnTime: {
-    backgroundColor: "#ECFDF5",
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    borderRadius: 8,
+    backgroundColor: "#ecfdf5",
+    borderWidth: 1,
+    borderColor: "#a7f3d0",
   },
   pillLate: {
-    backgroundColor: "#FFFBEB",
-    paddingHorizontal: 9,
-    paddingVertical: 4,
-    borderRadius: 8,
+    backgroundColor: "#fffbeb",
+    borderWidth: 1,
+    borderColor: "#fde68a",
+  },
+  pillTextGeneric: {
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 0.6,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
   pillTextOnTime: {
-    fontSize: 10,
-    fontWeight: "800",
-    color: "#059669",
+    color: "#10b981",
   },
   pillTextLate: {
-    fontSize: 10,
-    fontWeight: "800",
-    color: "#D97706",
+    color: "#d97706",
   },
   punchedMetaRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: "#F8FAFC",
+    backgroundColor: "#f8fafc",
     paddingVertical: 10,
     paddingHorizontal: 12,
-    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#f1f5f9",
   },
   metaItem: {
     flexDirection: "row",
@@ -1380,7 +1362,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   metaText: {
-    fontSize: 12,
+    fontSize: 11,
     color: "#475569",
     fontWeight: "600",
   },
@@ -1394,18 +1376,21 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-    backgroundColor: "#ECFDF5",
+    backgroundColor: "#ecfdf5",
     paddingVertical: 12,
-    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#a7f3d0",
   },
   signOutCompletedText: {
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: "700",
-    color: "#059669",
+    color: "#10b981",
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
   signOutActionBtn: {
-    backgroundColor: "#0F172A",
-    borderRadius: 14,
+    backgroundColor: "#ffffff",
+    borderWidth: 1.5,
+    borderColor: "#142748",
     paddingVertical: 14,
     flexDirection: "row",
     alignItems: "center",
@@ -1413,9 +1398,11 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   signOutActionText: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#142748",
+    letterSpacing: 0.8,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
   signOutWaitingRow: {
     flexDirection: "row",
@@ -1425,30 +1412,29 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   signOutWaitingText: {
-    fontSize: 12,
-    color: "#64748B",
+    fontSize: 11,
+    color: "#64748b",
     fontWeight: "500",
   },
 
   // 6. Blocked Window Card
   blockedCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 18,
-    padding: 22,
+    backgroundColor: "#ffffff",
     borderWidth: 1,
-    borderColor: "#FECACA",
+    borderColor: "#fca5a5",
+    padding: 22,
     alignItems: "center",
     gap: 8,
   },
   blockedTitle: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "800",
-    color: "#DC2626",
+    color: "#d92d20",
     marginTop: 4,
   },
   blockedSubtitle: {
-    fontSize: 13,
-    color: "#64748B",
+    fontSize: 12,
+    color: "#64748b",
     textAlign: "center",
     lineHeight: 18,
   },
@@ -1456,35 +1442,34 @@ const styles = StyleSheet.create({
   // 7. Minimal Info Grid
   gridRow: {
     flexDirection: "row",
-    gap: 12,
+    gap: 10,
   },
   gridTile: {
     flex: 1,
-    backgroundColor: "#FFFFFF",
-    borderRadius: 16,
-    padding: 14,
+    backgroundColor: "#ffffff",
     borderWidth: 1,
-    borderColor: "#E2E8F0",
+    borderColor: "#e5e7eb",
+    padding: 14,
     gap: 4,
   },
   gridIconWrap: {
     width: 32,
     height: 32,
-    borderRadius: 8,
-    backgroundColor: "#F8FAFC",
+    backgroundColor: "#f2f1ee",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 4,
   },
   gridTitle: {
-    fontSize: 12,
-    fontWeight: "700",
-    color: "#0F172A",
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#142748",
+    letterSpacing: 0.4,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
   gridDesc: {
     fontSize: 11,
-    color: "#64748B",
-    fontWeight: "500",
+    color: "#64748b",
   },
 
   // 8. Footer
@@ -1500,8 +1485,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   minimalSignOutText: {
-    fontSize: 12,
-    color: "#94A3B8",
-    fontWeight: "600",
+    fontSize: 11,
+    color: "#64748b",
+    fontWeight: "700",
+    letterSpacing: 0.4,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
 });

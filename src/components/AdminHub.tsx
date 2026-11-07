@@ -9,13 +9,14 @@ import {
   TextInput,
   Platform,
   Alert,
-  // Image,
+  Image,
   RefreshControl,
   Vibration,
+  Modal,
+  Pressable,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
-import * as Location from "expo-location";
 import * as Clipboard from "expo-clipboard";
 import {
   collection,
@@ -24,6 +25,9 @@ import {
   onSnapshot,
   writeBatch,
   getDocs,
+  doc,
+  updateDoc,
+  deleteDoc,
 } from "firebase/firestore";
 import { db } from "../config/firebase";
 import { useAuth } from "../context/AuthContext";
@@ -33,9 +37,16 @@ import {
   scanPhysicalWifiNetworks,
   ScannedWifiNetwork,
 } from "../services/wifiScanService";
-import { updateOrganizationAnchors as updateAnchorsService } from "../services/organizationService";
+import {
+  updateOrganizationAnchors as updateAnchorsService,
+  clearMemberFaceEnrollment,
+  resetMemberDeviceBinding,
+  updateMemberStatus,
+  deleteOrganizationMember,
+} from "../services/organizationService";
 import { reverseGeocodeCoords } from "../services/geocodingService";
 import { acquireDeviceCoordinates } from "../services/locationService";
+import type { ChurchMember } from "../types";
 
 const RADIUS_OPTIONS = [
   { value: 10, label: "10m", desc: "Executive Room" },
@@ -57,22 +68,29 @@ interface LiveAttendanceRecord {
   verificationMethod: "WIFI_BSSID" | "GEO_FALLBACK";
   bssidDetected?: string;
   signedOutAt?: string;
+  signOutDisplayTime?: string;
+  deviceId?: string;
 }
 
 export const AdminHub: React.FC = () => {
-  const { organization, refreshOrganization, signOut } = useAuth();
+  const { user, organization, refreshOrganization, signOut } = useAuth();
   const toast = useToast();
 
-  // Navigation: Only 2 core tabs on mobile
-  const [activeTab, setActiveTab] = useState<"feed" | "anchors">("feed");
+  // Navigation: 3 Core Tabs on Mobile (Live Feed, Presence Anchors, Registered Workforce)
+  const [activeTab, setActiveTab] = useState<"feed" | "anchors" | "workforce">("feed");
   const [refreshing, setRefreshing] = useState(false);
 
-  // Tab 1: Live attendance feed
+  // ----------------------------------------------------------------------
+  // TAB 1: LIVE ATTENDANCE FEED
+  // ----------------------------------------------------------------------
   const [attendance, setAttendance] = useState<LiveAttendanceRecord[]>([]);
   const [isAttendanceLoading, setIsAttendanceLoading] = useState(true);
   const [feedSearch, setFeedSearch] = useState("");
   const [selectedDeptFilter, setSelectedDeptFilter] = useState<string>("ALL");
   const [isClearingFeed, setIsClearingFeed] = useState(false);
+
+  // Modal 1: Attendance Record Detail Modal
+  const [selectedPunch, setSelectedPunch] = useState<LiveAttendanceRecord | null>(null);
 
   useEffect(() => {
     if (!organization?.id || !db) return;
@@ -92,9 +110,9 @@ export const AdminHub: React.FC = () => {
           setIsAttendanceLoading(false);
         },
         (err) => {
-          console.warn("Live attendance stream error:", err);
+          console.warn("Live attendance stream notice:", err);
           setIsAttendanceLoading(false);
-        },
+        }
       );
       return () => unsubscribe();
     } catch (e) {
@@ -151,21 +169,16 @@ export const AdminHub: React.FC = () => {
 
     Alert.alert(
       "Clear Today's Attendance Feed",
-      "Are you sure you want to permanently clear today's attendance records from the cloud database? This action cannot be undone.",
+      "Are you sure you want to permanently clear today's attendance records from the database? This cannot be undone.",
       [
         { text: "Cancel", style: "cancel" },
         {
-          text: "Clear Cloud Records",
+          text: "Clear Records",
           style: "destructive",
           onPress: async () => {
             setIsClearingFeed(true);
             try {
-              const attRef = collection(
-                db,
-                "churches",
-                organization.id,
-                "attendance",
-              );
+              const attRef = collection(db, "churches", organization.id, "attendance");
               const snap = await getDocs(attRef);
               if (!snap.empty) {
                 const docs = snap.docs;
@@ -180,43 +193,43 @@ export const AdminHub: React.FC = () => {
               toast.success("Attendance feed cleared from database.");
             } catch (err: any) {
               console.error("Clear feed error:", err);
-              toast.error("Failed to clear feed from cloud.");
+              toast.error("Failed to clear feed.");
             } finally {
               setIsClearingFeed(false);
             }
           },
         },
-      ],
+      ]
     );
   };
 
-  // Tab 2: Hardware presence anchors & direct mobile calibration
+  // ----------------------------------------------------------------------
+  // TAB 2: PRESENCE ANCHORS & CALIBRATION
+  // ----------------------------------------------------------------------
   const [calMode, setCalMode] = useState<"GEOFENCE_ONLY" | "HYBRID">(
     organization?.beaconConfig?.verificationMode === "HYBRID"
       ? "HYBRID"
-      : "GEOFENCE_ONLY",
+      : "GEOFENCE_ONLY"
   );
   const [ssidHint, setSsidHint] = useState<string>(
-    organization?.beaconConfig?.ssidHint || "",
+    organization?.beaconConfig?.ssidHint || ""
   );
   const [targetBssid, setTargetBssid] = useState<string>(
-    organization?.beaconConfig?.targetBssid || "",
+    organization?.beaconConfig?.targetBssid || ""
   );
   const [latitude, setLatitude] = useState<number>(
-    organization?.geoFallback?.latitude || 4.975,
+    organization?.geoFallback?.latitude || 4.975
   );
   const [longitude, setLongitude] = useState<number>(
-    organization?.geoFallback?.longitude || 8.3417,
+    organization?.geoFallback?.longitude || 8.3417
   );
   const [radiusMeters, setRadiusMeters] = useState<number>(
-    organization?.geoFallback?.radiusMeters || 20,
+    organization?.geoFallback?.radiusMeters || 20
   );
   const [locationAddress, setLocationAddress] = useState<string>("");
   const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null);
 
-  const [availableNetworks, setAvailableNetworks] = useState<
-    ScannedWifiNetwork[]
-  >([]);
+  const [availableNetworks, setAvailableNetworks] = useState<ScannedWifiNetwork[]>([]);
   const [isScanningWifi, setIsScanningWifi] = useState(false);
   const [isLocatingGps, setIsLocatingGps] = useState(false);
   const [isSavingAnchors, setIsSavingAnchors] = useState(false);
@@ -263,9 +276,7 @@ export const AdminHub: React.FC = () => {
   const isCalibrated = Boolean(
     organization?.isCalibrated ||
     organization?.geoFallback?.isCalibrated ||
-    (organization?.geoFallback?.latitude &&
-      organization?.geoFallback?.longitude) ||
-    (latitude !== 0 && longitude !== 0 && radiusMeters > 0),
+    (latitude !== 0 && longitude !== 0 && radiusMeters > 0)
   );
 
   const handleScanWifi = async () => {
@@ -276,15 +287,13 @@ export const AdminHub: React.FC = () => {
       setAvailableNetworks(list);
       if (list.length === 0) {
         toast.info(
-          "No Wi-Fi broadcast points detected nearby. You can enter the BSSID MAC address manually.",
+          "No Wi-Fi broadcast points detected nearby. You can enter the BSSID MAC address manually."
         );
       } else {
-        toast.success(
-          `Discovered ${list.length} nearby Wi-Fi broadcast points.`,
-        );
+        toast.success(`Discovered ${list.length} nearby Wi-Fi broadcast points.`);
       }
-    } catch (err: any) {
-      toast.warn("Wi-Fi scan limited or unavailable on this device.");
+    } catch {
+      toast.warn("Wi-Fi scan limited on this device.");
     } finally {
       setIsScanningWifi(false);
     }
@@ -313,7 +322,6 @@ export const AdminHub: React.FC = () => {
       Vibration.vibrate(50);
       toast.success(`GPS Pinpointed: ±${coords.accuracy}m fix.`);
 
-      // Auto reverse-geocode to update address preview
       reverseGeocodeCoords(coords.latitude, coords.longitude)
         .then((addr) => {
           if (addr?.displayName) {
@@ -324,11 +332,8 @@ export const AdminHub: React.FC = () => {
         })
         .catch(() => {});
     } catch (err: any) {
-      console.warn("GPS acquire error:", err);
-      toast.error(
-        err?.message || "Could not capture GPS location from phone sensors.",
-        { duration: 6000 },
-      );
+      console.warn("GPS acquire notice:", err);
+      toast.error(err?.message || "Could not capture GPS location.");
     } finally {
       setIsLocatingGps(false);
     }
@@ -338,9 +343,7 @@ export const AdminHub: React.FC = () => {
     if (!organization?.id || isSavingAnchors) return;
 
     if (calMode === "HYBRID" && !targetBssid.trim()) {
-      toast.warn(
-        "Please scan or enter an office Wi-Fi router BSSID MAC address.",
-      );
+      toast.warn("Please scan or enter an office Wi-Fi router BSSID MAC address.");
       return;
     }
     if (latitude === 0 && longitude === 0) {
@@ -360,21 +363,216 @@ export const AdminHub: React.FC = () => {
       });
       await refreshOrganization();
       Vibration.vibrate([0, 80, 40, 80]);
-      toast.success(
-        "Presence Anchors calibrated & synced to cloud! Web admin portal updated.",
-      );
+      toast.success("Presence Anchors calibrated & synced to cloud!");
     } catch (err: any) {
       console.error("Save anchors error:", err);
-      toast.error("Failed to commit anchors to cloud database.");
+      toast.error("Failed to commit anchors to database.");
     } finally {
       setIsSavingAnchors(false);
     }
   };
 
+  // ----------------------------------------------------------------------
+  // TAB 3: REGISTERED WORKFORCE USERS (Organization Directory)
+  // ----------------------------------------------------------------------
+  const [members, setMembers] = useState<ChurchMember[]>([]);
+  const [isMembersLoading, setIsMembersLoading] = useState(true);
+  const [workforceSearch, setWorkforceSearch] = useState("");
+  const [selectedWorkforceFilter, setSelectedWorkforceFilter] = useState<
+    "ALL" | "FACE_ENROLLED" | "PENDING_FACE" | "SUSPENDED"
+  >("ALL");
+
+  // Modal 2: Worker Detail & Management Modal
+  const [selectedWorker, setSelectedWorker] = useState<ChurchMember | null>(null);
+  const [isManagingWorker, setIsManagingWorker] = useState(false);
+
+  // Real-time listener for registered organization members
+  useEffect(() => {
+    if (!organization?.id || !db) return;
+    setIsMembersLoading(true);
+
+    try {
+      const membersRef = collection(db, "churches", organization.id, "members");
+      const q = query(membersRef, orderBy("fullName", "asc"));
+      const unsubscribe = onSnapshot(
+        q,
+        (snap) => {
+          const list: ChurchMember[] = snap.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as any),
+          }));
+          setMembers(list);
+          setIsMembersLoading(false);
+        },
+        (err) => {
+          console.warn("Workforce listener notice:", err);
+          setIsMembersLoading(false);
+        }
+      );
+      return () => unsubscribe();
+    } catch (e) {
+      console.warn("Error subscribing to workforce:", e);
+      setIsMembersLoading(false);
+    }
+  }, [organization?.id]);
+
+  const filteredMembers = useMemo(() => {
+    return members.filter((m) => {
+      const matchSearch =
+        !workforceSearch.trim() ||
+        m.fullName?.toLowerCase().includes(workforceSearch.toLowerCase()) ||
+        m.email?.toLowerCase().includes(workforceSearch.toLowerCase()) ||
+        m.phone?.includes(workforceSearch) ||
+        m.department?.toLowerCase().includes(workforceSearch.toLowerCase());
+
+      let matchFilter = true;
+      if (selectedWorkforceFilter === "FACE_ENROLLED") {
+        matchFilter = Boolean(m.isFaceEnrolled);
+      } else if (selectedWorkforceFilter === "PENDING_FACE") {
+        matchFilter = !m.isFaceEnrolled;
+      } else if (selectedWorkforceFilter === "SUSPENDED") {
+        matchFilter = (m as any).status === "SUSPENDED";
+      }
+
+      return matchSearch && matchFilter;
+    });
+  }, [members, workforceSearch, selectedWorkforceFilter]);
+
+  const totalMembersCount = members.length;
+  const faceEnrolledCount = useMemo(() => members.filter((m) => m.isFaceEnrolled).length, [members]);
+  const activeMembersCount = useMemo(
+    () => members.filter((m) => (m as any).status !== "SUSPENDED").length,
+    [members]
+  );
+
+  // Member Management Actions
+  const handleResetDevice = async (member: ChurchMember) => {
+    if (!organization?.id) return;
+    Alert.alert(
+      "Reset Hardware Device Binding",
+      `Allow ${member.fullName} to bind a new smartphone on their next clock-in?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Reset Binding",
+          style: "default",
+          onPress: async () => {
+            setIsManagingWorker(true);
+            try {
+              await resetMemberDeviceBinding(organization.id, member.id);
+              toast.success(`Device binding cleared for ${member.fullName}.`);
+              setSelectedWorker((prev) => (prev ? { ...prev, boundDeviceId: "" } : null));
+            } catch (err: any) {
+              toast.error("Failed to reset device binding.");
+            } finally {
+              setIsManagingWorker(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleResetFace = async (member: ChurchMember) => {
+    if (!organization?.id) return;
+    Alert.alert(
+      "Reset Face ID Biometrics",
+      `Clear face biometrics for ${member.fullName}? They will be required to re-enroll their face.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Reset Face ID",
+          style: "destructive",
+          onPress: async () => {
+            setIsManagingWorker(true);
+            try {
+              await clearMemberFaceEnrollment(organization.id, member.id);
+              toast.success(`Face biometrics cleared for ${member.fullName}.`);
+              setSelectedWorker((prev) =>
+                prev ? { ...prev, isFaceEnrolled: false, faceEmbedding: [] } : null
+              );
+            } catch (err: any) {
+              toast.error("Failed to reset face enrollment.");
+            } finally {
+              setIsManagingWorker(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleToggleStatus = async (member: ChurchMember) => {
+    if (!organization?.id) return;
+    const isSuspended = (member as any).status === "SUSPENDED";
+    const nextStatus = isSuspended ? "ACTIVE" : "SUSPENDED";
+
+    Alert.alert(
+      nextStatus === "SUSPENDED" ? "Suspend Member" : "Re-activate Member",
+      `Are you sure you want to set ${member.fullName}'s account to ${nextStatus}?`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: nextStatus === "SUSPENDED" ? "Suspend" : "Activate",
+          style: nextStatus === "SUSPENDED" ? "destructive" : "default",
+          onPress: async () => {
+            setIsManagingWorker(true);
+            try {
+              await updateMemberStatus(organization.id, member.id, nextStatus);
+              toast.success(`${member.fullName} is now ${nextStatus}.`);
+              setSelectedWorker((prev) => (prev ? ({ ...prev, status: nextStatus } as any) : null));
+            } catch (err: any) {
+              toast.error("Failed to update status.");
+            } finally {
+              setIsManagingWorker(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleDeleteMember = async (member: ChurchMember) => {
+    if (!organization?.id) return;
+    Alert.alert(
+      "Delete Workforce Member",
+      `Permanently remove ${member.fullName} from ${organization.churchName}? All associated credentials will be unlinked.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete Worker",
+          style: "destructive",
+          onPress: async () => {
+            setIsManagingWorker(true);
+            try {
+              await deleteOrganizationMember(organization.id, member.id);
+              toast.success(`Removed ${member.fullName}.`);
+              setSelectedWorker(null);
+            } catch (err: any) {
+              toast.error("Failed to delete member.");
+            } finally {
+              setIsManagingWorker(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // ----------------------------------------------------------------------
+  // MODAL 3: ADMIN PROFILE & WEB PORTAL DIALOG
+  // ----------------------------------------------------------------------
+  const [showAdminProfileModal, setShowAdminProfileModal] = useState(false);
+
   const copyOrgCode = async () => {
     if (!organization?.churchCode) return;
     await Clipboard.setStringAsync(organization.churchCode);
     toast.success("Organization code copied to clipboard!");
+  };
+
+  const copyWebUrl = async () => {
+    await Clipboard.setStringAsync("https://presenti-admin-web.vercel.app");
+    toast.success("Web Portal URL copied to clipboard!");
   };
 
   const handlePullRefresh = async () => {
@@ -385,137 +583,62 @@ export const AdminHub: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
-      {/* Sleek Modern Header */}
-      <View style={styles.headerBar}>
-        <View style={styles.headerLeft}>
-          <View style={styles.orgBadgeRow}>
+      {/* ---------------------------------------------------------------- */}
+      {/* BOLT / INDRIVE STYLE COMPACT HEADER BAR                          */}
+      {/* ---------------------------------------------------------------- */}
+      <View style={styles.topHeader}>
+        <View style={styles.headerLeftCol}>
+          <View style={styles.telemetryTagRow}>
             <View style={styles.livePulseDot} />
-            <Text style={styles.headerSubtitle}>ADMIN COMMAND CENTER</Text>
+            <Text style={styles.telemetryTagText}>FIELD ADMIN HUB</Text>
             <TouchableOpacity
               onPress={copyOrgCode}
               style={styles.orgCodePill}
               activeOpacity={0.7}
             >
-              <Text style={styles.orgCodeText}>
-                {organization?.churchCode || "ORG"}
-              </Text>
-              <Ionicons name="copy-outline" size={11} color="#64748B" />
+              <Text style={styles.orgCodeText}>{organization?.churchCode || "ORG"}</Text>
+              <Ionicons name="copy-outline" size={10} color="#142748" />
             </TouchableOpacity>
           </View>
-          <Text style={styles.headerOrgName} numberOfLines={1}>
+          <Text style={styles.organizationName} numberOfLines={1}>
             {organization?.churchName || "Organization Workspace"}
           </Text>
         </View>
 
         <TouchableOpacity
-          style={styles.signOutIconButton}
-          activeOpacity={0.8}
-          onPress={() => {
-            Alert.alert("Sign Out", "Sign out of Admin Command Center?", [
-              { text: "Cancel", style: "cancel" },
-              {
-                text: "Sign Out",
-                style: "destructive",
-                onPress: () => signOut(),
-              },
-            ]);
-          }}
+          style={styles.adminAvatarButton}
+          onPress={() => setShowAdminProfileModal(true)}
+          activeOpacity={0.85}
         >
-          <Ionicons name="log-out-outline" size={20} color="#DC2626" />
+          <View style={styles.adminAvatarCircle}>
+            <Text style={styles.adminAvatarText}>
+              {(user?.displayName?.[0] || user?.email?.[0] || "A").toUpperCase()}
+            </Text>
+          </View>
         </TouchableOpacity>
       </View>
 
-      {/* Segmented Tab Control */}
-      <View style={styles.segmentedContainer}>
-        <View style={styles.segmentedControl}>
-          <TouchableOpacity
-            style={[
-              styles.segmentItem,
-              activeTab === "feed" && styles.segmentItemActive,
-            ]}
-            onPress={() => setActiveTab("feed")}
-            activeOpacity={0.8}
-          >
-            <Ionicons
-              name={activeTab === "feed" ? "pulse" : "pulse-outline"}
-              size={16}
-              color={activeTab === "feed" ? "#0F172A" : "#64748B"}
-            />
-            <Text
-              style={[
-                styles.segmentText,
-                activeTab === "feed" && styles.segmentTextActive,
-              ]}
-            >
-              Live Attendance
-            </Text>
-            {todayRecords.length > 0 && (
-              <View
-                style={[
-                  styles.tabBadge,
-                  activeTab === "feed" && styles.tabBadgeActive,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.tabBadgeText,
-                    activeTab === "feed" && styles.tabBadgeTextActive,
-                  ]}
-                >
-                  {todayRecords.length}
-                </Text>
-              </View>
-            )}
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[
-              styles.segmentItem,
-              activeTab === "anchors" && styles.segmentItemActive,
-            ]}
-            onPress={() => setActiveTab("anchors")}
-            activeOpacity={0.8}
-          >
-            <Ionicons
-              name={activeTab === "anchors" ? "radio" : "radio-outline"}
-              size={16}
-              color={activeTab === "anchors" ? "#0F172A" : "#64748B"}
-            />
-            <Text
-              style={[
-                styles.segmentText,
-                activeTab === "anchors" && styles.segmentTextActive,
-              ]}
-            >
-              Presence Anchors
-            </Text>
-            <View
-              style={[
-                styles.statusDotSmall,
-                { backgroundColor: isCalibrated ? "#10B981" : "#F59E0B" },
-              ]}
-            />
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* Main Content Area */}
+      {/* ---------------------------------------------------------------- */}
+      {/* SCROLLABLE MAIN CONTENT (TABS)                                   */}
+      {/* ---------------------------------------------------------------- */}
       <ScrollView
-        style={styles.contentScroll}
-        contentContainerStyle={styles.contentInner}
+        style={styles.scrollArea}
+        contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={handlePullRefresh}
-            tintColor="#2563EB"
+            tintColor="#142748"
           />
         }
       >
-        {/* Tab 1: Live attendance stream */}
+        {/* ============================================================== */}
+        {/* TAB 1: LIVE ATTENDANCE FEED                                    */}
+        {/* ============================================================== */}
         {activeTab === "feed" && (
-          <View style={styles.tabSection}>
-            {/* Quick KPI Overview */}
+          <View style={styles.tabContent}>
+            {/* KPI Metrics Row */}
             <View style={styles.kpiRow}>
               <View style={styles.kpiCard}>
                 <Text style={styles.kpiLabel}>CHECKED IN</Text>
@@ -525,90 +648,72 @@ export const AdminHub: React.FC = () => {
 
               <View style={styles.kpiCard}>
                 <Text style={styles.kpiLabel}>ON TIME</Text>
-                <Text style={[styles.kpiValue, { color: "#059669" }]}>
-                  {onTimeCount}
-                </Text>
+                <Text style={[styles.kpiValue, { color: "#10b981" }]}>{onTimeCount}</Text>
                 <Text style={styles.kpiSub}>
-                  {todayRecords.length > 0
-                    ? `${punctualityRate}% rate`
-                    : "100% rate"}
+                  {todayRecords.length > 0 ? `${punctualityRate}% rate` : "100% rate"}
                 </Text>
               </View>
 
               <View style={styles.kpiCard}>
                 <Text style={styles.kpiLabel}>LATE</Text>
-                <Text
-                  style={[
-                    styles.kpiValue,
-                    { color: lateCount > 0 ? "#D97706" : "#64748B" },
-                  ]}
-                >
+                <Text style={[styles.kpiValue, { color: lateCount > 0 ? "#f59e0b" : "#64748b" }]}>
                   {lateCount}
                 </Text>
-                <Text style={styles.kpiSub}>Flagged records</Text>
+                <Text style={styles.kpiSub}>Flagged arrivals</Text>
               </View>
             </View>
 
             {/* Search & Actions Bar */}
-            <View style={styles.searchBarRow}>
+            <View style={styles.searchRow}>
               <View style={styles.searchBox}>
-                <Ionicons name="search-outline" size={16} color="#94A3B8" />
+                <Ionicons name="search-outline" size={16} color="#64748b" />
                 <TextInput
                   style={styles.searchInput}
                   placeholder="Search worker or department..."
-                  placeholderTextColor="#94A3B8"
+                  placeholderTextColor="#94a3b8"
                   value={feedSearch}
                   onChangeText={setFeedSearch}
-                  clearButtonMode="while-editing"
                 />
                 {feedSearch.length > 0 && (
                   <TouchableOpacity onPress={() => setFeedSearch("")}>
-                    <Ionicons name="close-circle" size={16} color="#94A3B8" />
+                    <Ionicons name="close-circle" size={16} color="#94a3b8" />
                   </TouchableOpacity>
                 )}
               </View>
 
               {todayRecords.length > 0 && (
                 <TouchableOpacity
-                  style={styles.clearFeedButton}
+                  style={styles.actionIconBtn}
                   onPress={handleClearFeed}
                   disabled={isClearingFeed}
                   activeOpacity={0.8}
                 >
                   {isClearingFeed ? (
-                    <ActivityIndicator size="small" color="#DC2626" />
+                    <ActivityIndicator size="small" color="#d92d20" />
                   ) : (
-                    <Ionicons name="trash-outline" size={16} color="#DC2626" />
+                    <Ionicons name="trash-outline" size={16} color="#d92d20" />
                   )}
                 </TouchableOpacity>
               )}
             </View>
 
-            {/* Department Filter Pills */}
+            {/* Department Filter Chips */}
             {departmentList.length > 2 && (
               <ScrollView
                 horizontal
                 showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.filterScroll}
+                contentContainerStyle={styles.chipsScroll}
               >
                 {departmentList.map((dept) => {
                   const isActive = selectedDeptFilter === dept;
                   return (
                     <TouchableOpacity
                       key={dept}
-                      style={[
-                        styles.deptFilterPill,
-                        isActive && styles.deptFilterPillActive,
-                      ]}
+                      style={[styles.chipItem, isActive && styles.chipItemActive]}
                       onPress={() => setSelectedDeptFilter(dept)}
-                      activeOpacity={0.7}
+                      activeOpacity={0.8}
                     >
-                      <Text
-                        style={[
-                          styles.deptFilterText,
-                          isActive && styles.deptFilterTextActive,
-                        ]}
-                      >
+                      <Text style={[styles.chipText, isActive && styles.chipTextActive]}>
                         {dept}
                       </Text>
                     </TouchableOpacity>
@@ -617,82 +722,72 @@ export const AdminHub: React.FC = () => {
               </ScrollView>
             )}
 
-            {/* Feed List */}
+            {/* Live Feed List */}
             {isAttendanceLoading ? (
               <View style={styles.loadingBox}>
-                <ActivityIndicator size="small" color="#2563EB" />
-                <Text style={styles.loadingText}>
-                  Syncing live attendance feed...
-                </Text>
+                <ActivityIndicator size="small" color="#142748" />
+                <Text style={styles.loadingText}>Connecting to live attendance radar...</Text>
               </View>
             ) : filteredFeedRecords.length === 0 ? (
               <View style={styles.emptyCard}>
                 <View style={styles.emptyIconCircle}>
-                  <Ionicons
-                    name="finger-print-outline"
-                    size={32}
-                    color="#94A3B8"
-                  />
+                  <Ionicons name="finger-print-outline" size={28} color="#64748b" />
                 </View>
                 <Text style={styles.emptyTitle}>
-                  {feedSearch
-                    ? "No matching records found"
-                    : "No Attendance Recorded Today"}
+                  {feedSearch ? "No matching records found" : "No Attendance Recorded Today"}
                 </Text>
                 <Text style={styles.emptySub}>
                   {feedSearch
-                    ? "Try adjusting your search query or department filter."
+                    ? "Try adjusting your search query."
                     : "Workers' verified check-in punches will appear here live as they clock in."}
                 </Text>
               </View>
             ) : (
-              <View style={styles.feedList}>
+              <View style={styles.feedCardList}>
                 {filteredFeedRecords.map((item) => {
                   const isOnTime = item.status === "ON_TIME";
                   const punchTime = item.punchedAt
                     ? new Date(item.punchedAt).toLocaleTimeString([], {
                         hour: "2-digit",
                         minute: "2-digit",
+                        second: "2-digit",
                       })
                     : "--:--";
-
                   const initial = (item.memberName?.[0] || "W").toUpperCase();
 
                   return (
-                    <View key={item.id} style={styles.punchCard}>
-                      <View style={styles.punchTopRow}>
-                        <View style={styles.avatarCircle}>
-                          <Text style={styles.avatarText}>{initial}</Text>
+                    <TouchableOpacity
+                      key={item.id}
+                      style={styles.feedCard}
+                      onPress={() => setSelectedPunch(item)}
+                      activeOpacity={0.85}
+                    >
+                      <View style={styles.feedCardTop}>
+                        <View style={styles.workerAvatarCircle}>
+                          <Text style={styles.workerAvatarText}>{initial}</Text>
                         </View>
 
-                        <View style={styles.punchInfoCol}>
-                          <Text
-                            style={styles.punchMemberName}
-                            numberOfLines={1}
-                          >
+                        <View style={styles.feedCardInfo}>
+                          <Text style={styles.feedWorkerName} numberOfLines={1}>
                             {item.memberName}
                           </Text>
-                          <Text style={styles.punchDept} numberOfLines={1}>
+                          <Text style={styles.feedWorkerDept} numberOfLines={1}>
                             {item.department || "General Workforce"}
                           </Text>
                         </View>
 
-                        <View style={styles.punchMetaCol}>
-                          <Text style={styles.punchTimeText}>{punchTime}</Text>
+                        <View style={styles.feedCardMeta}>
+                          <Text style={styles.feedTimeText}>{punchTime}</Text>
                           <View
                             style={[
-                              styles.statusPill,
-                              isOnTime
-                                ? styles.statusPillOnTime
-                                : styles.statusPillLate,
+                              styles.punctualityPill,
+                              isOnTime ? styles.pillOnTime : styles.pillLate,
                             ]}
                           >
                             <Text
                               style={[
-                                styles.statusPillText,
-                                isOnTime
-                                  ? styles.statusPillTextOnTime
-                                  : styles.statusPillTextLate,
+                                styles.punctualityText,
+                                isOnTime ? styles.pillTextOnTime : styles.pillTextLate,
                               ]}
                             >
                               {isOnTime ? "ON TIME" : "LATE"}
@@ -701,54 +796,41 @@ export const AdminHub: React.FC = () => {
                         </View>
                       </View>
 
-                      <View style={styles.punchDivider} />
+                      <View style={styles.feedCardDivider} />
 
-                      <View style={styles.punchBottomRow}>
-                        <View style={styles.methodBadge}>
+                      <View style={styles.feedCardBottom}>
+                        <View style={styles.verificationBadge}>
                           <Ionicons
-                            name={
-                              item.verificationMethod === "WIFI_BSSID"
-                                ? "wifi"
-                                : "navigate"
-                            }
+                            name={item.verificationMethod === "WIFI_BSSID" ? "wifi" : "navigate"}
                             size={12}
-                            color="#2563EB"
+                            color="#2d81ff"
                           />
-                          <Text style={styles.methodBadgeText}>
+                          <Text style={styles.verificationBadgeText}>
                             {item.verificationMethod === "WIFI_BSSID"
-                              ? "Wi-Fi Anchor"
-                              : "GPS Geofence"}
+                              ? "Office Wi-Fi Anchor"
+                              : "Satellite GPS Geofence"}
                           </Text>
                         </View>
 
                         {item.signedOutAt ? (
-                          <View style={styles.signOutTag}>
-                            <Ionicons
-                              name="log-out"
-                              size={12}
-                              color="#059669"
-                            />
-                            <Text style={styles.signOutTagText}>
+                          <View style={styles.signedOutBadge}>
+                            <Ionicons name="log-out" size={12} color="#10b981" />
+                            <Text style={styles.signedOutBadgeText}>
                               Out:{" "}
-                              {new Date(item.signedOutAt).toLocaleTimeString(
-                                [],
-                                {
-                                  hour: "2-digit",
-                                  minute: "2-digit",
-                                },
-                              )}
+                              {new Date(item.signedOutAt).toLocaleTimeString([], {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
                             </Text>
                           </View>
                         ) : (
-                          <View style={styles.presenceActiveTag}>
+                          <View style={styles.activeOnSiteBadge}>
                             <View style={styles.activeDot} />
-                            <Text style={styles.presenceActiveText}>
-                              Active On-Site
-                            </Text>
+                            <Text style={styles.activeOnSiteText}>Active On-Site</Text>
                           </View>
                         )}
                       </View>
-                    </View>
+                    </TouchableOpacity>
                   );
                 })}
               </View>
@@ -756,66 +838,60 @@ export const AdminHub: React.FC = () => {
           </View>
         )}
 
-        {/* Tab 2: Presence anchors & direct calibration */}
+        {/* ============================================================== */}
+        {/* TAB 2: PRESENCE ANCHORS & CALIBRATION                          */}
+        {/* ============================================================== */}
         {activeTab === "anchors" && (
-          <View style={styles.tabSection}>
+          <View style={styles.tabContent}>
             {/* Status Hero Card */}
             <View style={styles.statusHeroCard}>
               <View style={styles.statusHeroTop}>
                 <View
                   style={[
                     styles.statusHeroIconBox,
-                    { backgroundColor: isCalibrated ? "#ECFDF5" : "#FFFBEB" },
+                    { backgroundColor: isCalibrated ? "#ecfdf5" : "#fffbeb" },
                   ]}
                 >
                   <Ionicons
                     name={isCalibrated ? "shield-checkmark" : "alert-circle"}
                     size={24}
-                    color={isCalibrated ? "#059669" : "#D97706"}
+                    color={isCalibrated ? "#10b981" : "#f59e0b"}
                   />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.statusHeroTitle}>
-                    {isCalibrated
-                      ? "Presence Anchors Active"
-                      : "Anchors Not Calibrated"}
+                    {isCalibrated ? "Presence Anchors Active" : "Anchors Not Calibrated"}
                   </Text>
                   <Text style={styles.statusHeroSub}>
                     {isCalibrated
                       ? `Enforcing ${
                           calMode === "GEOFENCE_ONLY"
                             ? "Satellite GPS Geofence"
-                            : "Hybrid Wi-Fi Router + GPS"
+                            : "Hybrid Router + GPS"
                         }`
-                      : "Calibrate below on-site to lock physical boundaries."}
+                      : "Pinpoint GPS and calibrate below to enforce boundary."}
                   </Text>
                 </View>
                 <View
                   style={[
-                    styles.liveSyncBadge,
-                    { backgroundColor: isCalibrated ? "#ECFDF5" : "#FFFBEB" },
+                    styles.liveTagBadge,
+                    { backgroundColor: isCalibrated ? "#ecfdf5" : "#fffbeb" },
                   ]}
                 >
-                  <View
-                    style={[
-                      styles.syncPulseDot,
-                      { backgroundColor: isCalibrated ? "#059669" : "#D97706" },
-                    ]}
-                  />
                   <Text
                     style={[
-                      styles.liveSyncText,
-                      { color: isCalibrated ? "#059669" : "#D97706" },
+                      styles.liveTagText,
+                      { color: isCalibrated ? "#10b981" : "#f59e0b" },
                     ]}
                   >
-                    {isCalibrated ? "LIVE" : "PENDING"}
+                    {isCalibrated ? "ACTIVE" : "PENDING"}
                   </Text>
                 </View>
               </View>
 
               {locationAddress ? (
                 <View style={styles.addressBox}>
-                  <Ionicons name="location" size={14} color="#64748B" />
+                  <Ionicons name="location" size={14} color="#64748b" />
                   <Text style={styles.addressText} numberOfLines={2}>
                     {locationAddress}
                   </Text>
@@ -825,12 +901,9 @@ export const AdminHub: React.FC = () => {
 
             {/* Architecture Mode Selector */}
             <View style={styles.card}>
-              <Text style={styles.cardSectionTitle}>
-                VERIFICATION ARCHITECTURE
-              </Text>
+              <Text style={styles.cardSectionTitle}>VERIFICATION ARCHITECTURE</Text>
               <Text style={styles.cardSectionSub}>
-                Select the physical security method required for worker
-                clock-ins.
+                Select the physical security method required for worker clock-ins.
               </Text>
 
               <View style={styles.modeCardsRow}>
@@ -846,24 +919,15 @@ export const AdminHub: React.FC = () => {
                     <Ionicons
                       name="navigate"
                       size={20}
-                      color={
-                        calMode === "GEOFENCE_ONLY" ? "#2563EB" : "#64748B"
-                      }
+                      color={calMode === "GEOFENCE_ONLY" ? "#142748" : "#64748b"}
                     />
-                    <View
-                      style={[
-                        styles.radioCircle,
-                        calMode === "GEOFENCE_ONLY" && styles.radioCircleActive,
-                      ]}
-                    >
-                      {calMode === "GEOFENCE_ONLY" && (
-                        <View style={styles.radioDot} />
-                      )}
-                    </View>
+                    {calMode === "GEOFENCE_ONLY" && (
+                      <Ionicons name="checkmark-circle" size={18} color="#2d81ff" />
+                    )}
                   </View>
                   <Text style={styles.modeChoiceTitle}>Satellite Geofence</Text>
                   <Text style={styles.modeChoiceSub}>
-                    Recommended • 100% Router-Free. Uses high-precision GPS.
+                    Recommended • Router-free high-precision GPS satellite perimeter.
                   </Text>
                 </TouchableOpacity>
 
@@ -879,21 +943,15 @@ export const AdminHub: React.FC = () => {
                     <Ionicons
                       name="wifi"
                       size={20}
-                      color={calMode === "HYBRID" ? "#2563EB" : "#64748B"}
+                      color={calMode === "HYBRID" ? "#142748" : "#64748b"}
                     />
-                    <View
-                      style={[
-                        styles.radioCircle,
-                        calMode === "HYBRID" && styles.radioCircleActive,
-                      ]}
-                    >
-                      {calMode === "HYBRID" && <View style={styles.radioDot} />}
-                    </View>
+                    {calMode === "HYBRID" && (
+                      <Ionicons name="checkmark-circle" size={18} color="#2d81ff" />
+                    )}
                   </View>
                   <Text style={styles.modeChoiceTitle}>Router + Geofence</Text>
                   <Text style={styles.modeChoiceSub}>
-                    Dual-Tier • Scans office router BSSID MAC address with GPS
-                    fallback.
+                    Dual-Tier • Matches office router BSSID MAC with GPS perimeter.
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -901,19 +959,12 @@ export const AdminHub: React.FC = () => {
 
             {/* GPS Pinpoint Section */}
             <View style={styles.card}>
-              <View style={styles.cardHeaderRow}>
-                <View>
-                  <Text style={styles.cardSectionTitle}>
-                    1. GPS PERIMETER COORDINATES
-                  </Text>
-                  <Text style={styles.cardSectionSub}>
-                    Sample high-accuracy latitude & longitude from device
-                    sensors.
-                  </Text>
-                </View>
-              </View>
+              <Text style={styles.cardSectionTitle}>1. GPS PERIMETER COORDINATES</Text>
+              <Text style={styles.cardSectionSub}>
+                Capture high-accuracy latitude & longitude from device hardware sensors.
+              </Text>
 
-              <View style={styles.coordsDisplayBox}>
+              <View style={styles.coordsBox}>
                 <View style={styles.coordCol}>
                   <Text style={styles.coordLabel}>LATITUDE</Text>
                   <Text style={styles.coordVal}>
@@ -932,7 +983,7 @@ export const AdminHub: React.FC = () => {
                     <View style={styles.coordDivider} />
                     <View style={styles.coordCol}>
                       <Text style={styles.coordLabel}>ACCURACY</Text>
-                      <Text style={[styles.coordVal, { color: "#059669" }]}>
+                      <Text style={[styles.coordVal, { color: "#10b981" }]}>
                         ±{gpsAccuracy}m
                       </Text>
                     </View>
@@ -941,23 +992,18 @@ export const AdminHub: React.FC = () => {
               </View>
 
               <TouchableOpacity
-                style={[
-                  styles.pinpointGpsButton,
-                  isLocatingGps && styles.buttonDisabled,
-                ]}
+                style={[styles.primaryActionBtn, isLocatingGps && styles.btnDisabled]}
                 onPress={handlePinpointGps}
                 disabled={isLocatingGps}
                 activeOpacity={0.85}
               >
                 {isLocatingGps ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
+                  <ActivityIndicator size="small" color="#f2f1ee" />
                 ) : (
-                  <Ionicons name="locate" size={18} color="#FFFFFF" />
+                  <Ionicons name="locate" size={18} color="#f2f1ee" />
                 )}
-                <Text style={styles.pinpointGpsText}>
-                  {isLocatingGps
-                    ? "Acquiring High-Precision GPS..."
-                    : "Pinpoint Current GPS Location"}
+                <Text style={styles.primaryActionBtnText}>
+                  {isLocatingGps ? "ACQUIRING GPS FIX..." : "PINPOINT CURRENT GPS"}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -966,36 +1012,24 @@ export const AdminHub: React.FC = () => {
             <View style={styles.card}>
               <Text style={styles.cardSectionTitle}>2. PERIMETER RADIUS</Text>
               <Text style={styles.cardSectionSub}>
-                Allowable distance workers can be from the anchor coordinate (
-                {radiusMeters}m selected).
+                Allowable distance workers can be from centerpoint ({radiusMeters}m selected).
               </Text>
 
-              <View style={styles.radiusPillsGrid}>
+              <View style={styles.radiusGrid}>
                 {RADIUS_OPTIONS.map((opt) => {
                   const isSel = radiusMeters === opt.value;
                   return (
                     <TouchableOpacity
                       key={opt.value}
-                      style={[
-                        styles.radiusPillItem,
-                        isSel && styles.radiusPillItemActive,
-                      ]}
+                      style={[styles.radiusItem, isSel && styles.radiusItemActive]}
                       onPress={() => setRadiusMeters(opt.value)}
                       activeOpacity={0.8}
                     >
-                      <Text
-                        style={[
-                          styles.radiusPillLabel,
-                          isSel && styles.radiusPillLabelActive,
-                        ]}
-                      >
+                      <Text style={[styles.radiusLabel, isSel && styles.radiusLabelActive]}>
                         {opt.label}
                       </Text>
                       <Text
-                        style={[
-                          styles.radiusPillDesc,
-                          isSel && styles.radiusPillDescActive,
-                        ]}
+                        style={[styles.radiusDesc, isSel && styles.radiusDescActive]}
                         numberOfLines={1}
                       >
                         {opt.desc}
@@ -1011,45 +1045,34 @@ export const AdminHub: React.FC = () => {
               <View style={styles.card}>
                 <View style={styles.cardHeaderRow}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.cardSectionTitle}>
-                      3. OFFICE WI-FI ROUTER ANCHOR
-                    </Text>
+                    <Text style={styles.cardSectionTitle}>3. OFFICE WI-FI ROUTER ANCHOR</Text>
                     <Text style={styles.cardSectionSub}>
-                      Pair with your premises Wi-Fi router's unique hardware
-                      BSSID.
+                      Pair with your premises Wi-Fi router's unique hardware BSSID.
                     </Text>
                   </View>
                   <TouchableOpacity
-                    style={[
-                      styles.scanWifiButton,
-                      isScanningWifi && styles.buttonDisabled,
-                    ]}
+                    style={[styles.secondaryScanBtn, isScanningWifi && styles.btnDisabled]}
                     onPress={handleScanWifi}
                     disabled={isScanningWifi}
                     activeOpacity={0.8}
                   >
                     {isScanningWifi ? (
-                      <ActivityIndicator size="small" color="#2563EB" />
+                      <ActivityIndicator size="small" color="#142748" />
                     ) : (
-                      <Ionicons name="refresh" size={14} color="#2563EB" />
+                      <Ionicons name="refresh" size={14} color="#142748" />
                     )}
-                    <Text style={styles.scanWifiButtonText}>
+                    <Text style={styles.secondaryScanBtnText}>
                       {isScanningWifi ? "Scanning..." : "Scan Nearby"}
                     </Text>
                   </TouchableOpacity>
                 </View>
 
-                {/* Detected Networks Selector */}
                 {availableNetworks.length > 0 && (
                   <View style={styles.networkListContainer}>
                     <Text style={styles.networkListHeader}>
                       DETECTED BROADCAST POINTS ({availableNetworks.length}):
                     </Text>
-                    <ScrollView
-                      style={styles.networkScroll}
-                      nestedScrollEnabled
-                      showsVerticalScrollIndicator={false}
-                    >
+                    <ScrollView style={styles.networkScroll} nestedScrollEnabled>
                       {availableNetworks.slice(0, 6).map((net, idx) => {
                         const isMatch =
                           targetBssid &&
@@ -1057,38 +1080,26 @@ export const AdminHub: React.FC = () => {
                         return (
                           <TouchableOpacity
                             key={`${net.bssid}-${idx}`}
-                            style={[
-                              styles.networkRow,
-                              isMatch && styles.networkRowSelected,
-                            ]}
+                            style={[styles.networkRow, isMatch && styles.networkRowSelected]}
                             onPress={() => handleSelectNetwork(net)}
                             activeOpacity={0.7}
                           >
                             <Ionicons
                               name="wifi"
                               size={16}
-                              color={isMatch ? "#2563EB" : "#64748B"}
+                              color={isMatch ? "#2d81ff" : "#64748b"}
                             />
                             <View style={{ flex: 1 }}>
                               <Text
-                                style={[
-                                  styles.networkSsid,
-                                  isMatch && styles.networkSsidActive,
-                                ]}
+                                style={[styles.networkSsid, isMatch && styles.networkSsidActive]}
                                 numberOfLines={1}
                               >
                                 {net.ssid || "Hidden Network"}
                               </Text>
-                              <Text style={styles.networkBssid}>
-                                {net.bssid}
-                              </Text>
+                              <Text style={styles.networkBssid}>{net.bssid}</Text>
                             </View>
                             {isMatch && (
-                              <Ionicons
-                                name="checkmark-circle"
-                                size={18}
-                                color="#2563EB"
-                              />
+                              <Ionicons name="checkmark-circle" size={18} color="#2d81ff" />
                             )}
                           </TouchableOpacity>
                         );
@@ -1101,41 +1112,33 @@ export const AdminHub: React.FC = () => {
                   <Text style={styles.inputLabel}>ROUTER SSID (NAME)</Text>
                   <TextInput
                     style={styles.textInput}
-                    placeholder="e.g. Office_WiFi or Sanctuary_5G"
-                    placeholderTextColor="#94A3B8"
+                    placeholder="e.g. Office_WiFi"
+                    placeholderTextColor="#94a3b8"
                     value={ssidHint}
                     onChangeText={setSsidHint}
                   />
                 </View>
 
                 <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>
-                    ROUTER BSSID (MAC ADDRESS)
-                  </Text>
+                  <Text style={styles.inputLabel}>ROUTER BSSID (MAC ADDRESS)</Text>
                   <TextInput
                     style={[styles.textInput, styles.monoInput]}
                     placeholder="e.g. 34:2c:c4:91:a8:20"
-                    placeholderTextColor="#94A3B8"
+                    placeholderTextColor="#94a3b8"
                     value={targetBssid}
                     onChangeText={setTargetBssid}
                     autoCapitalize="none"
                     autoCorrect={false}
                   />
-                  <Text style={styles.inputHelpText}>
-                    Hardware MAC address broadcast by the premises router.
-                  </Text>
                 </View>
               </View>
             )}
 
-            {/* Map Preview */}
+            {/* Interactive Leaflet Map Preview */}
             <View style={styles.card}>
-              <Text style={styles.cardSectionTitle}>
-                PREMISES GEOFENCE PREVIEW
-              </Text>
+              <Text style={styles.cardSectionTitle}>PREMISES GEOFENCE RADAR</Text>
               <Text style={styles.cardSectionSub}>
-                Workers must be inside this circular boundary ({radiusMeters}m)
-                to punch in.
+                Workers must be inside this circular boundary ({radiusMeters}m) to punch in.
               </Text>
               <View style={styles.mapFrame}>
                 <PresenceMapMobile
@@ -1143,271 +1146,842 @@ export const AdminHub: React.FC = () => {
                   longitude={longitude}
                   radiusMeters={radiusMeters}
                   onCoordinatesChange={() => {}}
-                  height={190}
+                  height={220}
                 />
               </View>
             </View>
 
-            {/* Save Action Button */}
+            {/* Save Anchors Primary Action */}
             <TouchableOpacity
-              style={[
-                styles.saveAnchorsButton,
-                isSavingAnchors && styles.buttonDisabled,
-              ]}
+              style={[styles.primaryActionBtn, isSavingAnchors && styles.btnDisabled]}
               onPress={handleSaveAnchors}
               disabled={isSavingAnchors}
               activeOpacity={0.88}
             >
               {isSavingAnchors ? (
-                <ActivityIndicator size="small" color="#FFFFFF" />
+                <ActivityIndicator size="small" color="#f2f1ee" />
               ) : (
-                <Ionicons name="cloud-upload" size={20} color="#FFFFFF" />
+                <Ionicons name="cloud-upload-outline" size={20} color="#f2f1ee" />
               )}
-              <Text style={styles.saveAnchorsText}>
-                {isSavingAnchors
-                  ? "Committing & Syncing..."
-                  : "Save Calibrated Anchors"}
+              <Text style={styles.primaryActionBtnText}>
+                {isSavingAnchors ? "COMMITTING & SYNCING..." : "SAVE CALIBRATED ANCHORS"}
               </Text>
             </TouchableOpacity>
+          </View>
+        )}
 
-            <View style={styles.webSyncHintCard}>
-              <Ionicons name="desktop-outline" size={16} color="#64748B" />
-              <Text style={styles.webSyncHintText}>
-                Saving here immediately updates your Admin Web Portal in real
-                time via Cloud Firestore.
-              </Text>
+        {/* ============================================================== */}
+        {/* TAB 3: REGISTERED WORKFORCE USERS (Directory & Management)      */}
+        {/* ============================================================== */}
+        {activeTab === "workforce" && (
+          <View style={styles.tabContent}>
+            {/* Workforce KPI Summary */}
+            <View style={styles.kpiRow}>
+              <View style={styles.kpiCard}>
+                <Text style={styles.kpiLabel}>TOTAL WORKFORCE</Text>
+                <Text style={styles.kpiValue}>{totalMembersCount}</Text>
+                <Text style={styles.kpiSub}>Registered profiles</Text>
+              </View>
+
+              <View style={styles.kpiCard}>
+                <Text style={styles.kpiLabel}>FACE ENROLLED</Text>
+                <Text style={[styles.kpiValue, { color: "#10b981" }]}>{faceEnrolledCount}</Text>
+                <Text style={styles.kpiSub}>Biometric verified</Text>
+              </View>
+
+              <View style={styles.kpiCard}>
+                <Text style={styles.kpiLabel}>ACTIVE STATUS</Text>
+                <Text style={[styles.kpiValue, { color: "#2d81ff" }]}>{activeMembersCount}</Text>
+                <Text style={styles.kpiSub}>Eligible to punch</Text>
+              </View>
             </View>
+
+            {/* Workforce Search & Filter Bar */}
+            <View style={styles.searchRow}>
+              <View style={styles.searchBox}>
+                <Ionicons name="search-outline" size={16} color="#64748b" />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Search by name, email, department..."
+                  placeholderTextColor="#94a3b8"
+                  value={workforceSearch}
+                  onChangeText={setWorkforceSearch}
+                />
+                {workforceSearch.length > 0 && (
+                  <TouchableOpacity onPress={() => setWorkforceSearch("")}>
+                    <Ionicons name="close-circle" size={16} color="#94a3b8" />
+                  </TouchableOpacity>
+                )}
+              </View>
+            </View>
+
+            {/* Filter Tabs */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.chipsScroll}
+            >
+              <TouchableOpacity
+                style={[
+                  styles.chipItem,
+                  selectedWorkforceFilter === "ALL" && styles.chipItemActive,
+                ]}
+                onPress={() => setSelectedWorkforceFilter("ALL")}
+              >
+                <Text
+                  style={[
+                    styles.chipText,
+                    selectedWorkforceFilter === "ALL" && styles.chipTextActive,
+                  ]}
+                >
+                  ALL ({totalMembersCount})
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.chipItem,
+                  selectedWorkforceFilter === "FACE_ENROLLED" && styles.chipItemActive,
+                ]}
+                onPress={() => setSelectedWorkforceFilter("FACE_ENROLLED")}
+              >
+                <Text
+                  style={[
+                    styles.chipText,
+                    selectedWorkforceFilter === "FACE_ENROLLED" && styles.chipTextActive,
+                  ]}
+                >
+                  FACE ENROLLED ({faceEnrolledCount})
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.chipItem,
+                  selectedWorkforceFilter === "PENDING_FACE" && styles.chipItemActive,
+                ]}
+                onPress={() => setSelectedWorkforceFilter("PENDING_FACE")}
+              >
+                <Text
+                  style={[
+                    styles.chipText,
+                    selectedWorkforceFilter === "PENDING_FACE" && styles.chipTextActive,
+                  ]}
+                >
+                  PENDING FACE ({totalMembersCount - faceEnrolledCount})
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.chipItem,
+                  selectedWorkforceFilter === "SUSPENDED" && styles.chipItemActive,
+                ]}
+                onPress={() => setSelectedWorkforceFilter("SUSPENDED")}
+              >
+                <Text
+                  style={[
+                    styles.chipText,
+                    selectedWorkforceFilter === "SUSPENDED" && styles.chipTextActive,
+                  ]}
+                >
+                  SUSPENDED
+                </Text>
+              </TouchableOpacity>
+            </ScrollView>
+
+            {/* Members List */}
+            {isMembersLoading ? (
+              <View style={styles.loadingBox}>
+                <ActivityIndicator size="small" color="#142748" />
+                <Text style={styles.loadingText}>Syncing registered workforce directory...</Text>
+              </View>
+            ) : filteredMembers.length === 0 ? (
+              <View style={styles.emptyCard}>
+                <View style={styles.emptyIconCircle}>
+                  <Ionicons name="people-outline" size={28} color="#64748b" />
+                </View>
+                <Text style={styles.emptyTitle}>
+                  {workforceSearch ? "No matching members found" : "No Registered Workers"}
+                </Text>
+                <Text style={styles.emptySub}>
+                  {workforceSearch
+                    ? "Try adjusting your search terms or filter."
+                    : "Workers who register on the mobile app will appear here."}
+                </Text>
+              </View>
+            ) : (
+              <View style={styles.feedCardList}>
+                {filteredMembers.map((member) => {
+                  const isSuspended = (member as any).status === "SUSPENDED";
+                  const initial = (member.fullName?.[0] || "W").toUpperCase();
+
+                  return (
+                    <TouchableOpacity
+                      key={member.id}
+                      style={[styles.feedCard, isSuspended && styles.suspendedCard]}
+                      onPress={() => setSelectedWorker(member)}
+                      activeOpacity={0.85}
+                    >
+                      <View style={styles.feedCardTop}>
+                        {member.facePhotoURL || member.photoURL ? (
+                          <Image
+                            source={{ uri: member.facePhotoURL || member.photoURL }}
+                            style={styles.memberPhotoThumb}
+                          />
+                        ) : (
+                          <View style={styles.workerAvatarCircle}>
+                            <Text style={styles.workerAvatarText}>{initial}</Text>
+                          </View>
+                        )}
+
+                        <View style={styles.feedCardInfo}>
+                          <Text style={styles.feedWorkerName} numberOfLines={1}>
+                            {member.fullName}
+                          </Text>
+                          <Text style={styles.feedWorkerDept} numberOfLines={1}>
+                            {member.department || "General"} • {member.phone || member.email || "No contact"}
+                          </Text>
+                        </View>
+
+                        <View style={styles.feedCardMeta}>
+                          <View
+                            style={[
+                              styles.punctualityPill,
+                              isSuspended ? styles.pillLate : styles.pillOnTime,
+                            ]}
+                          >
+                            <Text
+                              style={[
+                                styles.punctualityText,
+                                isSuspended ? styles.pillTextLate : styles.pillTextOnTime,
+                              ]}
+                            >
+                              {isSuspended ? "SUSPENDED" : "ACTIVE"}
+                            </Text>
+                          </View>
+                        </View>
+                      </View>
+
+                      <View style={styles.feedCardDivider} />
+
+                      <View style={styles.feedCardBottom}>
+                        <View style={styles.verificationBadge}>
+                          <Ionicons
+                            name={member.isFaceEnrolled ? "checkmark-circle" : "ellipse-outline"}
+                            size={12}
+                            color={member.isFaceEnrolled ? "#10b981" : "#64748b"}
+                          />
+                          <Text style={styles.verificationBadgeText}>
+                            {member.isFaceEnrolled ? "Face Enrolled" : "Face Pending"}
+                          </Text>
+                        </View>
+
+                        <View style={styles.deviceBindingTag}>
+                          <Ionicons name="hardware-chip-outline" size={12} color="#64748b" />
+                          <Text style={styles.deviceBindingText}>
+                            {member.boundDeviceId ? "Device Bound" : "Unbound"}
+                          </Text>
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
           </View>
         )}
       </ScrollView>
+
+      {/* ---------------------------------------------------------------- */}
+      {/* BOLT-STYLE BOTTOM TAB BAR NAVIGATION                             */}
+      {/* ---------------------------------------------------------------- */}
+      <View style={styles.bottomTabBar}>
+        {/* Tab 1: Live Feed */}
+        <TouchableOpacity
+          style={[styles.bottomTabItem, activeTab === "feed" && styles.bottomTabItemActive]}
+          onPress={() => setActiveTab("feed")}
+          activeOpacity={0.8}
+        >
+          <View style={styles.tabIconWrap}>
+            <Ionicons
+              name={activeTab === "feed" ? "pulse" : "pulse-outline"}
+              size={20}
+              color={activeTab === "feed" ? "#142748" : "#94a3b8"}
+            />
+            {todayRecords.length > 0 && (
+              <View style={styles.tabBadgeDot}>
+                <Text style={styles.tabBadgeDotText}>{todayRecords.length}</Text>
+              </View>
+            )}
+          </View>
+          <Text
+            style={[styles.bottomTabLabel, activeTab === "feed" && styles.bottomTabLabelActive]}
+          >
+            Live Feed
+          </Text>
+        </TouchableOpacity>
+
+        {/* Tab 2: Presence Anchors */}
+        <TouchableOpacity
+          style={[styles.bottomTabItem, activeTab === "anchors" && styles.bottomTabItemActive]}
+          onPress={() => setActiveTab("anchors")}
+          activeOpacity={0.8}
+        >
+          <View style={styles.tabIconWrap}>
+            <Ionicons
+              name={activeTab === "anchors" ? "location" : "location-outline"}
+              size={20}
+              color={activeTab === "anchors" ? "#142748" : "#94a3b8"}
+            />
+            <View
+              style={[
+                styles.anchorStatusIndicator,
+                { backgroundColor: isCalibrated ? "#10b981" : "#f59e0b" },
+              ]}
+            />
+          </View>
+          <Text
+            style={[
+              styles.bottomTabLabel,
+              activeTab === "anchors" && styles.bottomTabLabelActive,
+            ]}
+          >
+            Anchors
+          </Text>
+        </TouchableOpacity>
+
+        {/* Tab 3: Workforce Directory */}
+        <TouchableOpacity
+          style={[
+            styles.bottomTabItem,
+            activeTab === "workforce" && styles.bottomTabItemActive,
+          ]}
+          onPress={() => setActiveTab("workforce")}
+          activeOpacity={0.8}
+        >
+          <View style={styles.tabIconWrap}>
+            <Ionicons
+              name={activeTab === "workforce" ? "people" : "people-outline"}
+              size={20}
+              color={activeTab === "workforce" ? "#142748" : "#94a3b8"}
+            />
+            {totalMembersCount > 0 && (
+              <View style={styles.tabCountPill}>
+                <Text style={styles.tabCountPillText}>{totalMembersCount}</Text>
+              </View>
+            )}
+          </View>
+          <Text
+            style={[
+              styles.bottomTabLabel,
+              activeTab === "workforce" && styles.bottomTabLabelActive,
+            ]}
+          >
+            Workforce
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* ---------------------------------------------------------------- */}
+      {/* MODAL 1: ATTENDANCE RECORD DETAIL POPUP                           */}
+      {/* ---------------------------------------------------------------- */}
+      <Modal
+        visible={Boolean(selectedPunch)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSelectedPunch(null)}
+      >
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => setSelectedPunch(null)}
+        >
+          <Pressable style={styles.modalSheetCard} onPress={(e) => e.stopPropagation()}>
+            <View style={styles.modalDragHandle} />
+
+            <View style={styles.modalHeaderRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>Attendance Verification</Text>
+                <Text style={styles.modalSubtitle}>Hardware & biometric audit details</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setSelectedPunch(null)}
+                style={styles.modalCloseButton}
+              >
+                <Ionicons name="close" size={20} color="#142748" />
+              </TouchableOpacity>
+            </View>
+
+            {selectedPunch && (
+              <View style={styles.modalBody}>
+                {/* Worker Header Card */}
+                <View style={styles.detailCard}>
+                  <View style={styles.detailAvatar}>
+                    <Text style={styles.detailAvatarText}>
+                      {(selectedPunch.memberName?.[0] || "W").toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.detailName}>{selectedPunch.memberName}</Text>
+                    <Text style={styles.detailDept}>
+                      {selectedPunch.department || "General Workforce"}
+                    </Text>
+                  </View>
+                  <View
+                    style={[
+                      styles.punctualityPill,
+                      selectedPunch.status === "ON_TIME" ? styles.pillOnTime : styles.pillLate,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.punctualityText,
+                        selectedPunch.status === "ON_TIME"
+                          ? styles.pillTextOnTime
+                          : styles.pillTextLate,
+                      ]}
+                    >
+                      {selectedPunch.status === "ON_TIME" ? "ON TIME" : "LATE"}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Audit Details Grid */}
+                <View style={styles.auditGrid}>
+                  <View style={styles.auditRow}>
+                    <Text style={styles.auditLabel}>CLOCK IN TIME</Text>
+                    <Text style={styles.auditValue}>
+                      {new Date(selectedPunch.punchedAt).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        second: "2-digit",
+                      })}
+                    </Text>
+                  </View>
+
+                  <View style={styles.auditRow}>
+                    <Text style={styles.auditLabel}>SERVICE DATE</Text>
+                    <Text style={styles.auditValue}>{selectedPunch.serviceDate}</Text>
+                  </View>
+
+                  <View style={styles.auditRow}>
+                    <Text style={styles.auditLabel}>VERIFICATION ANCHOR</Text>
+                    <Text style={styles.auditValue}>
+                      {selectedPunch.verificationMethod === "WIFI_BSSID"
+                        ? "Office Wi-Fi Router"
+                        : "Satellite GPS Geofence"}
+                    </Text>
+                  </View>
+
+                  {selectedPunch.bssidDetected && (
+                    <View style={styles.auditRow}>
+                      <Text style={styles.auditLabel}>DETECTED BSSID</Text>
+                      <Text style={[styles.auditValue, styles.monoText]}>
+                        {selectedPunch.bssidDetected}
+                      </Text>
+                    </View>
+                  )}
+
+                  <View style={styles.auditRow}>
+                    <Text style={styles.auditLabel}>DEPARTURE / SIGN OUT</Text>
+                    <Text style={styles.auditValue}>
+                      {selectedPunch.signedOutAt
+                        ? new Date(selectedPunch.signedOutAt).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })
+                        : "Active On-Site"}
+                    </Text>
+                  </View>
+                </View>
+
+                <TouchableOpacity
+                  style={styles.modalDismissBtn}
+                  onPress={() => setSelectedPunch(null)}
+                >
+                  <Text style={styles.modalDismissText}>CLOSE AUDIT</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* ---------------------------------------------------------------- */}
+      {/* MODAL 2: WORKER DETAIL & MANAGEMENT MODAL                        */}
+      {/* ---------------------------------------------------------------- */}
+      <Modal
+        visible={Boolean(selectedWorker)}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSelectedWorker(null)}
+      >
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => setSelectedWorker(null)}
+        >
+          <Pressable style={styles.modalSheetCard} onPress={(e) => e.stopPropagation()}>
+            <View style={styles.modalDragHandle} />
+
+            <View style={styles.modalHeaderRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>Manage Workforce Member</Text>
+                <Text style={styles.modalSubtitle}>Profile, biometrics & device access</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setSelectedWorker(null)}
+                style={styles.modalCloseButton}
+              >
+                <Ionicons name="close" size={20} color="#142748" />
+              </TouchableOpacity>
+            </View>
+
+            {selectedWorker && (
+              <View style={styles.modalBody}>
+                {/* Profile Card */}
+                <View style={styles.detailCard}>
+                  {selectedWorker.facePhotoURL || selectedWorker.photoURL ? (
+                    <Image
+                      source={{ uri: selectedWorker.facePhotoURL || selectedWorker.photoURL }}
+                      style={styles.memberPhotoModal}
+                    />
+                  ) : (
+                    <View style={styles.detailAvatar}>
+                      <Text style={styles.detailAvatarText}>
+                        {(selectedWorker.fullName?.[0] || "W").toUpperCase()}
+                      </Text>
+                    </View>
+                  )}
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.detailName}>{selectedWorker.fullName}</Text>
+                    <Text style={styles.detailDept}>
+                      {selectedWorker.department || "General"} • {selectedWorker.phone || "No phone"}
+                    </Text>
+                    <Text style={styles.detailEmail}>{selectedWorker.email || "No email"}</Text>
+                  </View>
+                </View>
+
+                {/* Status & Biometrics summary */}
+                <View style={styles.auditGrid}>
+                  <View style={styles.auditRow}>
+                    <Text style={styles.auditLabel}>FACE ENROLLMENT</Text>
+                    <Text
+                      style={[
+                        styles.auditValue,
+                        { color: selectedWorker.isFaceEnrolled ? "#10b981" : "#f59e0b" },
+                      ]}
+                    >
+                      {selectedWorker.isFaceEnrolled ? "Enrolled & Active" : "Pending Registration"}
+                    </Text>
+                  </View>
+
+                  <View style={styles.auditRow}>
+                    <Text style={styles.auditLabel}>HARDWARE DEVICE BINDING</Text>
+                    <Text style={[styles.auditValue, styles.monoText]}>
+                      {selectedWorker.boundDeviceId
+                        ? `Bound (${selectedWorker.boundDeviceId.slice(0, 10)}...)`
+                        : "Unbound"}
+                    </Text>
+                  </View>
+
+                  <View style={styles.auditRow}>
+                    <Text style={styles.auditLabel}>ACCOUNT STATUS</Text>
+                    <Text
+                      style={[
+                        styles.auditValue,
+                        {
+                          color:
+                            (selectedWorker as any).status === "SUSPENDED"
+                              ? "#d92d20"
+                              : "#10b981",
+                        },
+                      ]}
+                    >
+                      {(selectedWorker as any).status === "SUSPENDED" ? "Suspended" : "Active"}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Management Action Buttons */}
+                <View style={styles.workerActionCol}>
+                  <TouchableOpacity
+                    style={styles.workerActionBtn}
+                    onPress={() => handleResetDevice(selectedWorker)}
+                    disabled={isManagingWorker}
+                  >
+                    <Ionicons name="hardware-chip-outline" size={18} color="#142748" />
+                    <Text style={styles.workerActionBtnText}>RESET HARDWARE DEVICE BINDING</Text>
+                  </TouchableOpacity>
+
+                  {selectedWorker.isFaceEnrolled && (
+                    <TouchableOpacity
+                      style={styles.workerActionBtn}
+                      onPress={() => handleResetFace(selectedWorker)}
+                      disabled={isManagingWorker}
+                    >
+                      <Ionicons name="refresh-circle-outline" size={18} color="#142748" />
+                      <Text style={styles.workerActionBtnText}>RESET FACE ID BIOMETRICS</Text>
+                    </TouchableOpacity>
+                  )}
+
+                  <TouchableOpacity
+                    style={[styles.workerActionBtn, styles.workerActionBtnWarning]}
+                    onPress={() => handleToggleStatus(selectedWorker)}
+                    disabled={isManagingWorker}
+                  >
+                    <Ionicons
+                      name={(selectedWorker as any).status === "SUSPENDED" ? "checkmark-circle" : "ban-outline"}
+                      size={18}
+                      color={(selectedWorker as any).status === "SUSPENDED" ? "#10b981" : "#f59e0b"}
+                    />
+                    <Text
+                      style={[
+                        styles.workerActionBtnText,
+                        {
+                          color:
+                            (selectedWorker as any).status === "SUSPENDED"
+                              ? "#10b981"
+                              : "#f59e0b",
+                        },
+                      ]}
+                    >
+                      {(selectedWorker as any).status === "SUSPENDED"
+                        ? "RE-ACTIVATE WORKER"
+                        : "SUSPEND WORKER ACCESS"}
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.workerActionBtn, styles.workerActionBtnDestructive]}
+                    onPress={() => handleDeleteMember(selectedWorker)}
+                    disabled={isManagingWorker}
+                  >
+                    <Ionicons name="trash-outline" size={18} color="#d92d20" />
+                    <Text
+                      style={[styles.workerActionBtnText, { color: "#d92d20" }]}
+                    >
+                      REMOVE FROM WORKSPACE
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* ---------------------------------------------------------------- */}
+      {/* MODAL 3: ADMIN PROFILE & DESKTOP WEB NOTICE MODAL                */}
+      {/* ---------------------------------------------------------------- */}
+      <Modal
+        visible={showAdminProfileModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowAdminProfileModal(false)}
+      >
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => setShowAdminProfileModal(false)}
+        >
+          <Pressable style={styles.modalSheetCard} onPress={(e) => e.stopPropagation()}>
+            <View style={styles.modalDragHandle} />
+
+            <View style={styles.modalHeaderRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>Administrator Workspace</Text>
+                <Text style={styles.modalSubtitle}>Role credentials & web portal access</Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setShowAdminProfileModal(false)}
+                style={styles.modalCloseButton}
+              >
+                <Ionicons name="close" size={20} color="#142748" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalBody}>
+              <View style={styles.detailCard}>
+                <View style={styles.detailAvatar}>
+                  <Text style={styles.detailAvatarText}>
+                    {(user?.displayName?.[0] || user?.email?.[0] || "A").toUpperCase()}
+                  </Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.detailName}>{user?.displayName || "Field Administrator"}</Text>
+                  <Text style={styles.detailEmail}>{user?.email}</Text>
+                  <Text style={styles.detailDept}>
+                    Workspace: {organization?.churchName} ({organization?.branchName})
+                  </Text>
+                </View>
+              </View>
+
+              {/* Web Portal Notice (Explicit requirement from audio) */}
+              <View style={styles.webNoticeCard}>
+                <View style={styles.webNoticeHeader}>
+                  <Ionicons name="desktop-outline" size={20} color="#142748" />
+                  <Text style={styles.webNoticeTitle}>DESKTOP & WEB ADMIN PORTAL</Text>
+                </View>
+                <Text style={styles.webNoticeText}>
+                  Organization policies, custom shifts, and comprehensive monthly audit metric reports
+                  are managed exclusively on the Desktop / Web portal.
+                </Text>
+                <TouchableOpacity
+                  style={styles.copyWebUrlBtn}
+                  onPress={copyWebUrl}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="link-outline" size={16} color="#142748" />
+                  <Text style={styles.copyWebUrlBtnText}>COPY WEB PORTAL URL</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Sign Out Button */}
+              <TouchableOpacity
+                style={styles.adminSignOutBtn}
+                onPress={() => {
+                  setShowAdminProfileModal(false);
+                  Alert.alert("Sign Out", "Sign out of your Administrator session?", [
+                    { text: "Cancel", style: "cancel" },
+                    {
+                      text: "Sign Out",
+                      style: "destructive",
+                      onPress: () => signOut(),
+                    },
+                  ]);
+                }}
+              >
+                <Ionicons name="log-out-outline" size={18} color="#d92d20" />
+                <Text style={styles.adminSignOutBtnText}>SIGN OUT OF ADMIN HUB</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 };
 
-// Styles
+// ----------------------------------------------------------------------
+// STYLES (ArtCraft Design System: #142748, #f2f1ee, #2d81ff, #e5e7eb)
+// ----------------------------------------------------------------------
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#F8FAFC",
+    backgroundColor: "#f2f1ee",
   },
-  headerBar: {
+  topHeader: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     paddingHorizontal: 18,
-    paddingTop: 8,
+    paddingTop: 10,
     paddingBottom: 12,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "#ffffff",
     borderBottomWidth: 1,
-    borderBottomColor: "#E2E8F0",
+    borderBottomColor: "#e5e7eb",
   },
-  headerLeft: {
+  headerLeftCol: {
     flex: 1,
+    gap: 4,
   },
-  orgBadgeRow: {
+  telemetryTagRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    marginBottom: 4,
   },
   livePulseDot: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: "#10B981",
+    backgroundColor: "#10b981",
   },
-  headerSubtitle: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#64748B",
-    letterSpacing: 0.6,
+  telemetryTagText: {
+    fontSize: 9,
+    fontWeight: "800",
+    color: "#142748",
+    letterSpacing: 0.8,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
   orgCodePill: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    backgroundColor: "#F1F5F9",
+    backgroundColor: "#f2f1ee",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
     paddingHorizontal: 6,
     paddingVertical: 2,
-    borderRadius: 6,
-    marginLeft: 4,
+    borderRadius: 0,
   },
   orgCodeText: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: "700",
-    color: "#0F172A",
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    color: "#142748",
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
-  headerOrgName: {
-    fontSize: 18,
+  organizationName: {
+    fontSize: 16,
     fontWeight: "800",
-    color: "#0F172A",
+    color: "#142748",
     letterSpacing: -0.4,
   },
-  signOutIconButton: {
+  adminAvatarButton: {
+    padding: 2,
+  },
+  adminAvatarCircle: {
     width: 38,
     height: 38,
-    borderRadius: 19,
-    backgroundColor: "#FEE2E2",
+    backgroundColor: "#142748",
     alignItems: "center",
     justifyContent: "center",
-    marginLeft: 12,
+    borderWidth: 1.5,
+    borderColor: "#e5e7eb",
   },
-
-  // Segmented Control
-  segmentedContainer: {
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    backgroundColor: "#FFFFFF",
-    borderBottomWidth: 1,
-    borderBottomColor: "#E2E8F0",
-  },
-  segmentedControl: {
-    flexDirection: "row",
-    backgroundColor: "#F1F5F9",
-    borderRadius: 12,
-    padding: 3,
-  },
-  segmentItem: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 9,
-    gap: 6,
-    borderRadius: 9,
-  },
-  segmentItemActive: {
-    backgroundColor: "#FFFFFF",
-    ...Platform.select({
-      ios: {
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.08,
-        shadowRadius: 2,
-      },
-      android: {
-        elevation: 2,
-      },
-    }),
-  },
-  segmentText: {
-    fontSize: 13,
-    fontWeight: "600",
-    color: "#64748B",
-  },
-  segmentTextActive: {
-    color: "#0F172A",
-    fontWeight: "700",
-  },
-  tabBadge: {
-    backgroundColor: "#E2E8F0",
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 10,
-  },
-  tabBadgeActive: {
-    backgroundColor: "#2563EB",
-  },
-  tabBadgeText: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#475569",
-  },
-  tabBadgeTextActive: {
-    color: "#FFFFFF",
-  },
-  statusDotSmall: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-
-  // Content Structure
-  contentScroll: {
-    flex: 1,
-  },
-  contentInner: {
-    padding: 16,
-    paddingBottom: 40,
-  },
-  tabSection: {
-    gap: 14,
-  },
-
-  // Card Structure
-  card: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 16,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
-    ...Platform.select({
-      ios: {
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.04,
-        shadowRadius: 3,
-      },
-      android: {
-        elevation: 1,
-      },
-    }),
-  },
-  cardHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    marginBottom: 8,
-  },
-  cardSectionTitle: {
-    fontSize: 12,
+  adminAvatarText: {
+    color: "#f2f1ee",
+    fontSize: 14,
     fontWeight: "800",
-    color: "#475569",
-    letterSpacing: 0.6,
   },
-  cardSectionSub: {
-    fontSize: 12,
-    color: "#64748B",
-    marginTop: 2,
-    marginBottom: 10,
-    lineHeight: 17,
+  scrollArea: {
+    flex: 1,
   },
-
-  // KPI Overview
+  scrollContent: {
+    padding: 16,
+    paddingBottom: 90,
+  },
+  tabContent: {
+    gap: 16,
+  },
   kpiRow: {
     flexDirection: "row",
     gap: 10,
   },
   kpiCard: {
     flex: 1,
-    backgroundColor: "#FFFFFF",
-    borderRadius: 14,
-    padding: 12,
+    backgroundColor: "#ffffff",
     borderWidth: 1,
-    borderColor: "#E2E8F0",
+    borderColor: "#e5e7eb",
+    padding: 12,
+    gap: 4,
   },
   kpiLabel: {
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: "700",
-    color: "#64748B",
-    letterSpacing: 0.5,
+    color: "#64748b",
+    letterSpacing: 0.6,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
   kpiValue: {
     fontSize: 22,
     fontWeight: "800",
-    color: "#0F172A",
-    marginVertical: 2,
+    color: "#142748",
     letterSpacing: -0.5,
   },
   kpiSub: {
     fontSize: 10,
-    color: "#94A3B8",
-    fontWeight: "500",
+    color: "#94a3b8",
   },
-
-  // Search & Filters
-  searchBarRow: {
+  searchRow: {
     flexDirection: "row",
     gap: 8,
     alignItems: "center",
@@ -1416,230 +1990,264 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "#ffffff",
     borderWidth: 1,
-    borderColor: "#E2E8F0",
-    borderRadius: 12,
+    borderColor: "#e5e7eb",
     paddingHorizontal: 12,
-    height: 42,
+    minHeight: 44,
     gap: 8,
   },
   searchInput: {
     flex: 1,
     fontSize: 13,
-    color: "#0F172A",
+    color: "#142748",
+    paddingVertical: 8,
   },
-  clearFeedButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 12,
-    backgroundColor: "#FEE2E2",
+  actionIconBtn: {
+    width: 44,
+    height: 44,
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#fecaca",
     alignItems: "center",
     justifyContent: "center",
   },
-  filterScroll: {
-    gap: 6,
+  chipsScroll: {
+    gap: 8,
     paddingVertical: 2,
   },
-  deptFilterPill: {
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
+  chipItem: {
     paddingHorizontal: 12,
     paddingVertical: 6,
-    borderRadius: 20,
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
   },
-  deptFilterPillActive: {
-    backgroundColor: "#0F172A",
-    borderColor: "#0F172A",
+  chipItemActive: {
+    backgroundColor: "#142748",
+    borderColor: "#142748",
   },
-  deptFilterText: {
-    fontSize: 11,
-    fontWeight: "600",
-    color: "#64748B",
-  },
-  deptFilterTextActive: {
-    color: "#FFFFFF",
+  chipText: {
+    fontSize: 10,
     fontWeight: "700",
+    color: "#64748b",
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+    letterSpacing: 0.4,
   },
-
-  // Feed Items
-  feedList: {
+  chipTextActive: {
+    color: "#f2f1ee",
+  },
+  loadingBox: {
+    padding: 30,
+    alignItems: "center",
+    justifyContent: "center",
     gap: 10,
   },
-  punchCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 14,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
+  loadingText: {
+    fontSize: 12,
+    color: "#64748b",
   },
-  punchTopRow: {
+  emptyCard: {
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    padding: 32,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  emptyIconCircle: {
+    width: 52,
+    height: 52,
+    backgroundColor: "#f2f1ee",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 4,
+  },
+  emptyTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#142748",
+  },
+  emptySub: {
+    fontSize: 12,
+    color: "#64748b",
+    textAlign: "center",
+    lineHeight: 18,
+    maxWidth: 280,
+  },
+  feedCardList: {
+    gap: 10,
+  },
+  feedCard: {
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    padding: 14,
+    gap: 10,
+  },
+  suspendedCard: {
+    opacity: 0.7,
+    borderColor: "#fca5a5",
+  },
+  feedCardTop: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    gap: 12,
   },
-  avatarCircle: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "#EFF6FF",
+  workerAvatarCircle: {
+    width: 38,
+    height: 38,
+    backgroundColor: "#142748",
     alignItems: "center",
     justifyContent: "center",
   },
-  avatarText: {
+  workerAvatarText: {
+    color: "#f2f1ee",
     fontSize: 14,
-    fontWeight: "700",
-    color: "#2563EB",
+    fontWeight: "800",
   },
-  punchInfoCol: {
+  memberPhotoThumb: {
+    width: 38,
+    height: 38,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  feedCardInfo: {
     flex: 1,
+    gap: 2,
   },
-  punchMemberName: {
+  feedWorkerName: {
     fontSize: 14,
     fontWeight: "700",
-    color: "#0F172A",
+    color: "#142748",
   },
-  punchDept: {
+  feedWorkerDept: {
     fontSize: 11,
-    color: "#64748B",
-    marginTop: 1,
+    color: "#64748b",
   },
-  punchMetaCol: {
+  feedCardMeta: {
     alignItems: "flex-end",
     gap: 4,
   },
-  punchTimeText: {
-    fontSize: 13,
+  feedTimeText: {
+    fontSize: 11,
     fontWeight: "700",
-    color: "#0F172A",
+    color: "#142748",
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
-  statusPill: {
-    paddingHorizontal: 7,
+  punctualityPill: {
+    paddingHorizontal: 6,
     paddingVertical: 2,
-    borderRadius: 6,
+    borderRadius: 0,
   },
-  statusPillOnTime: {
-    backgroundColor: "#ECFDF5",
+  pillOnTime: {
+    backgroundColor: "#ecfdf5",
+    borderWidth: 1,
+    borderColor: "#a7f3d0",
   },
-  statusPillLate: {
-    backgroundColor: "#FFFBEB",
+  pillLate: {
+    backgroundColor: "#fffbeb",
+    borderWidth: 1,
+    borderColor: "#fde68a",
   },
-  statusPillText: {
+  punctualityText: {
     fontSize: 9,
     fontWeight: "800",
-    letterSpacing: 0.5,
+    letterSpacing: 0.6,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
-  statusPillTextOnTime: {
-    color: "#059669",
+  pillTextOnTime: {
+    color: "#10b981",
   },
-  statusPillTextLate: {
-    color: "#D97706",
+  pillTextLate: {
+    color: "#d97706",
   },
-  punchDivider: {
+  feedCardDivider: {
     height: 1,
-    backgroundColor: "#F1F5F9",
-    marginVertical: 10,
+    backgroundColor: "#f1f5f9",
   },
-  punchBottomRow: {
+  feedCardBottom: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
-  methodBadge: {
+  verificationBadge: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
-    backgroundColor: "#F1F5F9",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
+    gap: 6,
   },
-  methodBadgeText: {
-    fontSize: 10,
-    fontWeight: "600",
-    color: "#334155",
+  verificationBadgeText: {
+    fontSize: 11,
+    color: "#64748b",
+    fontWeight: "500",
   },
-  presenceActiveTag: {
+  signedOutBadge: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
+  },
+  signedOutBadgeText: {
+    fontSize: 11,
+    color: "#10b981",
+    fontWeight: "600",
+  },
+  activeOnSiteBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
   },
   activeDot: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: "#10B981",
+    backgroundColor: "#10b981",
   },
-  presenceActiveText: {
-    fontSize: 10,
+  activeOnSiteText: {
+    fontSize: 11,
+    color: "#10b981",
     fontWeight: "600",
-    color: "#059669",
   },
-  signOutTag: {
+  deviceBindingTag: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    backgroundColor: "#ECFDF5",
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 6,
   },
-  signOutTagText: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#059669",
+  deviceBindingText: {
+    fontSize: 11,
+    color: "#64748b",
   },
-
-  // Empty / Loading states
-  loadingBox: {
-    padding: 30,
-    alignItems: "center",
+  card: {
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    padding: 16,
+    gap: 12,
+  },
+  cardHeaderRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
     gap: 8,
   },
-  loadingText: {
+  cardSectionTitle: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#142748",
+    letterSpacing: 0.8,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+  },
+  cardSectionSub: {
     fontSize: 12,
-    color: "#64748B",
-  },
-  emptyCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 16,
-    padding: 32,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
-  },
-  emptyIconCircle: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: "#F1F5F9",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 12,
-  },
-  emptyTitle: {
-    fontSize: 15,
-    fontWeight: "700",
-    color: "#0F172A",
-    marginBottom: 4,
-    textAlign: "center",
-  },
-  emptySub: {
-    fontSize: 12,
-    color: "#64748B",
-    textAlign: "center",
+    color: "#64748b",
     lineHeight: 18,
-    maxWidth: 260,
   },
-
-  // Anchors Status Hero Card
   statusHeroCard: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 16,
-    padding: 16,
+    backgroundColor: "#ffffff",
     borderWidth: 1,
-    borderColor: "#E2E8F0",
+    borderColor: "#e5e7eb",
+    padding: 16,
+    gap: 12,
   },
   statusHeroTop: {
     flexDirection: "row",
@@ -1649,334 +2257,506 @@ const styles = StyleSheet.create({
   statusHeroIconBox: {
     width: 44,
     height: 44,
-    borderRadius: 12,
     alignItems: "center",
     justifyContent: "center",
   },
   statusHeroTitle: {
     fontSize: 15,
     fontWeight: "800",
-    color: "#0F172A",
+    color: "#142748",
   },
   statusHeroSub: {
     fontSize: 12,
-    color: "#64748B",
-    marginTop: 2,
+    color: "#64748b",
+    lineHeight: 16,
   },
-  liveSyncBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
+  liveTagBadge: {
     paddingHorizontal: 8,
     paddingVertical: 3,
-    borderRadius: 8,
   },
-  syncPulseDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  liveSyncText: {
-    fontSize: 10,
+  liveTagText: {
+    fontSize: 9,
     fontWeight: "800",
-    letterSpacing: 0.5,
+    letterSpacing: 0.8,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
   addressBox: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    backgroundColor: "#F8FAFC",
+    backgroundColor: "#f8fafc",
     padding: 10,
-    borderRadius: 10,
-    marginTop: 12,
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
   },
   addressText: {
-    fontSize: 11,
+    fontSize: 12,
     color: "#475569",
     flex: 1,
-    lineHeight: 15,
   },
-
-  // Mode Selection Cards
   modeCardsRow: {
-    flexDirection: "row",
     gap: 10,
   },
   modeChoiceCard: {
-    flex: 1,
-    backgroundColor: "#F8FAFC",
+    backgroundColor: "#fdfdfc",
     borderWidth: 1.5,
-    borderColor: "#E2E8F0",
-    borderRadius: 14,
-    padding: 12,
+    borderColor: "#e5e7eb",
+    padding: 14,
+    gap: 4,
   },
   modeChoiceCardActive: {
-    backgroundColor: "#EFF6FF",
-    borderColor: "#2563EB",
+    borderColor: "#142748",
+    backgroundColor: "#ffffff",
   },
   modeChoiceHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 6,
-  },
-  radioCircle: {
-    width: 16,
-    height: 16,
-    borderRadius: 8,
-    borderWidth: 1.5,
-    borderColor: "#CBD5E1",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  radioCircleActive: {
-    borderColor: "#2563EB",
-  },
-  radioDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: "#2563EB",
+    marginBottom: 4,
   },
   modeChoiceTitle: {
     fontSize: 13,
     fontWeight: "700",
-    color: "#0F172A",
-    marginBottom: 2,
+    color: "#142748",
   },
   modeChoiceSub: {
-    fontSize: 10,
-    color: "#64748B",
-    lineHeight: 14,
+    fontSize: 11,
+    color: "#64748b",
+    lineHeight: 16,
   },
-
-  // GPS Pinpoint
-  coordsDisplayBox: {
+  coordsBox: {
     flexDirection: "row",
-    backgroundColor: "#F8FAFC",
-    borderRadius: 12,
+    alignItems: "center",
+    justifyContent: "space-around",
+    backgroundColor: "#f8fafc",
     borderWidth: 1,
-    borderColor: "#E2E8F0",
+    borderColor: "#e2e8f0",
     padding: 12,
-    marginBottom: 10,
   },
   coordCol: {
-    flex: 1,
     alignItems: "center",
-  },
-  coordDivider: {
-    width: 1,
-    backgroundColor: "#E2E8F0",
-    marginHorizontal: 4,
+    gap: 2,
   },
   coordLabel: {
     fontSize: 9,
-    fontWeight: "700",
-    color: "#64748B",
-    letterSpacing: 0.5,
+    fontWeight: "800",
+    color: "#64748b",
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+    letterSpacing: 0.6,
   },
   coordVal: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#0F172A",
-    marginTop: 2,
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#142748",
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
-  pinpointGpsButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#0F172A",
-    height: 46,
-    borderRadius: 12,
-    gap: 8,
+  coordDivider: {
+    width: 1,
+    height: 24,
+    backgroundColor: "#cbd5e1",
   },
-  pinpointGpsText: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: "#FFFFFF",
-  },
-
-  // Radius Pills
-  radiusPillsGrid: {
+  radiusGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
   },
-  radiusPillItem: {
+  radiusItem: {
     width: "31%",
-    backgroundColor: "#F8FAFC",
+    backgroundColor: "#fdfdfc",
     borderWidth: 1,
-    borderColor: "#E2E8F0",
-    borderRadius: 12,
+    borderColor: "#e5e7eb",
     paddingVertical: 10,
-    paddingHorizontal: 6,
+    paddingHorizontal: 8,
     alignItems: "center",
+    gap: 2,
   },
-  radiusPillItemActive: {
-    backgroundColor: "#EFF6FF",
-    borderColor: "#2563EB",
+  radiusItemActive: {
+    borderColor: "#142748",
+    backgroundColor: "#142748",
   },
-  radiusPillLabel: {
-    fontSize: 14,
+  radiusLabel: {
+    fontSize: 13,
     fontWeight: "800",
-    color: "#0F172A",
+    color: "#142748",
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
-  radiusPillLabelActive: {
-    color: "#2563EB",
+  radiusLabelActive: {
+    color: "#f2f1ee",
   },
-  radiusPillDesc: {
+  radiusDesc: {
     fontSize: 9,
-    color: "#64748B",
-    marginTop: 2,
+    color: "#64748b",
   },
-  radiusPillDescActive: {
-    color: "#1D4ED8",
+  radiusDescActive: {
+    color: "#94a3b8",
   },
-
-  // Wi-Fi Configuration
-  scanWifiButton: {
+  inputGroup: {
+    gap: 6,
+  },
+  inputLabel: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#142748",
+    letterSpacing: 0.8,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+  },
+  textInput: {
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#d1d5db",
+    paddingHorizontal: 12,
+    minHeight: 44,
+    fontSize: 13,
+    color: "#142748",
+  },
+  monoInput: {
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+  },
+  secondaryScanBtn: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 4,
-    backgroundColor: "#EFF6FF",
+    gap: 6,
     paddingHorizontal: 10,
     paddingVertical: 6,
-    borderRadius: 8,
     borderWidth: 1,
-    borderColor: "#BFDBFE",
+    borderColor: "#142748",
   },
-  scanWifiButtonText: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#2563EB",
-  },
-  networkListContainer: {
-    backgroundColor: "#F8FAFC",
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
-    padding: 10,
-    marginBottom: 12,
-  },
-  networkListHeader: {
+  secondaryScanBtnText: {
     fontSize: 10,
     fontWeight: "700",
-    color: "#64748B",
-    marginBottom: 6,
-    letterSpacing: 0.5,
+    color: "#142748",
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+  },
+  networkListContainer: {
+    gap: 6,
+  },
+  networkListHeader: {
+    fontSize: 9,
+    fontWeight: "700",
+    color: "#64748b",
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
   networkScroll: {
-    maxHeight: 150,
+    maxHeight: 180,
   },
   networkRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 8,
-    borderRadius: 8,
+    gap: 10,
+    padding: 10,
     borderBottomWidth: 1,
-    borderBottomColor: "#F1F5F9",
+    borderBottomColor: "#f1f5f9",
   },
   networkRowSelected: {
-    backgroundColor: "#EFF6FF",
+    backgroundColor: "#f8fafc",
   },
   networkSsid: {
     fontSize: 12,
     fontWeight: "700",
-    color: "#0F172A",
+    color: "#142748",
   },
   networkSsidActive: {
-    color: "#2563EB",
+    color: "#2d81ff",
   },
   networkBssid: {
     fontSize: 10,
-    color: "#64748B",
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    color: "#64748b",
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
-  inputGroup: {
-    marginTop: 8,
-    gap: 4,
-  },
-  inputLabel: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#475569",
-    letterSpacing: 0.5,
-  },
-  textInput: {
-    backgroundColor: "#F8FAFC",
-    borderWidth: 1,
-    borderColor: "#E2E8F0",
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    height: 42,
-    fontSize: 13,
-    color: "#0F172A",
-  },
-  monoInput: {
-    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
-    fontSize: 12,
-  },
-  inputHelpText: {
-    fontSize: 10,
-    color: "#94A3B8",
-    marginTop: 2,
-  },
-
-  // Map Frame
   mapFrame: {
-    borderRadius: 12,
-    overflow: "hidden",
     borderWidth: 1,
-    borderColor: "#E2E8F0",
-    marginTop: 4,
+    borderColor: "#142748",
+    overflow: "hidden",
   },
-
-  // Save Button
-  saveAnchorsButton: {
+  primaryActionBtn: {
+    backgroundColor: "#142748",
+    minHeight: 48,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#2563EB",
-    height: 52,
-    borderRadius: 14,
-    gap: 8,
-    ...Platform.select({
-      ios: {
-        shadowColor: "#2563EB",
-        shadowOffset: { width: 0, height: 3 },
-        shadowOpacity: 0.25,
-        shadowRadius: 5,
-      },
-      android: {
-        elevation: 3,
-      },
-    }),
+    gap: 10,
   },
-  saveAnchorsText: {
-    fontSize: 15,
+  primaryActionBtnText: {
+    color: "#f2f1ee",
+    fontSize: 11,
     fontWeight: "800",
-    color: "#FFFFFF",
+    letterSpacing: 0.8,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
-  webSyncHintCard: {
+  btnDisabled: {
+    opacity: 0.6,
+  },
+  bottomTabBar: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: "#ffffff",
+    borderTopWidth: 1,
+    borderTopColor: "#e5e7eb",
+    flexDirection: "row",
+    paddingBottom: Platform.OS === "ios" ? 18 : 10,
+    paddingTop: 10,
+    paddingHorizontal: 12,
+  },
+  bottomTabItem: {
+    flex: 1,
+    alignItems: "center",
+    gap: 4,
+  },
+  bottomTabItemActive: {
+    opacity: 1,
+  },
+  tabIconWrap: {
+    position: "relative",
+  },
+  tabBadgeDot: {
+    position: "absolute",
+    top: -4,
+    right: -10,
+    backgroundColor: "#142748",
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+  },
+  tabBadgeDotText: {
+    color: "#f2f1ee",
+    fontSize: 9,
+    fontWeight: "800",
+  },
+  anchorStatusIndicator: {
+    position: "absolute",
+    top: -2,
+    right: -4,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  tabCountPill: {
+    position: "absolute",
+    top: -4,
+    right: -10,
+    backgroundColor: "#2d81ff",
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+  },
+  tabCountPillText: {
+    color: "#ffffff",
+    fontSize: 9,
+    fontWeight: "800",
+  },
+  bottomTabLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#94a3b8",
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+    letterSpacing: 0.4,
+  },
+  bottomTabLabelActive: {
+    color: "#142748",
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(20, 39, 72, 0.65)",
+    justifyContent: "flex-end",
+  },
+  modalSheetCard: {
+    backgroundColor: "#ffffff",
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    padding: 20,
+    paddingBottom: Platform.OS === "ios" ? 36 : 24,
+    maxHeight: "85%",
+  },
+  modalDragHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "#cbd5e1",
+    alignSelf: "center",
+    marginBottom: 14,
+  },
+  modalHeaderRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    marginBottom: 16,
+  },
+  modalTitle: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: "#142748",
+  },
+  modalSubtitle: {
+    fontSize: 12,
+    color: "#64748b",
+  },
+  modalCloseButton: {
+    padding: 6,
+  },
+  modalBody: {
+    gap: 16,
+  },
+  detailCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "#f8fafc",
+    borderWidth: 1,
+    borderColor: "#e2e8f0",
+    padding: 12,
+  },
+  detailAvatar: {
+    width: 44,
+    height: 44,
+    backgroundColor: "#142748",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  detailAvatarText: {
+    color: "#f2f1ee",
+    fontSize: 16,
+    fontWeight: "800",
+  },
+  memberPhotoModal: {
+    width: 44,
+    height: 44,
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  detailName: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: "#142748",
+  },
+  detailDept: {
+    fontSize: 12,
+    color: "#64748b",
+  },
+  detailEmail: {
+    fontSize: 11,
+    color: "#94a3b8",
+  },
+  auditGrid: {
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+  },
+  auditRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#f1f5f9",
+  },
+  auditLabel: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#64748b",
+    letterSpacing: 0.6,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+  },
+  auditValue: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#142748",
+  },
+  monoText: {
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+  },
+  modalDismissBtn: {
+    backgroundColor: "#142748",
+    paddingVertical: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  modalDismissText: {
+    color: "#f2f1ee",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.8,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+  },
+  workerActionCol: {
+    gap: 8,
+  },
+  workerActionBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: "#ffffff",
+    borderWidth: 1,
+    borderColor: "#142748",
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  workerActionBtnWarning: {
+    borderColor: "#f59e0b",
+  },
+  workerActionBtnDestructive: {
+    borderColor: "#fca5a5",
+    backgroundColor: "#fef2f2",
+  },
+  workerActionBtnText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#142748",
+    letterSpacing: 0.6,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+  },
+  webNoticeCard: {
+    backgroundColor: "#fdfdfc",
+    borderWidth: 1,
+    borderColor: "#e5e7eb",
+    padding: 14,
+    gap: 8,
+  },
+  webNoticeHeader: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    backgroundColor: "#F1F5F9",
-    padding: 12,
-    borderRadius: 12,
-    marginTop: -4,
   },
-  webSyncHintText: {
+  webNoticeTitle: {
     fontSize: 11,
-    color: "#475569",
-    flex: 1,
-    lineHeight: 15,
+    fontWeight: "800",
+    color: "#142748",
+    letterSpacing: 0.6,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
-
-  buttonDisabled: {
-    opacity: 0.6,
+  webNoticeText: {
+    fontSize: 12,
+    color: "#64748b",
+    lineHeight: 18,
+  },
+  copyWebUrlBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 8,
+  },
+  copyWebUrlBtnText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#142748",
+    letterSpacing: 0.6,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+  },
+  adminSignOutBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderWidth: 1,
+    borderColor: "#fca5a5",
+    paddingVertical: 12,
+    backgroundColor: "#fef2f2",
+  },
+  adminSignOutBtnText: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#d92d20",
+    letterSpacing: 0.6,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
 });

@@ -8,6 +8,7 @@ import {
   setDoc,
   addDoc,
   updateDoc,
+  deleteDoc,
   getDoc,
   onSnapshot,
   limit,
@@ -615,6 +616,45 @@ export async function clearMemberFaceEnrollment(orgId: string, memberId: string)
     }
   } catch (error) {
     console.error('Error clearing member face enrollment:', error);
+    throw error;
+  }
+}
+
+export async function resetMemberDeviceBinding(orgId: string, memberId: string): Promise<void> {
+  try {
+    const memberDocRef = doc(db, 'churches', orgId, 'members', memberId);
+    await updateDoc(memberDocRef, {
+      boundDeviceId: '',
+    });
+  } catch (error) {
+    console.error('Error resetting member device binding:', error);
+    throw error;
+  }
+}
+
+export async function updateMemberStatus(
+  orgId: string,
+  memberId: string,
+  status: 'ACTIVE' | 'SUSPENDED'
+): Promise<void> {
+  try {
+    const memberDocRef = doc(db, 'churches', orgId, 'members', memberId);
+    await updateDoc(memberDocRef, {
+      status,
+      statusUpdatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Error updating member status:', error);
+    throw error;
+  }
+}
+
+export async function deleteOrganizationMember(orgId: string, memberId: string): Promise<void> {
+  try {
+    const memberDocRef = doc(db, 'churches', orgId, 'members', memberId);
+    await deleteDoc(memberDocRef);
+  } catch (error) {
+    console.error('Error deleting member:', error);
     throw error;
   }
 }
