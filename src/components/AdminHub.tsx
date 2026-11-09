@@ -30,6 +30,7 @@ import {
   doc,
   updateDoc,
   deleteDoc,
+  limit,
 } from "firebase/firestore";
 import { db } from "../config/firebase";
 import { useAuth } from "../context/AuthContext";
@@ -46,6 +47,7 @@ import {
   updateMemberStatus,
   deleteOrganizationMember,
   getCachedOrganization,
+  getCachedAnchors,
   getAdminOrganization,
 } from "../services/organizationService";
 import { reverseGeocodeCoords } from "../services/geocodingService";
@@ -105,24 +107,18 @@ export const AdminHub: React.FC = () => {
     });
   }, [scrollX, screenWidth, tabWidth]);
 
-  // Real-time synchronization: switch active tab highlight when dragged across halfway threshold
+  // Proactively resolve and hydrate organization workspace on mount
   useEffect(() => {
-    const listenerId = scrollX.addListener(({ value }) => {
-      const idx = Math.min(
-        Math.max(0, Math.round(value / (screenWidth || 1))),
-        TABS.length - 1
-      );
-      const newKey = TABS[idx].key;
-      if (newKey !== activeTabRef.current) {
-        activeTabRef.current = newKey;
-        setActiveTab(newKey);
-      }
-    });
-
-    return () => {
-      scrollX.removeListener(listenerId);
-    };
-  }, [scrollX, screenWidth]);
+    if (!organization?.id && user) {
+      getAdminOrganization(user.email, user.uid)
+        .then((org) => {
+          if (org && refreshOrganization) {
+            refreshOrganization().catch(() => {});
+          }
+        })
+        .catch(() => {});
+    }
+  }, [organization?.id, user, refreshOrganization]);
 
   const handleTabPress = (tabKey: "feed" | "anchors" | "workforce", index: number) => {
     setActiveTab(tabKey);
@@ -133,9 +129,9 @@ export const AdminHub: React.FC = () => {
   const handlePageChange = (e: any) => {
     const offsetX = e.nativeEvent.contentOffset.x;
     const newIndex = Math.round(offsetX / screenWidth);
-    if (newIndex === 0) setActiveTab("feed");
-    else if (newIndex === 1) setActiveTab("anchors");
-    else if (newIndex === 2) setActiveTab("workforce");
+    if (newIndex === 0 && activeTab !== "feed") setActiveTab("feed");
+    else if (newIndex === 1 && activeTab !== "anchors") setActiveTab("anchors");
+    else if (newIndex === 2 && activeTab !== "workforce") setActiveTab("workforce");
   };
 
   // ----------------------------------------------------------------------
@@ -454,56 +450,83 @@ export const AdminHub: React.FC = () => {
 
   const handleSaveAnchors = async () => {
     if (isSavingAnchors) return;
+    setIsSavingAnchors(true);
 
-    // 1. Resolve Organization ID with multiple fallbacks
-    let targetOrgId = organization?.id;
-    if (!targetOrgId && user) {
-      try {
-        const cached = await getCachedOrganization();
-        if (cached?.id) targetOrgId = cached.id;
-      } catch {}
+    try {
+      // 1. Resolve Organization ID with multiple comprehensive fallbacks
+      let targetOrgId = organization?.id;
+
       if (!targetOrgId) {
+        try {
+          const cached = await getCachedOrganization();
+          if (cached?.id) targetOrgId = cached.id;
+        } catch {}
+      }
+
+      if (!targetOrgId) {
+        try {
+          const cachedAnchors = await getCachedAnchors();
+          if (cachedAnchors?.churchId) targetOrgId = cachedAnchors.churchId;
+        } catch {}
+      }
+
+      if (!targetOrgId && user) {
         try {
           const adminOrg = await getAdminOrganization(user.email, user.uid);
           if (adminOrg?.id) {
             targetOrgId = adminOrg.id;
-            await refreshOrganization().catch(() => {});
           }
         } catch {}
       }
-    }
 
-    if (!targetOrgId) {
-      toast.error("Could not find your organization workspace. Please pull down to refresh.");
-      return;
-    }
+      if (!targetOrgId) {
+        try {
+          const allSnap = await getDocs(query(collection(db, "churches"), limit(10)));
+          if (!allSnap.empty) {
+            const cleanEmail = (user?.email || "").trim().toLowerCase();
+            const match = allSnap.docs.find((d) => {
+              const data = d.data();
+              return (
+                (cleanEmail && data.adminEmail && data.adminEmail.trim().toLowerCase() === cleanEmail) ||
+                (user?.uid && Array.isArray(data.adminUids) && data.adminUids.includes(user.uid)) ||
+                (user?.uid && (d.id === user.uid || data.ownerId === user.uid || data.userId === user.uid))
+              );
+            });
+            const chosen = match || allSnap.docs[0];
+            if (chosen) targetOrgId = chosen.id;
+          }
+        } catch {}
+      }
 
-    // 2. Validate Wi-Fi BSSID for Hybrid mode
-    if (calMode === "HYBRID" && !targetBssid.trim()) {
-      toast.warn("Hybrid mode requires a router BSSID. Scan or enter a MAC address, or switch to Satellite GPS Geofence.");
-      return;
-    }
-
-    // 3. Check or Auto-Acquire GPS coordinates if not set
-    let activeLat = latitude;
-    let activeLng = longitude;
-    if ((!activeLat || activeLat === 0) && (!activeLng || activeLng === 0)) {
-      toast.info("Acquiring current GPS location for premises...");
-      try {
-        const coords = await acquireDeviceCoordinates();
-        activeLat = coords.latitude;
-        activeLng = coords.longitude;
-        setLatitude(coords.latitude);
-        setLongitude(coords.longitude);
-        setGpsAccuracy(coords.accuracy);
-      } catch (err: any) {
-        toast.warn("Please tap 'PINPOINT CURRENT GPS' to set premises location.");
+      if (!targetOrgId) {
+        toast.error("Could not find your organization workspace. Please check your internet connection.");
         return;
       }
-    }
 
-    setIsSavingAnchors(true);
-    try {
+      // 2. Validate Wi-Fi BSSID for Hybrid mode
+      if (calMode === "HYBRID" && !targetBssid.trim()) {
+        toast.warn("Hybrid mode requires a router BSSID. Scan or enter a MAC address, or switch to Satellite GPS Geofence.");
+        return;
+      }
+
+      // 3. Check or Auto-Acquire GPS coordinates if not set
+      let activeLat = latitude;
+      let activeLng = longitude;
+      if ((!activeLat || activeLat === 0) && (!activeLng || activeLng === 0)) {
+        toast.info("Acquiring current GPS location for premises...");
+        try {
+          const coords = await acquireDeviceCoordinates();
+          activeLat = coords.latitude;
+          activeLng = coords.longitude;
+          setLatitude(coords.latitude);
+          setLongitude(coords.longitude);
+          setGpsAccuracy(coords.accuracy);
+        } catch (err: any) {
+          toast.warn("Please tap 'PINPOINT CURRENT GPS' to set premises location.");
+          return;
+        }
+      }
+
       await updateAnchorsService(targetOrgId, {
         ssidHint: ssidHint.trim(),
         targetBssid: targetBssid.trim().toLowerCase(),
@@ -869,7 +892,7 @@ export const AdminHub: React.FC = () => {
           showsHorizontalScrollIndicator={false}
           onScroll={Animated.event(
             [{ nativeEvent: { contentOffset: { x: scrollX } } }],
-            { useNativeDriver: false }
+            { useNativeDriver: true }
           )}
           scrollEventThrottle={16}
           onMomentumScrollEnd={handlePageChange}

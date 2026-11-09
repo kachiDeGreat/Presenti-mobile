@@ -926,13 +926,49 @@ export async function getAdminOrganization(
   // 0. Local cache check
   try {
     const cachedOrg = await getCachedOrganization();
-    if (
-      cachedOrg &&
-      ((cleanEmail && cachedOrg.adminEmail && cachedOrg.adminEmail.toLowerCase() === cleanEmail) ||
+    if (cachedOrg && cachedOrg.id) {
+      if (
+        (cleanEmail && cachedOrg.adminEmail && cachedOrg.adminEmail.toLowerCase() === cleanEmail) ||
         (uid && Array.isArray(cachedOrg.adminUids) && cachedOrg.adminUids.includes(uid)) ||
-        (uid && cachedOrg.id === uid))
-    ) {
-      return cachedOrg;
+        (uid && cachedOrg.id === uid) ||
+        !cachedOrg.adminEmail // Stored organization on this admin device
+      ) {
+        return cachedOrg;
+      }
+    }
+  } catch {}
+
+  // 0.1 Check cached anchors for churchId
+  try {
+    const cachedAnchors = await getCachedAnchors();
+    if (cachedAnchors && cachedAnchors.churchId) {
+      const orgSnap = await getDoc(doc(db, 'churches', cachedAnchors.churchId)).catch(() => null);
+      if (orgSnap && orgSnap.exists()) {
+        const data = orgSnap.data();
+        const org: Organization = {
+          id: orgSnap.id,
+          churchName: data.churchName || cachedAnchors.churchName || 'Organization',
+          branchName: data.branchName || cachedAnchors.branchName || 'Main Campus',
+          churchCode: data.churchCode || cachedAnchors.churchCode || '',
+          adminEmail: data.adminEmail || cleanEmail,
+          departments: Array.isArray(data.departments) && data.departments.length > 0
+            ? data.departments
+            : ['General Workforce'],
+          beaconConfig: {
+            ssidHint: data.beaconConfig?.ssidHint || cachedAnchors.ssidHint || '',
+            targetBssid: data.beaconConfig?.targetBssid || cachedAnchors.targetBssid || '',
+            verificationMode: data.beaconConfig?.verificationMode || 'HYBRID',
+          },
+          geoFallback: {
+            latitude: Number(data.geoFallback?.latitude ?? cachedAnchors.latitude ?? 0),
+            longitude: Number(data.geoFallback?.longitude ?? cachedAnchors.longitude ?? 0),
+            radiusMeters: Number(data.geoFallback?.radiusMeters ?? cachedAnchors.radiusMeters ?? 10),
+          },
+          policySettings: data.policySettings,
+        };
+        cacheOrganizationAnchors(org).catch(() => {});
+        return org;
+      }
     }
   } catch {}
 
@@ -1064,6 +1100,52 @@ export async function getAdminOrganization(
         cacheOrganizationAnchors(org).catch(() => {});
         return org;
       }
+    }
+    // 5. Final Comprehensive Scan Fallback: Query churches collection with in-memory matching
+    try {
+      const allChurchesSnap = await getDocs(query(collection(db, 'churches'), limit(25)));
+      if (!allChurchesSnap.empty) {
+        const foundDoc =
+          allChurchesSnap.docs.find((d) => {
+            const data = d.data();
+            const docEmail = (data.adminEmail || '').trim().toLowerCase();
+            const docUids = Array.isArray(data.adminUids) ? data.adminUids : [];
+            return (
+              (cleanEmail && docEmail && docEmail === cleanEmail) ||
+              (uid && docUids.includes(uid)) ||
+              (uid && (d.id === uid || data.ownerId === uid || data.userId === uid))
+            );
+          }) || (allChurchesSnap.docs.length === 1 ? allChurchesSnap.docs[0] : null);
+
+        if (foundDoc) {
+          const data = foundDoc.data();
+          const org: Organization = {
+            id: foundDoc.id,
+            churchName: data.churchName || 'Organization',
+            branchName: data.branchName || 'Main Campus',
+            churchCode: data.churchCode || '',
+            adminEmail: data.adminEmail || cleanEmail,
+            departments: Array.isArray(data.departments) && data.departments.length > 0
+              ? data.departments
+              : ['General Workforce'],
+            beaconConfig: {
+              ssidHint: data.beaconConfig?.ssidHint || '',
+              targetBssid: data.beaconConfig?.targetBssid || '',
+              verificationMode: data.beaconConfig?.verificationMode || 'HYBRID',
+            },
+            geoFallback: {
+              latitude: Number(data.geoFallback?.latitude ?? 0),
+              longitude: Number(data.geoFallback?.longitude ?? 0),
+              radiusMeters: Number(data.geoFallback?.radiusMeters ?? 10),
+            },
+            policySettings: data.policySettings,
+          };
+          cacheOrganizationAnchors(org).catch(() => {});
+          return org;
+        }
+      }
+    } catch (fallbackErr) {
+      console.warn('getAdminOrganization comprehensive scan error:', fallbackErr);
     }
   } catch (err) {
     console.warn('getAdminOrganization query skipped or error:', err);
