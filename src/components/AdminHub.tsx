@@ -44,6 +44,8 @@ import {
   resetMemberDeviceBinding,
   updateMemberStatus,
   deleteOrganizationMember,
+  getCachedOrganization,
+  getAdminOrganization,
 } from "../services/organizationService";
 import { reverseGeocodeCoords } from "../services/geocodingService";
 import { acquireDeviceCoordinates } from "../services/locationService";
@@ -417,33 +419,74 @@ export const AdminHub: React.FC = () => {
   };
 
   const handleSaveAnchors = async () => {
-    if (!organization?.id || isSavingAnchors) return;
+    if (isSavingAnchors) return;
 
-    if (calMode === "HYBRID" && !targetBssid.trim()) {
-      toast.warn("Please scan or enter an office Wi-Fi router BSSID MAC address.");
+    // 1. Resolve Organization ID with multiple fallbacks
+    let targetOrgId = organization?.id;
+    if (!targetOrgId && user) {
+      try {
+        const cached = await getCachedOrganization();
+        if (cached?.id) targetOrgId = cached.id;
+      } catch {}
+      if (!targetOrgId) {
+        try {
+          const adminOrg = await getAdminOrganization(user.email, user.uid);
+          if (adminOrg?.id) {
+            targetOrgId = adminOrg.id;
+            await refreshOrganization().catch(() => {});
+          }
+        } catch {}
+      }
+    }
+
+    if (!targetOrgId) {
+      toast.error("Could not find your organization workspace. Please pull down to refresh.");
       return;
     }
-    if (latitude === 0 && longitude === 0) {
-      toast.warn("Please pinpoint on-site GPS coordinates first.");
+
+    // 2. Validate Wi-Fi BSSID for Hybrid mode
+    if (calMode === "HYBRID" && !targetBssid.trim()) {
+      toast.warn("Hybrid mode requires a router BSSID. Scan or enter a MAC address, or switch to Satellite GPS Geofence.");
       return;
+    }
+
+    // 3. Check or Auto-Acquire GPS coordinates if not set
+    let activeLat = latitude;
+    let activeLng = longitude;
+    if ((!activeLat || activeLat === 0) && (!activeLng || activeLng === 0)) {
+      toast.info("Acquiring current GPS location for premises...");
+      try {
+        const coords = await acquireDeviceCoordinates();
+        activeLat = coords.latitude;
+        activeLng = coords.longitude;
+        setLatitude(coords.latitude);
+        setLongitude(coords.longitude);
+        setGpsAccuracy(coords.accuracy);
+      } catch (err: any) {
+        toast.warn("Please tap 'PINPOINT CURRENT GPS' to set premises location.");
+        return;
+      }
     }
 
     setIsSavingAnchors(true);
     try {
-      await updateAnchorsService(organization.id, {
+      await updateAnchorsService(targetOrgId, {
         ssidHint: ssidHint.trim(),
         targetBssid: targetBssid.trim().toLowerCase(),
-        latitude,
-        longitude,
+        latitude: activeLat,
+        longitude: activeLng,
         radiusMeters,
         verificationMode: calMode,
       });
-      await refreshOrganization();
+
+      // Synchronize updated anchors with local state & AuthContext
+      await refreshOrganization().catch(() => {});
+
       Vibration.vibrate([0, 80, 40, 80]);
       toast.success("Presence Anchors calibrated & synced to cloud!");
     } catch (err: any) {
       console.error("Save anchors error:", err);
-      toast.error("Failed to commit anchors to database.");
+      toast.error("Failed to commit anchors: " + (err?.message || "Check network connection."));
     } finally {
       setIsSavingAnchors(false);
     }
@@ -774,69 +817,6 @@ export const AdminHub: React.FC = () => {
       </View>
 
       {/* ---------------------------------------------------------------- */}
-      {/* WHATSAPP-STYLE TOP TAB NAVIGATION WITH ACTIVE SECTION HIGHLIGHT   */}
-      {/* ---------------------------------------------------------------- */}
-      <View style={styles.topTabBar}>
-        {TABS.map((tab, idx) => {
-          const isActive = activeTab === tab.key;
-          return (
-            <TouchableOpacity
-              key={tab.key}
-              style={[styles.topTabItem, isActive && styles.topTabItemActive]}
-              onPress={() => handleTabPress(tab.key, idx)}
-              activeOpacity={0.75}
-            >
-              <View style={styles.topTabContentRow}>
-                <Ionicons
-                  name={isActive ? tab.activeIcon : tab.icon}
-                  size={15}
-                  color={isActive ? "#142748" : "#64748b"}
-                  style={{ marginRight: 5 }}
-                />
-                <Text
-                  style={[
-                    styles.topTabLabel,
-                    isActive && styles.topTabLabelActive,
-                  ]}
-                >
-                  {tab.label}
-                </Text>
-                {tab.key === "feed" && todayRecords.length > 0 && (
-                  <View style={[styles.tabCounterBadge, isActive && styles.tabCounterBadgeActive]}>
-                    <Text style={[styles.tabCounterText, isActive && styles.tabCounterTextActive]}>
-                      {todayRecords.length}
-                    </Text>
-                  </View>
-                )}
-                {tab.key === "anchors" && (
-                  <View
-                    style={[
-                      styles.tabStatusDot,
-                      { backgroundColor: isCalibrated ? "#10b981" : "#f59e0b" },
-                    ]}
-                  />
-                )}
-                {tab.key === "workforce" && totalMembersCount > 0 && (
-                  <View style={[styles.tabCounterBadge, isActive && styles.tabCounterBadgeActive]}>
-                    <Text style={[styles.tabCounterText, isActive && styles.tabCounterTextActive]}>
-                      {totalMembersCount}
-                    </Text>
-                  </View>
-                )}
-              </View>
-              {/* WhatsApp Active Section Underline Indicator */}
-              <View
-                style={[
-                  styles.activeSectionIndicator,
-                  isActive && styles.activeSectionIndicatorVisible,
-                ]}
-              />
-            </TouchableOpacity>
-          );
-        })}
-      </View>
-
-      {/* ---------------------------------------------------------------- */}
       {/* HORIZONTAL SWIPEABLE PAGER (WHATSAPP-STYLE TAB SWIPING)          */}
       {/* ---------------------------------------------------------------- */}
       <View
@@ -854,6 +834,7 @@ export const AdminHub: React.FC = () => {
           pagingEnabled
           showsHorizontalScrollIndicator={false}
           onMomentumScrollEnd={handlePageChange}
+          keyboardShouldPersistTaps="handled"
           style={{ flex: 1 }}
           contentContainerStyle={{ flexGrow: 1 }}
         >
@@ -865,6 +846,7 @@ export const AdminHub: React.FC = () => {
               style={styles.scrollArea}
               contentContainerStyle={styles.scrollContent}
               showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
               nestedScrollEnabled
               refreshControl={
                 <RefreshControl
@@ -1134,6 +1116,7 @@ export const AdminHub: React.FC = () => {
               style={styles.scrollArea}
               contentContainerStyle={styles.scrollContent}
               showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
               nestedScrollEnabled
               refreshControl={
                 <RefreshControl
@@ -1480,6 +1463,7 @@ export const AdminHub: React.FC = () => {
               style={styles.scrollArea}
               contentContainerStyle={styles.scrollContent}
               showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
               nestedScrollEnabled
               refreshControl={
                 <RefreshControl
@@ -1718,6 +1702,71 @@ export const AdminHub: React.FC = () => {
             </ScrollView>
           </View>
         </ScrollView>
+      </View>
+
+      {/* ---------------------------------------------------------------- */}
+      {/* BOTTOM TAB NAVIGATION WITH ACTIVE SECTION HIGHLIGHT              */}
+      {/* ---------------------------------------------------------------- */}
+      <View style={styles.bottomTabBar}>
+        {TABS.map((tab, idx) => {
+          const isActive = activeTab === tab.key;
+          return (
+            <TouchableOpacity
+              key={tab.key}
+              style={[styles.bottomTabItem, isActive && styles.bottomTabItemActive]}
+              onPress={() => handleTabPress(tab.key, idx)}
+              activeOpacity={0.75}
+            >
+              {/* Active Section Highlight Line */}
+              <View
+                style={[
+                  styles.bottomActiveIndicator,
+                  isActive && styles.bottomActiveIndicatorVisible,
+                ]}
+              />
+
+              <View style={styles.bottomTabIconContainer}>
+                <Ionicons
+                  name={isActive ? tab.activeIcon : tab.icon}
+                  size={20}
+                  color={isActive ? "#142748" : "#94a3b8"}
+                />
+                {tab.key === "feed" && todayRecords.length > 0 && (
+                  <View style={[styles.bottomBadge, isActive && styles.bottomBadgeActive]}>
+                    <Text style={[styles.bottomBadgeText, isActive && styles.bottomBadgeTextActive]}>
+                      {todayRecords.length > 99 ? "99+" : todayRecords.length}
+                    </Text>
+                  </View>
+                )}
+                {tab.key === "anchors" && (
+                  <View
+                    style={[
+                      styles.bottomStatusDot,
+                      { backgroundColor: isCalibrated ? "#10b981" : "#f59e0b" },
+                    ]}
+                  />
+                )}
+                {tab.key === "workforce" && totalMembersCount > 0 && (
+                  <View style={[styles.bottomBadge, isActive && styles.bottomBadgeActive]}>
+                    <Text style={[styles.bottomBadgeText, isActive && styles.bottomBadgeTextActive]}>
+                      {totalMembersCount > 99 ? "99+" : totalMembersCount}
+                    </Text>
+                  </View>
+                )}
+              </View>
+
+              <Text
+                style={[
+                  styles.bottomTabLabel,
+                  isActive && styles.bottomTabLabelActive,
+                ]}
+                numberOfLines={1}
+              >
+                {tab.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
       {/* ---------------------------------------------------------------- */}
@@ -2182,83 +2231,101 @@ const styles = StyleSheet.create({
   pagerContainer: {
     flex: 1,
   },
-  topTabBar: {
+  bottomTabBar: {
     flexDirection: "row",
     backgroundColor: "#ffffff",
-    borderBottomWidth: 1,
-    borderBottomColor: "#e5e7eb",
+    borderTopWidth: 1,
+    borderTopColor: "#e5e7eb",
+    paddingBottom: Platform.OS === "ios" ? 22 : 10,
+    paddingTop: 0,
+    elevation: 10,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.06,
+    shadowRadius: 5,
   },
-  topTabItem: {
+  bottomTabItem: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    paddingTop: 12,
+    paddingTop: 8,
+    paddingBottom: 4,
     position: "relative",
   },
-  topTabItemActive: {
-    backgroundColor: "#f8fafc",
+  bottomTabItemActive: {
+    backgroundColor: "#fafbfd",
   },
-  topTabContentRow: {
-    flexDirection: "row",
+  bottomActiveIndicator: {
+    position: "absolute",
+    top: 0,
+    left: "15%",
+    right: "15%",
+    height: 3,
+    backgroundColor: "transparent",
+    borderBottomLeftRadius: 3,
+    borderBottomRightRadius: 3,
+  },
+  bottomActiveIndicatorVisible: {
+    backgroundColor: "#2d81ff",
+  },
+  bottomTabIconContainer: {
+    position: "relative",
     alignItems: "center",
     justifyContent: "center",
-    paddingBottom: 10,
-    gap: 4,
+    width: 28,
+    height: 24,
   },
-  topTabLabel: {
-    fontSize: 12,
+  bottomTabLabel: {
+    fontSize: 11,
     fontWeight: "700",
     color: "#64748b",
     letterSpacing: -0.2,
+    marginTop: 3,
   },
-  topTabLabelActive: {
+  bottomTabLabelActive: {
     color: "#142748",
     fontWeight: "800",
   },
-  activeSectionIndicator: {
+  bottomBadge: {
     position: "absolute",
-    bottom: 0,
-    left: 10,
-    right: 10,
-    height: 3,
-    backgroundColor: "transparent",
-    borderTopLeftRadius: 3,
-    borderTopRightRadius: 3,
-  },
-  activeSectionIndicatorVisible: {
-    backgroundColor: "#2d81ff",
-  },
-  tabCounterBadge: {
+    top: -4,
+    right: -10,
     backgroundColor: "#e2e8f0",
-    paddingHorizontal: 5,
-    paddingVertical: 1,
+    minWidth: 16,
+    height: 16,
     borderRadius: 8,
-    marginLeft: 3,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 4,
   },
-  tabCounterBadgeActive: {
+  bottomBadgeActive: {
     backgroundColor: "#2d81ff",
   },
-  tabCounterText: {
+  bottomBadgeText: {
     fontSize: 9,
     fontWeight: "800",
     color: "#475569",
     fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
-  tabCounterTextActive: {
+  bottomBadgeTextActive: {
     color: "#ffffff",
   },
-  tabStatusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    marginLeft: 4,
+  bottomStatusDot: {
+    position: "absolute",
+    top: -1,
+    right: -4,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    borderColor: "#ffffff",
   },
   scrollArea: {
     flex: 1,
   },
   scrollContent: {
     padding: 16,
-    paddingBottom: 28,
+    paddingBottom: 110,
   },
   timeScopeToggle: {
     flexDirection: "row",
@@ -2857,74 +2924,6 @@ const styles = StyleSheet.create({
   },
   btnDisabled: {
     opacity: 0.6,
-  },
-  bottomTabBar: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: "#ffffff",
-    borderTopWidth: 1,
-    borderTopColor: "#e5e7eb",
-    flexDirection: "row",
-    paddingBottom: Platform.OS === "ios" ? 18 : 10,
-    paddingTop: 10,
-    paddingHorizontal: 12,
-  },
-  bottomTabItem: {
-    flex: 1,
-    alignItems: "center",
-    gap: 4,
-  },
-  bottomTabItemActive: {
-    opacity: 1,
-  },
-  tabIconWrap: {
-    position: "relative",
-  },
-  tabBadgeDot: {
-    position: "absolute",
-    top: -4,
-    right: -10,
-    backgroundColor: "#142748",
-    paddingHorizontal: 4,
-    paddingVertical: 1,
-  },
-  tabBadgeDotText: {
-    color: "#f2f1ee",
-    fontSize: 9,
-    fontWeight: "800",
-  },
-  anchorStatusIndicator: {
-    position: "absolute",
-    top: -2,
-    right: -4,
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  tabCountPill: {
-    position: "absolute",
-    top: -4,
-    right: -10,
-    backgroundColor: "#2d81ff",
-    paddingHorizontal: 4,
-    paddingVertical: 1,
-  },
-  tabCountPillText: {
-    color: "#ffffff",
-    fontSize: 9,
-    fontWeight: "800",
-  },
-  bottomTabLabel: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#94a3b8",
-    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
-    letterSpacing: 0.4,
-  },
-  bottomTabLabelActive: {
-    color: "#142748",
   },
   modalBackdrop: {
     flex: 1,
