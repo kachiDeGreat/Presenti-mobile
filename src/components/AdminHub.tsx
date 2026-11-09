@@ -15,6 +15,7 @@ import {
   Modal,
   Pressable,
   Dimensions,
+  Animated,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -87,13 +88,46 @@ export const AdminHub: React.FC = () => {
 
   // Navigation: 3 Core Tabs on Mobile with WhatsApp-style Swiping
   const [activeTab, setActiveTab] = useState<"feed" | "anchors" | "workforce">("feed");
+  const activeTabRef = useRef<"feed" | "anchors" | "workforce">("feed");
+  activeTabRef.current = activeTab;
+
   const [refreshing, setRefreshing] = useState(false);
   const [screenWidth, setScreenWidth] = useState(Dimensions.get("window").width);
   const horizontalPagerRef = useRef<ScrollView>(null);
+  const scrollX = useRef(new Animated.Value(0)).current;
+
+  const tabWidth = screenWidth / 3;
+  const indicatorTranslateX = useMemo(() => {
+    return scrollX.interpolate({
+      inputRange: [0, screenWidth, screenWidth * 2],
+      outputRange: [0, tabWidth, tabWidth * 2],
+      extrapolate: "clamp",
+    });
+  }, [scrollX, screenWidth, tabWidth]);
+
+  // Real-time synchronization: switch active tab highlight when dragged across halfway threshold
+  useEffect(() => {
+    const listenerId = scrollX.addListener(({ value }) => {
+      const idx = Math.min(
+        Math.max(0, Math.round(value / (screenWidth || 1))),
+        TABS.length - 1
+      );
+      const newKey = TABS[idx].key;
+      if (newKey !== activeTabRef.current) {
+        activeTabRef.current = newKey;
+        setActiveTab(newKey);
+      }
+    });
+
+    return () => {
+      scrollX.removeListener(listenerId);
+    };
+  }, [scrollX, screenWidth]);
 
   const handleTabPress = (tabKey: "feed" | "anchors" | "workforce", index: number) => {
     setActiveTab(tabKey);
-    horizontalPagerRef.current?.scrollTo({ x: index * screenWidth, animated: true });
+    activeTabRef.current = tabKey;
+    (horizontalPagerRef.current as any)?.scrollTo({ x: index * screenWidth, animated: true });
   };
 
   const handlePageChange = (e: any) => {
@@ -828,11 +862,16 @@ export const AdminHub: React.FC = () => {
           }
         }}
       >
-        <ScrollView
-          ref={horizontalPagerRef}
+        <Animated.ScrollView
+          ref={horizontalPagerRef as any}
           horizontal
           pagingEnabled
           showsHorizontalScrollIndicator={false}
+          onScroll={Animated.event(
+            [{ nativeEvent: { contentOffset: { x: scrollX } } }],
+            { useNativeDriver: false }
+          )}
+          scrollEventThrottle={16}
           onMomentumScrollEnd={handlePageChange}
           keyboardShouldPersistTaps="handled"
           style={{ flex: 1 }}
@@ -1701,13 +1740,26 @@ export const AdminHub: React.FC = () => {
               </View>
             </ScrollView>
           </View>
-        </ScrollView>
+        </Animated.ScrollView>
       </View>
 
       {/* ---------------------------------------------------------------- */}
-      {/* BOTTOM TAB NAVIGATION WITH ACTIVE SECTION HIGHLIGHT              */}
+      {/* BOTTOM TAB NAVIGATION WITH CONTINUOUS SLIDING ACTIVE INDICATOR   */}
       {/* ---------------------------------------------------------------- */}
       <View style={styles.bottomTabBar}>
+        {/* Continuous WhatsApp-style Sliding Indicator */}
+        <Animated.View
+          style={[
+            styles.slidingIndicatorTrack,
+            {
+              width: tabWidth,
+              transform: [{ translateX: indicatorTranslateX }],
+            },
+          ]}
+        >
+          <View style={styles.slidingIndicatorBar} />
+        </Animated.View>
+
         {TABS.map((tab, idx) => {
           const isActive = activeTab === tab.key;
           return (
@@ -1717,14 +1769,6 @@ export const AdminHub: React.FC = () => {
               onPress={() => handleTabPress(tab.key, idx)}
               activeOpacity={0.75}
             >
-              {/* Active Section Highlight Line */}
-              <View
-                style={[
-                  styles.bottomActiveIndicator,
-                  isActive && styles.bottomActiveIndicatorVisible,
-                ]}
-              />
-
               <View style={styles.bottomTabIconContainer}>
                 <Ionicons
                   name={isActive ? tab.activeIcon : tab.icon}
@@ -2243,6 +2287,23 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: -3 },
     shadowOpacity: 0.06,
     shadowRadius: 5,
+    position: "relative",
+  },
+  slidingIndicatorTrack: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    height: 3,
+    zIndex: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  slidingIndicatorBar: {
+    width: "60%",
+    height: 3,
+    backgroundColor: "#2d81ff",
+    borderBottomLeftRadius: 3,
+    borderBottomRightRadius: 3,
   },
   bottomTabItem: {
     flex: 1,
@@ -2250,23 +2311,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingTop: 8,
     paddingBottom: 4,
-    position: "relative",
   },
   bottomTabItemActive: {
     backgroundColor: "#fafbfd",
-  },
-  bottomActiveIndicator: {
-    position: "absolute",
-    top: 0,
-    left: "15%",
-    right: "15%",
-    height: 3,
-    backgroundColor: "transparent",
-    borderBottomLeftRadius: 3,
-    borderBottomRightRadius: 3,
-  },
-  bottomActiveIndicatorVisible: {
-    backgroundColor: "#2d81ff",
   },
   bottomTabIconContainer: {
     position: "relative",
