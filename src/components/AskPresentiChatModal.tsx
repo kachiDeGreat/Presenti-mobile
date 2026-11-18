@@ -33,6 +33,22 @@ const QUICK_CHIPS = [
   "Who hasn't checked in?",
 ];
 
+/** Renders **bold** markdown segments and clean bullets inside React Native Text */
+function renderFormattedAIText(raw: string) {
+  const normalized = raw.replace(/^(\s*)[*-]\s+/gm, "$1• ");
+  const parts = normalized.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+      return (
+        <Text key={i} style={{ fontWeight: "800", color: "#142748" }}>
+          {part.slice(2, -2)}
+        </Text>
+      );
+    }
+    return <Text key={i}>{part}</Text>;
+  });
+}
+
 export const AskPresentiChatModal: React.FC<AskPresentiChatModalProps> = ({
   visible,
   onClose,
@@ -210,7 +226,7 @@ export const AskPresentiChatModal: React.FC<AskPresentiChatModalProps> = ({
                   </View>
                 ) : (
                   <View key={idx} style={styles.aiBubble}>
-                    <Text style={styles.aiBubbleText}>{msg.content}</Text>
+                    <Text style={styles.aiBubbleText}>{renderFormattedAIText(msg.content)}</Text>
                     <View style={styles.aiBubbleFooter}>
                       <Text style={styles.aiTimeText}>GEMINI • {msg.timestamp}</Text>
                       <TouchableOpacity
