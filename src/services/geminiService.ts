@@ -36,8 +36,6 @@ export interface MobileAIContext {
 const GEMINI_MODELS = [
   "gemini-flash-lite-latest",
   "gemini-3.8-flash",
-  "gemini-pro-latest",
-  "gemma-4-31b-it",
 ];
 
 function getGeminiKey(): string {
@@ -188,7 +186,7 @@ async function callGeminiMobile(
         };
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const timeoutId = setTimeout(() => controller.abort(), 4500);
 
     try {
       const res = await fetch(url, {
@@ -227,6 +225,18 @@ export async function askPresentiMobileAI(
   context: MobileAIContext,
   history: MobileChatMessage[] = []
 ): Promise<string> {
+  const cleanQ = question.trim().toLowerCase();
+
+  // Instant 0ms fast-path for simple greetings, identity questions, or empty-day quick checks
+  if (
+    /^(hi|hello|hey|good morning|good afternoon|good evening)[!.\s]*$/i.test(cleanQ) ||
+    /^(who|what)\s+are\s+you[?.\s]*$/i.test(cleanQ) ||
+    (context.totalCheckedIn === 0 &&
+      /\b(late|department|turnout|hasn't|not checked|absent|missing)\b/i.test(cleanQ))
+  ) {
+    return buildLocalFallbackReply(question, context);
+  }
+
   const systemInstruction = `You are Presenti AI, an intelligent, friendly, all-round assistant for "${context.organizationName}".
 - Do NOT introduce yourself (do not say "I am Presenti AI for...") unless the user specifically asks who or what you are. Just answer their question or greeting directly.
 - You can answer ANY question naturally: greetings, general advice, HR/leadership tips, how Presenti works (Wi-Fi BSSID anchors, GPS geofencing, biometrics, executive reports), or live attendance analytics.
