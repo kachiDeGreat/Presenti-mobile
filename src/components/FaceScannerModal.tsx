@@ -131,7 +131,7 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
     try {
       const photo = await cameraRef.current.takePictureAsync({
         base64: true,
-        quality: 0.45,
+        quality: 0.28,
         shutterSound: false,
       });
 

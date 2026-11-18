@@ -51,9 +51,9 @@ export async function sanitizeOrUploadFacePhoto(
       }
     }
 
-    // 3. Fallback: only keep inline base64 if it is lightweight (< 70,000 chars, ~50KB)
+    // 3. Fallback: keep inline base64 up to 600,000 chars (~450KB)
     // Firestore strictly enforces a 1,048,487 byte per-document limit.
-    if (trimmed.length < 70000) {
+    if (trimmed.length < 600000) {
       return trimmed;
     }
 
@@ -61,7 +61,7 @@ export async function sanitizeOrUploadFacePhoto(
     return undefined;
   }
 
-  return trimmed.length < 70000 ? trimmed : undefined;
+  return trimmed.length < 600000 ? trimmed : undefined;
 }
 
 export async function fetchOrganizationByCode(rawCode: string): Promise<Organization | null> {

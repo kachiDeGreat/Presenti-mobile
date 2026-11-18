@@ -23,6 +23,7 @@ import {
   AppPermissionsStatus,
 } from "../services/permissionService";
 import { checkIfUserIsAdmin } from "../services/organizationService";
+import { FaceScannerModal } from "../components/FaceScannerModal";
 
 export function formatOrgCode(raw: string, prev: string = ""): string {
   // If user deleted (backspace) and hit a hyphen
@@ -74,6 +75,8 @@ export default function OnboardingScreen() {
   const [fullName, setFullName] = useState(user?.displayName || "");
   const [phoneNumber, setPhoneNumber] = useState("");
   const [selectedDept, setSelectedDept] = useState("");
+  const [capturedFaceUri, setCapturedFaceUri] = useState<string | null>(null);
+  const [showFaceEnrollModal, setShowFaceEnrollModal] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
   const [permissions, setPermissions] = useState<AppPermissionsStatus | null>(null);
   const codeInputRef = React.useRef<TextInput>(null);
@@ -194,6 +197,12 @@ export default function OnboardingScreen() {
       return;
     }
 
+    if (!capturedFaceUri) {
+      toast.warn("Please scan your face to complete your biometric profile.");
+      setShowFaceEnrollModal(true);
+      return;
+    }
+
     // Ensure location permission has been requested before completing setup
     if (!permissions?.locationGranted) {
       const updated = await requestAllAppPermissions(true);
@@ -205,7 +214,9 @@ export default function OnboardingScreen() {
       await completeRegistration(
         fullName,
         phoneNumber,
-        selectedDept
+        selectedDept,
+        [1],
+        capturedFaceUri
       );
       toast.success(
         "Welcome to " + (verifiedOrg?.churchName || "the organization") + "!",
@@ -400,7 +411,62 @@ export default function OnboardingScreen() {
                 </View>
               </View>
 
+              {/* Mandatory AI Biometric Face Registration */}
+              <View style={styles.fieldGroup}>
+                <View style={styles.labelRow}>
+                  <Text style={styles.label}>Face Biometrics *</Text>
+                  <View style={styles.requiredBadge}>
+                    <Text style={styles.requiredBadgeText}>REQUIRED</Text>
+                  </View>
+                </View>
 
+                {!capturedFaceUri ? (
+                  <View style={styles.faceEnrollCard}>
+                    <View style={styles.faceEnrollHeader}>
+                      <View style={styles.faceIconBox}>
+                        <Ionicons name="scan-circle" size={26} color="#2d81ff" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.faceEnrollTitle}>Register Face Profile</Text>
+                        <Text style={styles.faceEnrollSub}>
+                          Take a selfie to register your official biometric profile. Presenti AI will match your face against this whenever you clock in.
+                        </Text>
+                      </View>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.scanFaceBtn}
+                      onPress={() => setShowFaceEnrollModal(true)}
+                      activeOpacity={0.85}
+                    >
+                      <Ionicons name="camera" size={16} color="#ffffff" />
+                      <Text style={styles.scanFaceBtnText}>SCAN & ENROLL FACE</Text>
+                    </TouchableOpacity>
+                  </View>
+                ) : (
+                  <View style={[styles.faceEnrollCard, styles.faceEnrollCardSuccess]}>
+                    <View style={styles.faceEnrollHeader}>
+                      <Image source={{ uri: capturedFaceUri }} style={styles.faceThumb} />
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                          <Ionicons name="checkmark-circle" size={17} color="#10b981" />
+                          <Text style={styles.faceSuccessTitle}>Face Biometrics Enrolled</Text>
+                        </View>
+                        <Text style={styles.faceSuccessSub}>
+                          Official biometric reference photo enrolled & validated by AI for daily presence verification.
+                        </Text>
+                      </View>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.retakeBtn}
+                      onPress={() => setShowFaceEnrollModal(true)}
+                      activeOpacity={0.8}
+                    >
+                      <Ionicons name="refresh" size={13} color="#2d81ff" />
+                      <Text style={styles.retakeBtnText}>RETAKE PHOTO</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
 
               {/* Permission Status Banner */}
               <View
@@ -479,7 +545,17 @@ export default function OnboardingScreen() {
         </ScrollView>
       </KeyboardAvoidingView>
 
-
+      {/* OPay-Style Face Biometric Enrollment Modal */}
+      <FaceScannerModal
+        visible={showFaceEnrollModal}
+        mode="enroll"
+        onCancel={() => setShowFaceEnrollModal(false)}
+        onSuccess={(dataUri) => {
+          setCapturedFaceUri(dataUri);
+          setShowFaceEnrollModal(false);
+          toast.success("Face biometric profile enrolled and validated!");
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -752,5 +828,102 @@ const styles = StyleSheet.create({
     fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
     textTransform: "uppercase",
   },
-
+  requiredBadge: {
+    backgroundColor: "rgba(217, 45, 32, 0.1)",
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 3,
+  },
+  requiredBadgeText: {
+    color: "#d92d20",
+    fontSize: 9,
+    fontWeight: "800",
+    letterSpacing: 0.5,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+  },
+  faceEnrollCard: {
+    backgroundColor: "#ffffff",
+    borderWidth: 1.5,
+    borderColor: "#2d81ff",
+    padding: 14,
+    gap: 12,
+  },
+  faceEnrollCardSuccess: {
+    borderColor: "#10b981",
+    backgroundColor: "rgba(16, 185, 129, 0.04)",
+  },
+  faceEnrollHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  faceIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "rgba(45, 129, 255, 0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  faceEnrollTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#142748",
+  },
+  faceEnrollSub: {
+    fontSize: 11,
+    color: "#64748b",
+    lineHeight: 16,
+    marginTop: 2,
+  },
+  scanFaceBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#2d81ff",
+    paddingVertical: 12,
+  },
+  scanFaceBtnText: {
+    color: "#ffffff",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.6,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+  },
+  faceThumb: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 2,
+    borderColor: "#10b981",
+  },
+  faceSuccessTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#10b981",
+  },
+  faceSuccessSub: {
+    fontSize: 11,
+    color: "#475569",
+    lineHeight: 16,
+    marginTop: 2,
+  },
+  retakeBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    borderWidth: 1,
+    borderColor: "#2d81ff",
+    paddingVertical: 8,
+    backgroundColor: "#ffffff",
+  },
+  retakeBtnText: {
+    color: "#2d81ff",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.6,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+  },
 });
