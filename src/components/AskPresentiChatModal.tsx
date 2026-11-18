@@ -20,11 +20,18 @@ import {
   type MobileChatMessage,
   type MobileAIContext,
 } from "../services/geminiService";
+import {
+  subscribeToAIChatHistory,
+  saveAIChatHistory,
+  clearAIChatHistory,
+} from "../services/aiChatHistoryService";
 
 interface AskPresentiChatModalProps {
   visible: boolean;
   onClose: () => void;
   context: MobileAIContext;
+  organizationId?: string;
+  userId?: string;
 }
 
 const QUICK_CHIPS = [
@@ -112,6 +119,8 @@ export const AskPresentiChatModal: React.FC<AskPresentiChatModalProps> = ({
   visible,
   onClose,
   context,
+  organizationId,
+  userId,
 }) => {
   const toast = useToast();
   const [messages, setMessages] = useState<MobileChatMessage[]>([]);
@@ -120,41 +129,64 @@ export const AskPresentiChatModal: React.FC<AskPresentiChatModalProps> = ({
   const [copiedIdx, setCopiedIdx] = useState<number | null>(null);
   const scrollRef = useRef<ScrollView>(null);
 
+  // Real-time cross-device chat history sync
+  useEffect(() => {
+    if (!organizationId) return;
+    const unsubscribe = subscribeToAIChatHistory(organizationId, userId, (synced) => {
+      setMessages(synced);
+    });
+    return () => unsubscribe();
+  }, [organizationId, userId]);
+
   useEffect(() => {
     if (visible) {
       setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
     }
   }, [messages, isLoading, visible]);
 
+  const handleClearChat = async () => {
+    if (messages.length === 0 || isLoading) return;
+    setMessages([]);
+    await clearAIChatHistory(organizationId, userId);
+    toast.success("Chat history cleared across devices.");
+  };
+
   const handleBriefing = async () => {
     if (isLoading) return;
     const nowLabel = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    setMessages((prev) => [
-      ...prev,
+    const withUser: MobileChatMessage[] = [
+      ...messages,
       { role: "user", content: "Generate today's Executive Briefing.", timestamp: nowLabel },
-    ]);
+    ];
+    setMessages(withUser);
+    saveAIChatHistory(organizationId, userId, withUser);
     setIsLoading(true);
+
     try {
       const reply = await generateMobileBriefing(context);
-      setMessages((prev) => [
-        ...prev,
+      const withReply: MobileChatMessage[] = [
+        ...withUser,
         {
           role: "assistant",
           content: reply,
           timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         },
-      ]);
+      ];
+      setMessages(withReply);
+      saveAIChatHistory(organizationId, userId, withReply);
     } catch (err: any) {
-      const msg = err?.message || "Unable to reach Gemini AI.";
+      const msg = err?.message || "Unable to reach Presenti AI.";
       toast.error(msg);
-      setMessages((prev) => [
-        ...prev,
+      const withErr: MobileChatMessage[] = [
+        ...withUser,
         {
           role: "assistant",
           content: `Error: ${msg}`,
           timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         },
-      ]);
+      ];
+      setMessages(withErr);
+      saveAIChatHistory(organizationId, userId, withErr);
     } finally {
       setIsLoading(false);
     }
@@ -168,30 +200,36 @@ export const AskPresentiChatModal: React.FC<AskPresentiChatModalProps> = ({
     const nowLabel = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     const userMsg: MobileChatMessage = { role: "user", content: q, timestamp: nowLabel };
     const prevMsgs = messages;
-    setMessages((prev) => [...prev, userMsg]);
+    const withUser = [...prevMsgs, userMsg];
+    setMessages(withUser);
+    saveAIChatHistory(organizationId, userId, withUser);
     setIsLoading(true);
 
     try {
       const reply = await askPresentiMobileAI(q, context, prevMsgs);
-      setMessages((prev) => [
-        ...prev,
+      const withReply: MobileChatMessage[] = [
+        ...withUser,
         {
           role: "assistant",
           content: reply,
           timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         },
-      ]);
+      ];
+      setMessages(withReply);
+      saveAIChatHistory(organizationId, userId, withReply);
     } catch (err: any) {
-      const msg = err?.message || "Unable to reach Gemini AI.";
+      const msg = err?.message || "Unable to reach Presenti AI.";
       toast.error(msg);
-      setMessages((prev) => [
-        ...prev,
+      const withErr: MobileChatMessage[] = [
+        ...withUser,
         {
           role: "assistant",
           content: `Error: ${msg}`,
           timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         },
-      ]);
+      ];
+      setMessages(withErr);
+      saveAIChatHistory(organizationId, userId, withErr);
     } finally {
       setIsLoading(false);
     }
@@ -222,13 +260,25 @@ export const AskPresentiChatModal: React.FC<AskPresentiChatModalProps> = ({
                 <View>
                   <Text style={styles.headerTitle}>Ask Presenti AI</Text>
                   <Text style={styles.headerSub}>
-                    GEMINI INTELLIGENCE • {context.totalCheckedIn} PUNCHES
+                    PRESENTI INTELLIGENCE • {context.totalCheckedIn} PUNCHES
                   </Text>
                 </View>
               </View>
-              <TouchableOpacity onPress={onClose} style={styles.closeBtn} activeOpacity={0.7}>
-                <Ionicons name="close" size={18} color="#f2f1ee" />
-              </TouchableOpacity>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                {messages.length > 0 && (
+                  <TouchableOpacity
+                    onPress={handleClearChat}
+                    disabled={isLoading}
+                    style={styles.closeBtn}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="trash-outline" size={16} color="#f2f1ee" />
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity onPress={onClose} style={styles.closeBtn} activeOpacity={0.7}>
+                  <Ionicons name="close" size={18} color="#f2f1ee" />
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
 
@@ -287,7 +337,7 @@ export const AskPresentiChatModal: React.FC<AskPresentiChatModalProps> = ({
                   <View key={idx} style={styles.aiBubble}>
                     {renderFormattedAIText(msg.content)}
                     <View style={styles.aiBubbleFooter}>
-                      <Text style={styles.aiTimeText}>GEMINI • {msg.timestamp}</Text>
+                      <Text style={styles.aiTimeText}>PRESENTI AI • {msg.timestamp}</Text>
                       <TouchableOpacity
                         style={styles.copyBtn}
                         onPress={() => handleCopy(msg.content, idx)}

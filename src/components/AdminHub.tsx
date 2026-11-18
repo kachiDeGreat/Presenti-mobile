@@ -1893,6 +1893,8 @@ export const AdminHub: React.FC = () => {
         visible={showAskPresenti}
         onClose={() => setShowAskPresenti(false)}
         context={mobileAIContext}
+        organizationId={organization?.id}
+        userId={(user?.email || user?.uid || "default").trim().toLowerCase()}
       />
 
       {/* ---------------------------------------------------------------- */}
