@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import {
   View,
   Text,
@@ -9,10 +9,12 @@ import {
   Easing,
   ActivityIndicator,
   Vibration,
-  Platform,
+  Image,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { Ionicons } from "@expo/vector-icons";
+import { RNMLKitFaceDetector } from "@infinitered/react-native-mlkit-face-detection";
 import {
   verifyFaceEnrollment,
   verifyFaceMatch,
@@ -30,7 +32,110 @@ interface FaceScannerModalProps {
   onFallbackBiometric?: () => void;
 }
 
-type ScanState = "ready" | "analyzing" | "success" | "error";
+type ScanState = "ready" | "aligned" | "analyzing" | "confirm" | "success" | "error";
+
+interface LiveFrameCheck {
+  aligned: boolean;
+  status: string;
+  sub: string;
+  isWarning?: boolean;
+}
+
+/** Evaluates on-device ML Kit face geometry against the circular portal */
+function evaluateFaceGeometry(
+  faces: any[],
+  rawWidth: number,
+  rawHeight: number
+): LiveFrameCheck {
+  if (!faces || faces.length === 0) {
+    return {
+      aligned: false,
+      isWarning: true,
+      status: "No face detected",
+      sub: "Position your face in good light inside the circle",
+    };
+  }
+  if (faces.length > 1) {
+    return {
+      aligned: false,
+      isWarning: true,
+      status: "Multiple faces in frame",
+      sub: "Only one person should be visible",
+    };
+  }
+
+  const face = faces[0];
+  const imgW = Math.min(rawWidth || 480, rawHeight || 640);
+  const imgH = Math.max(rawWidth || 480, rawHeight || 640);
+  const fw = face?.frame?.size?.x ?? 0;
+  const fh = face?.frame?.size?.y ?? 0;
+  const fx = face?.frame?.origin?.x ?? 0;
+  const fy = face?.frame?.origin?.y ?? 0;
+
+  if (fw > 0 && imgW > 0) {
+    const widthRatio = fw / imgW;
+    const cx = (fx + fw / 2) / imgW;
+    const cy = (fy + fh / 2) / imgH;
+
+    if (widthRatio < 0.18) {
+      return {
+        aligned: false,
+        isWarning: true,
+        status: "Move closer",
+        sub: "Bring your face closer to fill the dashed oval",
+      };
+    }
+    if (widthRatio > 0.88) {
+      return {
+        aligned: false,
+        isWarning: true,
+        status: "Move slightly back",
+        sub: "Keep your full face inside the circle",
+      };
+    }
+    if (Math.abs(cx - 0.5) > 0.26 || Math.abs(cy - 0.5) > 0.28) {
+      return {
+        aligned: false,
+        isWarning: true,
+        status: "Face not well fitted",
+        sub: "Center your face inside the dashed oval",
+      };
+    }
+  }
+
+  const yaw = Math.abs(face?.headEulerAngleY ?? 0);
+  const roll = Math.abs(face?.headEulerAngleZ ?? 0);
+  if (yaw > 22 || roll > 22) {
+    return {
+      aligned: false,
+      isWarning: true,
+      status: "Look straight ahead",
+      sub: "Keep your head level and face the camera",
+    };
+  }
+
+  const leftEye = face?.leftEyeOpenProbability;
+  const rightEye = face?.rightEyeOpenProbability;
+  if (
+    typeof leftEye === "number" &&
+    typeof rightEye === "number" &&
+    leftEye < 0.28 &&
+    rightEye < 0.28
+  ) {
+    return {
+      aligned: false,
+      isWarning: true,
+      status: "Keep your eyes open",
+      sub: "Look directly into the camera lens",
+    };
+  }
+
+  return {
+    aligned: true,
+    status: "Face aligned — Ready",
+    sub: "Hold steady and tap Capture below",
+  };
+}
 
 export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
   visible,
@@ -40,8 +145,10 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
   onCancel,
   onFallbackBiometric,
 }) => {
+  const insets = useSafeAreaInsets();
   const [permission, requestPermission] = useCameraPermissions();
   const [scanState, setScanState] = useState<ScanState>("ready");
+  const [capturedUri, setCapturedUri] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState(
     "Position your face inside the circle"
   );
@@ -50,24 +157,111 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
   );
 
   const cameraRef = useRef<CameraView>(null);
+  const detectorRef = useRef<RNMLKitFaceDetector | null>(null);
+  const isProbingRef = useRef(false);
+  const isMountedRef = useRef(true);
   const laserAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  // Initialize on-device ML Kit face detector once when modal opens
+  useEffect(() => {
+    if (!visible) return;
+    if (!detectorRef.current) {
+      try {
+        detectorRef.current = new RNMLKitFaceDetector({
+          performanceMode: "fast",
+          landmarkMode: false,
+          contourMode: false,
+          classificationMode: true,
+          minFaceSize: 0.15,
+        });
+      } catch {
+        detectorRef.current = null;
+      }
+    }
+  }, [visible]);
+
+  const resetToLiveCamera = useCallback(() => {
+    setCapturedUri(null);
+    setScanState("ready");
+    setStatusMessage("Position your face inside the circle");
+    setSubMessage(
+      mode === "enroll"
+        ? "One-time setup: center your face in good lighting"
+        : "Look directly into the frame to confirm attendance"
+    );
+  }, [mode]);
 
   // Reset state whenever modal opens
   useEffect(() => {
     if (visible) {
-      setScanState("ready");
-      setStatusMessage("Position your face inside the circle");
-      setSubMessage(
-        mode === "enroll"
-          ? "One-time setup: center your face in good lighting"
-          : "Look directly into the frame to confirm attendance"
-      );
+      resetToLiveCamera();
       if (permission && !permission.granted && permission.canAskAgain) {
         requestPermission().catch(() => {});
       }
     }
-  }, [visible, mode]);
+  }, [visible, resetToLiveCamera]);
+
+  // Real-time continuous face detection & framing feedback while preview is active
+  useEffect(() => {
+    if (
+      !visible ||
+      !permission?.granted ||
+      (scanState !== "ready" && scanState !== "aligned")
+    ) {
+      return;
+    }
+
+    const interval = setInterval(async () => {
+      if (
+        isProbingRef.current ||
+        !cameraRef.current ||
+        !detectorRef.current ||
+        detectorRef.current.status !== "ready"
+      ) {
+        return;
+      }
+
+      isProbingRef.current = true;
+      try {
+        const probe = await cameraRef.current.takePictureAsync({
+          quality: 0.15,
+          skipProcessing: true,
+          shutterSound: false,
+        });
+        if (!probe?.uri || !isMountedRef.current) return;
+
+        const detection = await detectorRef.current.detectFaces(probe.uri);
+        if (!detection || !isMountedRef.current) return;
+
+        // Only update if still in live preview state
+        setScanState((curr) => {
+          if (curr !== "ready" && curr !== "aligned") return curr;
+          const check = evaluateFaceGeometry(
+            detection.faces,
+            probe.width,
+            probe.height
+          );
+          setStatusMessage(check.status);
+          setSubMessage(check.sub);
+          return check.aligned ? "aligned" : "ready";
+        });
+      } catch {
+        // Silent probe failure — keep camera responsive
+      } finally {
+        isProbingRef.current = false;
+      }
+    }, 850);
+
+    return () => clearInterval(interval);
+  }, [visible, permission?.granted, scanState]);
 
   // Laser scan beam animation during analysis
   useEffect(() => {
@@ -77,13 +271,13 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
         Animated.sequence([
           Animated.timing(laserAnim, {
             toValue: 1,
-            duration: 950,
+            duration: 900,
             easing: Easing.inOut(Easing.ease),
             useNativeDriver: true,
           }),
           Animated.timing(laserAnim, {
             toValue: 0,
-            duration: 950,
+            duration: 900,
             easing: Easing.inOut(Easing.ease),
             useNativeDriver: true,
           }),
@@ -94,20 +288,20 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
     }
   }, [scanState, laserAnim]);
 
-  // Subtle breathing ring pulse while ready
+  // Subtle breathing ring pulse while ready / aligned
   useEffect(() => {
-    if (scanState === "ready") {
+    if (scanState === "ready" || scanState === "aligned") {
       const pulse = Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, {
-            toValue: 1.04,
-            duration: 1100,
+            toValue: 1.03,
+            duration: 1050,
             easing: Easing.inOut(Easing.ease),
             useNativeDriver: true,
           }),
           Animated.timing(pulseAnim, {
             toValue: 1,
-            duration: 1100,
+            duration: 1050,
             easing: Easing.inOut(Easing.ease),
             useNativeDriver: true,
           }),
@@ -121,26 +315,54 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
   }, [scanState, pulseAnim]);
 
   const handleCaptureAndVerify = async () => {
-    if (!cameraRef.current || scanState === "analyzing" || scanState === "success") {
+    if (
+      !cameraRef.current ||
+      scanState === "analyzing" ||
+      scanState === "success" ||
+      scanState === "confirm"
+    ) {
       return;
     }
 
     setScanState("analyzing");
-    setStatusMessage("Hold still... Analyzing biometrics");
-    setSubMessage("Checking live facial geometry & anti-spoofing");
+    setStatusMessage("Capturing & analyzing...");
+    setSubMessage("Checking lighting, framing & anti-spoofing");
 
     try {
       const photo = await cameraRef.current.takePictureAsync({
         base64: true,
-        quality: 0.28,
+        quality: 0.45,
         shutterSound: false,
       });
 
       if (!photo?.base64) {
         setScanState("error");
         setStatusMessage("Could not capture frame");
-        setSubMessage("Please hold steady and tap Scan again.");
+        setSubMessage("Hold steady and try again.");
         return;
+      }
+
+      // Fast local ML Kit gate first (instant feedback before cloud call)
+      if (detectorRef.current?.status === "ready" && photo.uri) {
+        try {
+          const localDet = await detectorRef.current.detectFaces(photo.uri);
+          if (localDet) {
+            const check = evaluateFaceGeometry(
+              localDet.faces,
+              photo.width,
+              photo.height
+            );
+            if (!check.aligned) {
+              setScanState("error");
+              setStatusMessage(check.status);
+              setSubMessage(check.sub);
+              Vibration.vibrate(100);
+              return;
+            }
+          }
+        } catch {
+          // Proceed to cloud check if local ML Kit throws
+        }
       }
 
       const dataUri = `data:image/jpeg;base64,${photo.base64}`;
@@ -148,13 +370,11 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
       if (mode === "enroll") {
         const res = await verifyFaceEnrollment(photo.base64);
         if (res.valid) {
-          setScanState("success");
-          setStatusMessage("Face Profile Enrolled");
-          setSubMessage(res.guidance);
-          Vibration.vibrate([0, 60, 40, 60]);
-          setTimeout(() => {
-            onSuccess(dataUri);
-          }, 700);
+          setCapturedUri(dataUri);
+          setScanState("confirm");
+          setStatusMessage("Confirm Your Photo");
+          setSubMessage("Make sure your face is clear, or retake below.");
+          Vibration.vibrate([0, 50, 40, 50]);
         } else {
           setScanState("error");
           setStatusMessage(res.reason || "Face Not Clear");
@@ -170,7 +390,7 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
           Vibration.vibrate([0, 60, 40, 60]);
           setTimeout(() => {
             onSuccess(dataUri);
-          }, 700);
+          }, 650);
         } else {
           setScanState("error");
           setStatusMessage(
@@ -183,18 +403,18 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
     } catch (err: any) {
       setScanState("error");
       setStatusMessage("Camera Scan Interrupted");
-      setSubMessage(err?.message || "Please centre your face and try again.");
+      setSubMessage(err?.message || "Please center your face and try again.");
     }
   };
 
   const ringColor =
-    scanState === "success"
+    scanState === "success" || scanState === "confirm" || scanState === "aligned"
       ? "#10b981"
       : scanState === "error"
       ? "#d92d20"
       : scanState === "analyzing"
       ? "#f59e0b"
-      : "#2d81ff";
+      : C.accent;
 
   const laserTranslateY = laserAnim.interpolate({
     inputRange: [0, 1],
@@ -206,12 +426,21 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
       visible={visible}
       animationType="slide"
       transparent={false}
+      statusBarTranslucent
       onRequestClose={onCancel}
     >
-      <View style={styles.container}>
+      <View
+        style={[
+          styles.container,
+          {
+            paddingTop: Math.max(insets.top, 20) + 10,
+            paddingBottom: Math.max(insets.bottom, 16) + 12,
+          },
+        ]}
+      >
         {/* Top Bar */}
         <View style={styles.topBar}>
-          <View>
+          <View style={{ flex: 1, paddingRight: 12 }}>
             <Text style={styles.topTag}>
               {mode === "enroll" ? "// BIOMETRIC ENROLLMENT" : "// PRESENCE VERIFICATION"}
             </Text>
@@ -226,17 +455,22 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
 
         {/* Guidance Pill */}
         <View style={[styles.guidanceBox, { borderColor: ringColor }]}>
-          <Text style={[styles.guidanceTitle, { color: ringColor === "#2d81ff" ? "#93c5fd" : ringColor }]}>
+          <Text
+            style={[
+              styles.guidanceTitle,
+              { color: ringColor === C.accent ? "#93c5fd" : ringColor },
+            ]}
+          >
             {statusMessage}
           </Text>
           <Text style={styles.guidanceSub}>{subMessage}</Text>
         </View>
 
-        {/* Circular OPay-style Camera Portal */}
+        {/* Circular OPay-style Camera / Confirmation Portal */}
         <View style={styles.portalWrapper}>
           {!permission?.granted ? (
             <View style={styles.permissionBox}>
-              <Ionicons name="camera-outline" size={44} color="#2d81ff" />
+              <Ionicons name="camera-outline" size={44} color={C.accent} />
               <Text style={styles.permissionTitle}>Camera Access Required</Text>
               <Text style={styles.permissionSub}>
                 Presenti needs front camera access to verify your live facial identity.
@@ -260,15 +494,29 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
               ]}
             >
               <View style={styles.circleMask}>
-                <CameraView
-                  ref={cameraRef}
-                  style={styles.camera}
-                  facing="front"
-                />
+                {scanState === "confirm" && capturedUri ? (
+                  <Image
+                    source={{ uri: capturedUri }}
+                    style={styles.camera}
+                    resizeMode="cover"
+                  />
+                ) : (
+                  <CameraView
+                    ref={cameraRef}
+                    style={styles.camera}
+                    facing="front"
+                  />
+                )}
 
                 {/* Dotted Face Alignment Oval */}
-                {scanState !== "success" && (
-                  <View style={styles.faceGuideOval} pointerEvents="none" />
+                {scanState !== "success" && scanState !== "confirm" && (
+                  <View
+                    style={[
+                      styles.faceGuideOval,
+                      scanState === "aligned" && styles.faceGuideOvalAligned,
+                    ]}
+                    pointerEvents="none"
+                  />
                 )}
 
                 {/* Laser Scan Beam */}
@@ -297,51 +545,86 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
 
         {/* Bottom Controls */}
         <View style={styles.bottomActions}>
-          {permission?.granted && (
-            <TouchableOpacity
-              style={[
-                styles.scanBtn,
-                scanState === "analyzing" && styles.scanBtnDisabled,
-                scanState === "success" && { backgroundColor: "#10b981" },
-              ]}
-              onPress={handleCaptureAndVerify}
-              disabled={scanState === "analyzing" || scanState === "success"}
-              activeOpacity={0.85}
-            >
-              {scanState === "analyzing" ? (
-                <ActivityIndicator size="small" color="#ffffff" />
-              ) : (
-                <Ionicons
-                  name={scanState === "success" ? "checkmark-circle" : "scan-outline"}
-                  size={20}
-                  color="#ffffff"
-                />
-              )}
-              <Text style={styles.scanBtnText}>
-                {scanState === "analyzing"
-                  ? "VERIFYING FACE..."
-                  : scanState === "success"
-                  ? "VERIFIED"
-                  : scanState === "error"
-                  ? "TRY SCAN AGAIN"
-                  : mode === "enroll"
-                  ? "CAPTURE & ENROLL FACE"
-                  : "SCAN FACE TO VERIFY"}
-              </Text>
-            </TouchableOpacity>
+          {permission?.granted && scanState === "confirm" && capturedUri ? (
+            <View style={{ gap: 10 }}>
+              <TouchableOpacity
+                style={[styles.scanBtn, { backgroundColor: "#10b981" }]}
+                onPress={() => onSuccess(capturedUri)}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="checkmark-circle" size={20} color="#ffffff" />
+                <Text style={styles.scanBtnText}>USE THIS PHOTO</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.retakeSecondaryBtn}
+                onPress={resetToLiveCamera}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="refresh" size={18} color="#ffffff" />
+                <Text style={styles.retakeSecondaryBtnText}>RETAKE PHOTO</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            permission?.granted && (
+              <TouchableOpacity
+                style={[
+                  styles.scanBtn,
+                  scanState === "aligned" && { backgroundColor: "#10b981" },
+                  scanState === "analyzing" && styles.scanBtnDisabled,
+                  scanState === "success" && { backgroundColor: "#10b981" },
+                ]}
+                onPress={handleCaptureAndVerify}
+                disabled={scanState === "analyzing" || scanState === "success"}
+                activeOpacity={0.85}
+              >
+                {scanState === "analyzing" ? (
+                  <ActivityIndicator size="small" color="#ffffff" />
+                ) : (
+                  <Ionicons
+                    name={
+                      scanState === "success"
+                        ? "checkmark-circle"
+                        : "scan-outline"
+                    }
+                    size={20}
+                    color="#ffffff"
+                  />
+                )}
+                <Text style={styles.scanBtnText}>
+                  {scanState === "analyzing"
+                    ? "VERIFYING FACE..."
+                    : scanState === "success"
+                    ? "VERIFIED"
+                    : scanState === "error"
+                    ? "TRY SCAN AGAIN"
+                    : mode === "enroll"
+                    ? "CAPTURE & ENROLL FACE"
+                    : "SCAN FACE TO VERIFY"}
+                </Text>
+              </TouchableOpacity>
+            )
           )}
 
-          {onFallbackBiometric && scanState !== "success" && (
-            <TouchableOpacity
-              style={styles.fallbackBtn}
-              onPress={onFallbackBiometric}
-              disabled={scanState === "analyzing"}
-              activeOpacity={0.75}
-            >
-              <Ionicons name="finger-print-outline" size={16} color="#93c5fd" />
-              <Text style={styles.fallbackBtnText}>Use Device Biometric / PIN Instead</Text>
-            </TouchableOpacity>
-          )}
+          {onFallbackBiometric &&
+            scanState !== "success" &&
+            scanState !== "confirm" && (
+              <TouchableOpacity
+                style={styles.fallbackBtn}
+                onPress={onFallbackBiometric}
+                disabled={scanState === "analyzing"}
+                activeOpacity={0.75}
+              >
+                <Ionicons
+                  name="finger-print-outline"
+                  size={16}
+                  color="#93c5fd"
+                />
+                <Text style={styles.fallbackBtnText}>
+                  Use Device Biometric / PIN Instead
+                </Text>
+              </TouchableOpacity>
+            )}
         </View>
       </View>
     </Modal>
@@ -352,40 +635,39 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#0b1629",
-    paddingTop: Platform.OS === "ios" ? 56 : 32,
-    paddingBottom: Platform.OS === "ios" ? 36 : 24,
-    paddingHorizontal: 20,
+    paddingHorizontal: S.screenX,
     justifyContent: "space-between",
   },
   topBar: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    marginBottom: 8,
   },
   topTag: {
     fontSize: 10,
     fontWeight: "700",
     color: "#60a5fa",
-    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
-    letterSpacing: 0.8,
+    fontFamily: MONO,
+    letterSpacing: 0.9,
   },
   topTitle: {
-    fontSize: 20,
+    fontSize: 22,
     fontWeight: "800",
     color: "#ffffff",
     marginTop: 2,
   },
   closeBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "rgba(255,255,255,0.12)",
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: "rgba(255,255,255,0.14)",
     alignItems: "center",
     justifyContent: "center",
   },
   guidanceBox: {
-    backgroundColor: "rgba(20, 39, 72, 0.85)",
-    borderWidth: 1,
+    backgroundColor: "rgba(20, 39, 72, 0.9)",
+    borderWidth: 1.5,
     borderRadius: R.lg,
     paddingHorizontal: S.md,
     paddingVertical: 14,
@@ -401,6 +683,7 @@ const styles = StyleSheet.create({
     color: "#cbd5e1",
     textAlign: "center",
     marginTop: 4,
+    lineHeight: 18,
   },
   portalWrapper: {
     flex: 1,
@@ -408,9 +691,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   outerRing: {
-    width: 264,
-    height: 264,
-    borderRadius: 132,
+    width: 268,
+    height: 268,
+    borderRadius: 134,
     borderWidth: 4,
     alignItems: "center",
     justifyContent: "center",
@@ -422,9 +705,9 @@ const styles = StyleSheet.create({
     elevation: 10,
   },
   circleMask: {
-    width: 248,
-    height: 248,
-    borderRadius: 124,
+    width: 252,
+    height: 252,
+    borderRadius: 126,
     overflow: "hidden",
     position: "relative",
     backgroundColor: "#000000",
@@ -443,6 +726,10 @@ const styles = StyleSheet.create({
     borderWidth: 1.5,
     borderStyle: "dashed",
     borderColor: "rgba(255, 255, 255, 0.55)",
+  },
+  faceGuideOvalAligned: {
+    borderColor: "#10b981",
+    borderWidth: 2,
   },
   laserLine: {
     position: "absolute",
@@ -475,11 +762,11 @@ const styles = StyleSheet.create({
   },
   permissionBox: {
     backgroundColor: "#142748",
-    borderRadius: 16,
+    borderRadius: 18,
     padding: 24,
     alignItems: "center",
     borderWidth: 1,
-    borderColor: "#2d81ff",
+    borderColor: C.accent,
     gap: 10,
   },
   permissionTitle: {
@@ -495,10 +782,10 @@ const styles = StyleSheet.create({
   },
   permissionBtn: {
     marginTop: 8,
-    backgroundColor: "#2d81ff",
+    backgroundColor: C.accent,
     paddingHorizontal: 20,
     paddingVertical: 12,
-    borderRadius: 10,
+    borderRadius: R.md,
   },
   permissionBtnText: {
     color: "#ffffff",
@@ -507,7 +794,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.6,
   },
   bottomActions: {
-    gap: 12,
+    gap: 10,
   },
   scanBtn: {
     height: 56,
@@ -525,6 +812,24 @@ const styles = StyleSheet.create({
   scanBtnText: {
     color: "#ffffff",
     fontSize: 13,
+    fontWeight: "800",
+    letterSpacing: 0.9,
+    fontFamily: MONO,
+  },
+  retakeSecondaryBtn: {
+    height: 50,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderRadius: R.md,
+    borderWidth: 1.5,
+    borderColor: "rgba(255,255,255,0.28)",
+    backgroundColor: "rgba(255,255,255,0.08)",
+  },
+  retakeSecondaryBtnText: {
+    color: "#ffffff",
+    fontSize: 12,
     fontWeight: "800",
     letterSpacing: 0.9,
     fontFamily: MONO,

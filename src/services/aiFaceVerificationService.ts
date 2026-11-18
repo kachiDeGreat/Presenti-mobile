@@ -111,11 +111,17 @@ export async function verifyFaceEnrollment(liveBase64: string): Promise<FaceEnro
   }
 
   const prompt = `Analyze this selfie for biometric attendance enrollment.
+Be fair about normal indoor lighting: accept if a single live human face is clearly visible and eyes, nose, and mouth are distinguishable (not a photo of a screen/paper, not covered).
+If invalid, give exact specific feedback:
+- No face visible -> reason: "No face detected", guidance: "Point the camera directly at your face."
+- Too dark / backlit / shadows hide features -> reason: "Poor lighting detected", guidance: "Move to a brighter spot or face a light source."
+- Face cut off, too far, or off-center -> reason: "Face not well fitted", guidance: "Center your full face inside the circle."
+- Photo of screen/paper -> reason: "Live face required", guidance: "Look directly at the camera — no photos or screens."
 Return ONLY valid JSON:
 {
-  "valid": boolean, // true ONLY if a single, clear, well-lit live human face is visible looking toward the camera (not a photo of a screen/paper, not covered)
-  "reason": string, // short 3-6 word summary
-  "guidance": string // short actionable tip if invalid, or "Face quality verified." if valid
+  "valid": boolean,
+  "reason": string,
+  "guidance": string
 }`;
 
   const result = await callVisionJSON<FaceEnrollmentResult>([

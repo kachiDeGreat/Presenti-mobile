@@ -15,6 +15,7 @@ import { router } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import {
@@ -81,6 +82,64 @@ export default function OnboardingScreen() {
   const [isRegistering, setIsRegistering] = useState(false);
   const [permissions, setPermissions] = useState<AppPermissionsStatus | null>(null);
   const codeInputRef = React.useRef<TextInput>(null);
+  const draftLoadedRef = React.useRef(false);
+  const draftKey = user?.uid ? `@presenti_onboarding_draft_${user.uid}` : null;
+
+  // Restore saved onboarding draft (paired org, typed fields & face) if user closed/minimized app
+  useEffect(() => {
+    if (!draftKey || draftLoadedRef.current) return;
+    let active = true;
+    AsyncStorage.getItem(draftKey)
+      .then((raw) => {
+        if (!active) return;
+        draftLoadedRef.current = true;
+        if (raw) {
+          try {
+            const parsed = JSON.parse(raw);
+            if (parsed.churchCodeInput) setChurchCodeInput(parsed.churchCodeInput);
+            if (parsed.verifiedOrg) setVerifiedOrg(parsed.verifiedOrg);
+            if (parsed.fullName) setFullName(parsed.fullName);
+            if (parsed.phoneNumber) setPhoneNumber(parsed.phoneNumber);
+            if (parsed.selectedDept) setSelectedDept(parsed.selectedDept);
+            if (parsed.capturedFaceUri) setCapturedFaceUri(parsed.capturedFaceUri);
+            return;
+          } catch {}
+        }
+        // Fallback: if org was already paired in AuthContext, resume directly at Step 2
+        if (organization && !member) {
+          setVerifiedOrg(organization);
+          if (organization.churchCode) setChurchCodeInput(organization.churchCode);
+        }
+      })
+      .catch(() => {
+        draftLoadedRef.current = true;
+      });
+    return () => {
+      active = false;
+    };
+  }, [draftKey, organization, member]);
+
+  // Persist onboarding progress on every change so minimizing/closing never loses work
+  useEffect(() => {
+    if (!draftKey || !draftLoadedRef.current) return;
+    const payload = {
+      churchCodeInput,
+      verifiedOrg,
+      fullName,
+      phoneNumber,
+      selectedDept,
+      capturedFaceUri,
+    };
+    AsyncStorage.setItem(draftKey, JSON.stringify(payload)).catch(() => {});
+  }, [
+    draftKey,
+    churchCodeInput,
+    verifiedOrg,
+    fullName,
+    phoneNumber,
+    selectedDept,
+    capturedFaceUri,
+  ]);
 
   // Administrators are strictly blocked from workforce onboarding on mobile
   useEffect(() => {
@@ -219,6 +278,9 @@ export default function OnboardingScreen() {
         [1],
         capturedFaceUri
       );
+      if (draftKey) {
+        AsyncStorage.removeItem(draftKey).catch(() => {});
+      }
       toast.success(
         "Welcome to " + (verifiedOrg?.churchName || "the organization") + "!",
       );
