@@ -42,12 +42,19 @@ const QUICK_CHIPS = [
 
 function renderInlineMarkdown(line: string) {
   const normalized = line.replace(/^(\s*)[*-]\s+/, "$1• ");
-  const parts = normalized.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
+  const parts = normalized.split(/(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g);
   return parts.map((part, i) => {
     if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
       return (
         <Text key={i} style={{ fontWeight: "800", color: "#142748" }}>
           {part.slice(2, -2)}
+        </Text>
+      );
+    }
+    if (part.startsWith("*") && part.endsWith("*") && part.length > 2) {
+      return (
+        <Text key={i} style={{ fontWeight: "800", color: "#142748" }}>
+          {part.slice(1, -1)}
         </Text>
       );
     }
