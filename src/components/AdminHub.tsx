@@ -15,7 +15,6 @@ import {
   Modal,
   Pressable,
   Dimensions,
-  Animated,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -96,16 +95,6 @@ export const AdminHub: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [screenWidth, setScreenWidth] = useState(Dimensions.get("window").width);
   const horizontalPagerRef = useRef<ScrollView>(null);
-  const scrollX = useRef(new Animated.Value(0)).current;
-
-  const tabWidth = screenWidth / 3;
-  const indicatorTranslateX = useMemo(() => {
-    return scrollX.interpolate({
-      inputRange: [0, screenWidth, screenWidth * 2],
-      outputRange: [0, tabWidth, tabWidth * 2],
-      extrapolate: "clamp",
-    });
-  }, [scrollX, screenWidth, tabWidth]);
 
   // Proactively resolve and hydrate organization workspace on mount
   useEffect(() => {
@@ -885,16 +874,11 @@ export const AdminHub: React.FC = () => {
           }
         }}
       >
-        <Animated.ScrollView
-          ref={horizontalPagerRef as any}
+        <ScrollView
+          ref={horizontalPagerRef}
           horizontal
           pagingEnabled
           showsHorizontalScrollIndicator={false}
-          onScroll={Animated.event(
-            [{ nativeEvent: { contentOffset: { x: scrollX } } }],
-            { useNativeDriver: true }
-          )}
-          scrollEventThrottle={16}
           onMomentumScrollEnd={handlePageChange}
           keyboardShouldPersistTaps="handled"
           style={{ flex: 1 }}
@@ -1763,40 +1747,27 @@ export const AdminHub: React.FC = () => {
               </View>
             </ScrollView>
           </View>
-        </Animated.ScrollView>
+        </ScrollView>
       </View>
 
       {/* ---------------------------------------------------------------- */}
-      {/* BOTTOM TAB NAVIGATION WITH CONTINUOUS SLIDING ACTIVE INDICATOR   */}
+      {/* BOTTOM TAB NAVIGATION (ARTCRAFT CLEAN MINIMAL STYLE)             */}
       {/* ---------------------------------------------------------------- */}
       <View style={styles.bottomTabBar}>
-        {/* Continuous WhatsApp-style Sliding Indicator */}
-        <Animated.View
-          style={[
-            styles.slidingIndicatorTrack,
-            {
-              width: tabWidth,
-              transform: [{ translateX: indicatorTranslateX }],
-            },
-          ]}
-        >
-          <View style={styles.slidingIndicatorBar} />
-        </Animated.View>
-
         {TABS.map((tab, idx) => {
           const isActive = activeTab === tab.key;
           return (
             <TouchableOpacity
               key={tab.key}
-              style={[styles.bottomTabItem, isActive && styles.bottomTabItemActive]}
+              style={styles.bottomTabItem}
               onPress={() => handleTabPress(tab.key, idx)}
-              activeOpacity={0.75}
+              activeOpacity={0.7}
             >
               <View style={styles.bottomTabIconContainer}>
                 <Ionicons
                   name={isActive ? tab.activeIcon : tab.icon}
-                  size={20}
-                  color={isActive ? "#142748" : "#94a3b8"}
+                  size={22}
+                  color={isActive ? "#2d81ff" : "#142748"}
                 />
                 {tab.key === "feed" && todayRecords.length > 0 && (
                   <View style={[styles.bottomBadge, isActive && styles.bottomBadgeActive]}>
@@ -2303,58 +2274,37 @@ const styles = StyleSheet.create({
     backgroundColor: "#ffffff",
     borderTopWidth: 1,
     borderTopColor: "#e5e7eb",
-    paddingBottom: Platform.OS === "ios" ? 22 : 10,
-    paddingTop: 0,
-    elevation: 10,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: -3 },
-    shadowOpacity: 0.06,
-    shadowRadius: 5,
-    position: "relative",
-  },
-  slidingIndicatorTrack: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    height: 3,
-    zIndex: 10,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  slidingIndicatorBar: {
-    width: "60%",
-    height: 3,
-    backgroundColor: "#2d81ff",
-    borderBottomLeftRadius: 3,
-    borderBottomRightRadius: 3,
+    paddingBottom: Platform.OS === "ios" ? 22 : 12,
+    paddingTop: 10,
+    elevation: 8,
+    shadowColor: "#142748",
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
   },
   bottomTabItem: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    paddingTop: 8,
-    paddingBottom: 4,
-  },
-  bottomTabItemActive: {
-    backgroundColor: "#fafbfd",
+    paddingVertical: 2,
   },
   bottomTabIconContainer: {
     position: "relative",
     alignItems: "center",
     justifyContent: "center",
     width: 28,
-    height: 24,
+    height: 26,
   },
   bottomTabLabel: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#64748b",
-    letterSpacing: -0.2,
-    marginTop: 3,
+    fontSize: 12,
+    fontWeight: "500",
+    color: "#142748",
+    letterSpacing: -0.1,
+    marginTop: 4,
   },
   bottomTabLabelActive: {
-    color: "#142748",
-    fontWeight: "800",
+    color: "#2d81ff",
+    fontWeight: "700",
   },
   bottomBadge: {
     position: "absolute",
