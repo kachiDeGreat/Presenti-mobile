@@ -325,7 +325,7 @@ export const AskPresentiChatModal: React.FC<AskPresentiChatModalProps> = ({
             contentContainerStyle={styles.messagesContent}
             keyboardShouldPersistTaps="handled"
           >
-            {messages.length === 0 ? (
+            {messages.filter((m) => m.content && m.content.trim().length > 0).length === 0 ? (
               <View style={styles.welcomeCard}>
                 <Text style={styles.welcomeTitle}>Workforce Intelligence Ready</Text>
                 <Text style={styles.welcomeText}>
@@ -333,7 +333,9 @@ export const AskPresentiChatModal: React.FC<AskPresentiChatModalProps> = ({
                 </Text>
               </View>
             ) : (
-              messages.map((msg, idx) =>
+              messages
+                .filter((m) => m.content && m.content.trim().length > 0)
+                .map((msg, idx) =>
                 msg.role === "user" ? (
                   <View key={idx} style={styles.userBubble}>
                     <Text style={styles.userBubbleText}>{msg.content}</Text>

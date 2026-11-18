@@ -97,7 +97,10 @@ function buildLocalFallbackReply(question: string, ctx: MobileAIContext): string
   const q = question.toLowerCase();
   const org = ctx.organizationName || "your organization";
 
-  if (/\b(who|what)\s+are\s+you\b/.test(q.trim())) {
+  if (
+    /\b(who|what)\s+(are|can)\s+(you|u)\b/i.test(q) ||
+    /\b(what\s+do\s+you\s+do|what\s+is\s+presenti|tell\s+me\s+about\s+yourself)\b/i.test(q)
+  ) {
     return `I'm Presenti AI, your workforce intelligence assistant for ${org}.`;
   }
 
