@@ -13,7 +13,7 @@
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Presenti requires your location to verify physical presence on premises for attendance.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "Presenti requires your location to verify physical presence on premises for attendance.",
-        "NSCameraUsageDescription": "Presenti requires camera access to scan premises calibration QR codes."
+        "NSCameraUsageDescription": "Presenti requires camera access to verify your live facial biometrics for attendance and scan calibration QR codes."
       }
     },
     "android": {
@@ -63,7 +63,7 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Allow Presenti to access camera to scan premises calibration QR codes."
+          "cameraPermission": "Allow Presenti to access camera to verify live facial biometrics and scan premises calibration QR codes."
         }
       ],
       "react-native-wifi-reborn",

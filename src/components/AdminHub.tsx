@@ -52,6 +52,7 @@ import {
 import { reverseGeocodeCoords } from "../services/geocodingService";
 import { acquireDeviceCoordinates } from "../services/locationService";
 import { AskPresentiChatModal } from "./AskPresentiChatModal";
+import { FaceScannerModal } from "./FaceScannerModal";
 import type { MobileAIContext } from "../services/geminiService";
 import type { ChurchMember } from "../types";
 
@@ -770,6 +771,7 @@ export const AdminHub: React.FC = () => {
   // ----------------------------------------------------------------------
   const [showAdminProfileModal, setShowAdminProfileModal] = useState(false);
   const [showAskPresenti, setShowAskPresenti] = useState(false);
+  const [showAdminFaceTestModal, setShowAdminFaceTestModal] = useState(false);
 
   const mobileAIContext: MobileAIContext = useMemo(
     () => ({
@@ -1615,6 +1617,28 @@ export const AdminHub: React.FC = () => {
               </View>
             </View>
 
+            {/* Quick Face Scanner Launcher for Field Testing */}
+            <TouchableOpacity
+              style={styles.workforceFaceBanner}
+              onPress={() => setShowAdminFaceTestModal(true)}
+              activeOpacity={0.85}
+            >
+              <View style={styles.workforceFaceBannerLeft}>
+                <View style={styles.workforceFaceIconBox}>
+                  <Ionicons name="scan-circle" size={22} color="#2d81ff" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.workforceFaceTitle}>Test AI Face Scanner</Text>
+                  <Text style={styles.workforceFaceSub}>
+                    Run live facial verification & anti-spoofing camera
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.workforceFaceBadge}>
+                <Text style={styles.workforceFaceBadgeText}>TEST SCAN</Text>
+              </View>
+            </TouchableOpacity>
+
             {/* Workforce Search & Filter Bar */}
             <View style={styles.searchRow}>
               <View style={styles.searchBox}>
@@ -1895,6 +1919,17 @@ export const AdminHub: React.FC = () => {
         context={mobileAIContext}
         organizationId={organization?.id}
         userId={(user?.email || user?.uid || "default").trim().toLowerCase()}
+      />
+
+      {/* OPay-Style AI Face Biometric Scanner Modal for Testing */}
+      <FaceScannerModal
+        visible={showAdminFaceTestModal}
+        mode="enroll"
+        onCancel={() => setShowAdminFaceTestModal(false)}
+        onSuccess={() => {
+          setShowAdminFaceTestModal(false);
+          toast.success("AI Face Verification Passed! Biometrics confirmed.");
+        }}
       />
 
       {/* ---------------------------------------------------------------- */}
@@ -2248,6 +2283,27 @@ export const AdminHub: React.FC = () => {
                   <Text style={styles.copyWebUrlBtnText}>COPY WEB PORTAL URL</Text>
                 </TouchableOpacity>
               </View>
+
+              {/* Test AI Face Scanner Button */}
+              <TouchableOpacity
+                style={styles.adminFaceTestBtn}
+                onPress={() => {
+                  setShowAdminProfileModal(false);
+                  setShowAdminFaceTestModal(true);
+                }}
+                activeOpacity={0.85}
+              >
+                <View style={styles.adminFaceTestBtnIcon}>
+                  <Ionicons name="scan-circle" size={20} color="#ffffff" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.adminFaceTestBtnTitle}>Test AI Face Scanner</Text>
+                  <Text style={styles.adminFaceTestBtnSub}>
+                    Preview OPay-style circular biometric portal
+                  </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={16} color="#64748b" />
+              </TouchableOpacity>
 
               {/* Sign Out Button */}
               <TouchableOpacity
@@ -3262,6 +3318,79 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: "#d92d20",
     letterSpacing: 0.6,
+    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+  },
+  adminFaceTestBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "#ffffff",
+    borderWidth: 1.5,
+    borderColor: "#2d81ff",
+    padding: 12,
+  },
+  adminFaceTestBtnIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "#2d81ff",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  adminFaceTestBtnTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#142748",
+  },
+  adminFaceTestBtnSub: {
+    fontSize: 11,
+    color: "#64748b",
+    marginTop: 2,
+  },
+  workforceFaceBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#ffffff",
+    borderWidth: 1.5,
+    borderColor: "#2d81ff",
+    padding: 12,
+    marginBottom: 8,
+  },
+  workforceFaceBannerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    flex: 1,
+  },
+  workforceFaceIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "rgba(45, 129, 255, 0.12)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  workforceFaceTitle: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#142748",
+  },
+  workforceFaceSub: {
+    fontSize: 11,
+    color: "#64748b",
+    marginTop: 2,
+  },
+  workforceFaceBadge: {
+    backgroundColor: "#2d81ff",
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+  },
+  workforceFaceBadgeText: {
+    fontSize: 10,
+    fontWeight: "800",
+    color: "#ffffff",
+    letterSpacing: 0.5,
     fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
 });
