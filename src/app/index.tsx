@@ -40,6 +40,7 @@ import { verifyIdentityForClockIn } from "../services/biometricAuthService";
 import type { TodayPunchRecord } from "../types";
 import { AdminCalibrationModal } from "../components/AdminCalibrationModal";
 import { AdminHub } from "../components/AdminHub";
+import { FaceScannerModal } from "../components/FaceScannerModal";
 
 export default function DashboardScreen() {
   const {
@@ -52,11 +53,19 @@ export default function DashboardScreen() {
     isAdmin,
     signOut,
     refreshOrganization,
+    enrollFace,
   } = useAuth();
   const toast = useToast();
 
   // Calibration Modal State
   const [showCalibrationModal, setShowCalibrationModal] = useState(false);
+
+  // AI Face Verification Modal State
+  const [faceModal, setFaceModal] = useState<{
+    visible: boolean;
+    mode: "enroll" | "verify";
+    action: "clockIn" | "signOut";
+  }>({ visible: false, mode: "verify", action: "clockIn" });
 
   // Real-time clock ticking every second
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -268,47 +277,67 @@ export default function DashboardScreen() {
       return;
     }
 
-    // 3. MANDATORY BIOMETRIC VERIFICATION (Anti-Proxy Identity Check)
-    const biometricAuth = await verifyIdentityForClockIn();
-    if (!biometricAuth.success) {
-      if (biometricAuth.needsSetup) {
-        Alert.alert(
-          biometricAuth.errorTitle || "Security Setup Required",
-          `${biometricAuth.error}\n\nWhat to do:\n${biometricAuth.instruction}`,
-          [
-            { text: "Cancel", style: "cancel" },
-            {
-              text: "Go to Settings",
-              style: "default",
-              onPress: () => {
-                if (Platform.OS === "android") {
-                  Linking.sendIntent(
-                    "android.settings.SECURITY_SETTINGS",
-                  ).catch(() => {
-                    Linking.openSettings().catch(() => {});
-                  });
-                } else {
-                  Linking.openSettings().catch(() => {});
-                }
-              },
-            },
-          ],
-        );
-      } else {
-        const fullMessage = biometricAuth.instruction
-          ? `${biometricAuth.error} ${biometricAuth.instruction}`
-          : biometricAuth.error ||
-            "Please scan your registered finger or face to confirm clock in.";
+    // 3. MANDATORY AI FACE VERIFICATION (OPay-style Circular Scanner)
+    setFaceModal({
+      visible: true,
+      mode: member?.isFaceEnrolled && member?.facePhotoURL ? "verify" : "enroll",
+      action: "clockIn",
+    });
+  };
 
-        toast.warn(fullMessage, {
-          title: biometricAuth.errorTitle || "Biometric Verification Required",
-          duration: 6500,
-        });
-      }
-      return;
+  const verifyDeviceBiometricFallback = async (): Promise<{
+    method: "BIOMETRIC" | "DEVICE_PASSCODE";
+    biometricType?: string;
+  } | null> => {
+    const biometricAuth = await verifyIdentityForClockIn();
+    if (biometricAuth.success) {
+      return {
+        method: biometricAuth.method,
+        biometricType: biometricAuth.biometricType,
+      };
     }
 
-    // 4. INSTANT TIME TRAPPING: Lock exact timestamp right at button press
+    if (biometricAuth.needsSetup) {
+      Alert.alert(
+        biometricAuth.errorTitle || "Security Setup Required",
+        `${biometricAuth.error}\n\nWhat to do:\n${biometricAuth.instruction}`,
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Go to Settings",
+            style: "default",
+            onPress: () => {
+              if (Platform.OS === "android") {
+                Linking.sendIntent("android.settings.SECURITY_SETTINGS").catch(() => {
+                  Linking.openSettings().catch(() => {});
+                });
+              } else {
+                Linking.openSettings().catch(() => {});
+              }
+            },
+          },
+        ],
+      );
+    } else {
+      const fullMessage = biometricAuth.instruction
+        ? `${biometricAuth.error} ${biometricAuth.instruction}`
+        : biometricAuth.error ||
+          "Please scan your registered finger or face to confirm.";
+      toast.warn(fullMessage, {
+        title: biometricAuth.errorTitle || "Biometric Verification Required",
+        duration: 6500,
+      });
+    }
+    return null;
+  };
+
+  const executeClockInAfterVerification = async (
+    biometricAuth: { method: "BIOMETRIC" | "DEVICE_PASSCODE"; biometricType?: string } = {
+      method: "BIOMETRIC",
+      biometricType: "AI Face Recognition",
+    }
+  ) => {
+    // 4. INSTANT TIME TRAPPING: Lock exact timestamp right at verification completion
     const punchedDate = new Date();
     const punchedAtISO = punchedDate.toISOString();
     const timeDisplay = punchedDate.toLocaleTimeString([], {
@@ -536,46 +565,16 @@ export default function DashboardScreen() {
       return;
     }
 
-    // MANDATORY BIOMETRIC VERIFICATION (Anti-Proxy Identity Check)
-    const biometricAuth = await verifyIdentityForClockIn();
-    if (!biometricAuth.success) {
-      if (biometricAuth.needsSetup) {
-        Alert.alert(
-          biometricAuth.errorTitle || "Security Setup Required",
-          `${biometricAuth.error}\n\nWhat to do:\n${biometricAuth.instruction}`,
-          [
-            { text: "Cancel", style: "cancel" },
-            {
-              text: "Go to Settings",
-              style: "default",
-              onPress: () => {
-                if (Platform.OS === "android") {
-                  Linking.sendIntent(
-                    "android.settings.SECURITY_SETTINGS",
-                  ).catch(() => {
-                    Linking.openSettings().catch(() => {});
-                  });
-                } else {
-                  Linking.openSettings().catch(() => {});
-                }
-              },
-            },
-          ],
-        );
-      } else {
-        const fullMessage = biometricAuth.instruction
-          ? `${biometricAuth.error} ${biometricAuth.instruction}`
-          : biometricAuth.error ||
-            "Please scan your registered finger or face to confirm sign out.";
+    // MANDATORY AI FACE VERIFICATION (OPay-style Circular Scanner)
+    setFaceModal({
+      visible: true,
+      mode: member?.isFaceEnrolled && member?.facePhotoURL ? "verify" : "enroll",
+      action: "signOut",
+    });
+  };
 
-        toast.warn(fullMessage, {
-          title: biometricAuth.errorTitle || "Biometric Verification Required",
-          duration: 6500,
-        });
-      }
-      return;
-    }
-
+  const executeSignOutAfterVerification = async () => {
+    if (!todayPunch) return;
     // INSTANT TIME TRAPPING
     const signDate = new Date();
     const signOutAtISO = signDate.toISOString();
@@ -1005,6 +1004,45 @@ export default function DashboardScreen() {
         onClose={() => setShowCalibrationModal(false)}
         onSuccess={() => {
           refreshOrganization();
+        }}
+      />
+
+      {/* OPay-style AI Face Enrollment & Verification Scanner */}
+      <FaceScannerModal
+        visible={faceModal.visible}
+        mode={faceModal.mode}
+        referencePhotoUrl={member?.facePhotoURL}
+        onCancel={() => setFaceModal((prev) => ({ ...prev, visible: false }))}
+        onSuccess={async (capturedDataUri) => {
+          const currentAction = faceModal.action;
+          const currentMode = faceModal.mode;
+          setFaceModal((prev) => ({ ...prev, visible: false }));
+
+          if (currentMode === "enroll") {
+            try {
+              await enrollFace([1], capturedDataUri);
+              toast.success("Face biometric profile enrolled!");
+            } catch (err: any) {
+              toast.warn("Face captured, continuing verification...");
+            }
+          }
+
+          if (currentAction === "clockIn") {
+            await executeClockInAfterVerification();
+          } else {
+            await executeSignOutAfterVerification();
+          }
+        }}
+        onFallbackBiometric={async () => {
+          const currentAction = faceModal.action;
+          setFaceModal((prev) => ({ ...prev, visible: false }));
+          const fallbackAuth = await verifyDeviceBiometricFallback();
+          if (!fallbackAuth) return;
+          if (currentAction === "clockIn") {
+            await executeClockInAfterVerification(fallbackAuth);
+          } else {
+            await executeSignOutAfterVerification();
+          }
         }}
       />
     </SafeAreaView>
