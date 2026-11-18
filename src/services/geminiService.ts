@@ -97,11 +97,11 @@ function buildLocalFallbackReply(question: string, ctx: MobileAIContext): string
   const q = question.toLowerCase();
   const org = ctx.organizationName || "your organization";
 
-  if (/^(who|what)\s+are\s+you\b/.test(q.trim())) {
+  if (/\b(who|what)\s+are\s+you\b/.test(q.trim())) {
     return `I'm Presenti AI, your workforce intelligence assistant for ${org}.`;
   }
 
-  if (/^(hi|hello|hey|good morning|good afternoon|good evening)\b/.test(q.trim())) {
+  if (/^(hi+|hello+|he+y+|good morning|good afternoon|good evening)\b/.test(q.trim())) {
     return `Hello! How can I help you today?`;
   }
 
@@ -151,7 +151,7 @@ function buildLocalFallbackReply(question: string, ctx: MobileAIContext): string
       missing.slice(0, 15).map((m) => `• ${m.fullName} (${m.department || "General"})`).join("\n");
   }
 
-  return `${org} currently has ${ctx.totalCheckedIn} check-ins today (${ctx.onTimeCount} on time, ${ctx.lateCount} late) out of ${ctx.totalWorkforceCount} registered staff. (Cloud AI is temporarily busy — try asking again in a moment for deeper analysis.)`;
+  return `I can help with ${org}'s attendance, punctuality, department turnout, or general leadership questions. Could you rephrase that or tap one of the quick chips above?`;
 }
 
 async function callGeminiMobile(
@@ -186,7 +186,7 @@ async function callGeminiMobile(
         };
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 4500);
+    const timeoutId = setTimeout(() => controller.abort(), 7000);
 
     try {
       const res = await fetch(url, {
@@ -229,8 +229,8 @@ export async function askPresentiMobileAI(
 
   // Instant 0ms fast-path for simple greetings, identity questions, or empty-day quick checks
   if (
-    /^(hi|hello|hey|good morning|good afternoon|good evening)[!.\s]*$/i.test(cleanQ) ||
-    /^(who|what)\s+are\s+you[?.\s]*$/i.test(cleanQ) ||
+    /^(hi+|hello+|he+y+|good morning|good afternoon|good evening)[!.\s]*$/i.test(cleanQ) ||
+    /\b(who|what)\s+are\s+you\b/i.test(cleanQ) ||
     (context.totalCheckedIn === 0 &&
       /\b(late|department|turnout|hasn't|not checked|absent|missing)\b/i.test(cleanQ))
   ) {
