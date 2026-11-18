@@ -99,8 +99,12 @@ function buildLocalFallbackReply(question: string, ctx: MobileAIContext): string
   const q = question.toLowerCase();
   const org = ctx.organizationName || "your organization";
 
+  if (/^(who|what)\s+are\s+you\b/.test(q.trim())) {
+    return `I'm Presenti AI, your workforce intelligence assistant for ${org}.`;
+  }
+
   if (/^(hi|hello|hey|good morning|good afternoon|good evening)\b/.test(q.trim())) {
-    return `Hello! I'm Presenti AI for ${org}. Ask me anything about today's attendance (${ctx.totalCheckedIn} check-ins so far), workforce punctuality, or how Presenti works.`;
+    return `Hello! How can I help you today?`;
   }
 
   if (q.includes("brief") || q.includes("summary") || q.includes("report")) {
@@ -224,6 +228,7 @@ export async function askPresentiMobileAI(
   history: MobileChatMessage[] = []
 ): Promise<string> {
   const systemInstruction = `You are Presenti AI, an intelligent, friendly, all-round assistant for "${context.organizationName}".
+- Do NOT introduce yourself (do not say "I am Presenti AI for...") unless the user specifically asks who or what you are. Just answer their question or greeting directly.
 - You can answer ANY question naturally: greetings, general advice, HR/leadership tips, how Presenti works (Wi-Fi BSSID anchors, GPS geofencing, biometrics, executive reports), or live attendance analytics.
 - When asked about attendance, late arrivals, departments, or staff, use the live telemetry below accurately.
 - If "hasAnyPunchesToday" is false (0 check-ins today), clearly state that 0 check-ins have been recorded today for ${context.organizationName} yet.
