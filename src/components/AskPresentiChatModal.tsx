@@ -138,51 +138,55 @@ export const AskPresentiChatModal: React.FC<AskPresentiChatModalProps> = ({
         <View style={styles.sheet}>
           {/* Header */}
           <View style={styles.header}>
-            <View style={styles.headerLeft}>
-              <View style={styles.aiIconBox}>
-                <Ionicons name="sparkles" size={16} color="#ffffff" />
+            <View style={styles.dragPill} />
+            <View style={styles.headerRow}>
+              <View style={styles.headerLeft}>
+                <View style={styles.aiIconBox}>
+                  <Ionicons name="sparkles" size={17} color="#ffffff" />
+                </View>
+                <View>
+                  <Text style={styles.headerTitle}>Ask Presenti AI</Text>
+                  <Text style={styles.headerSub}>
+                    GEMINI INTELLIGENCE • {context.totalCheckedIn} PUNCHES
+                  </Text>
+                </View>
               </View>
-              <View>
-                <Text style={styles.headerTitle}>Ask Presenti AI</Text>
-                <Text style={styles.headerSub}>
-                  GEMINI INTELLIGENCE • {context.totalCheckedIn} PUNCHES
-                </Text>
-              </View>
+              <TouchableOpacity onPress={onClose} style={styles.closeBtn} activeOpacity={0.7}>
+                <Ionicons name="close" size={18} color="#f2f1ee" />
+              </TouchableOpacity>
             </View>
-            <TouchableOpacity onPress={onClose} style={styles.closeBtn} activeOpacity={0.7}>
-              <Ionicons name="close" size={20} color="#f2f1ee" />
-            </TouchableOpacity>
           </View>
 
           {/* Quick Prompt Chips */}
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.chipsScroll}
-            contentContainerStyle={styles.chipsContent}
-          >
-            <TouchableOpacity
-              style={styles.chipPrimary}
-              onPress={handleBriefing}
-              disabled={isLoading}
-              activeOpacity={0.8}
+          <View style={styles.chipsWrapper}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.chipsContent}
             >
-              <Ionicons name="document-text-outline" size={13} color="#ffffff" />
-              <Text style={styles.chipPrimaryText}>Executive Briefing</Text>
-            </TouchableOpacity>
-
-            {QUICK_CHIPS.map((chip) => (
               <TouchableOpacity
-                key={chip}
-                style={styles.chip}
-                onPress={() => handleSend(chip)}
+                style={styles.chipPrimary}
+                onPress={handleBriefing}
                 disabled={isLoading}
-                activeOpacity={0.75}
+                activeOpacity={0.8}
               >
-                <Text style={styles.chipText}>{chip}</Text>
+                <Ionicons name="document-text-outline" size={13} color="#ffffff" />
+                <Text style={styles.chipPrimaryText}>Executive Briefing</Text>
               </TouchableOpacity>
-            ))}
-          </ScrollView>
+
+              {QUICK_CHIPS.map((chip) => (
+                <TouchableOpacity
+                  key={chip}
+                  style={styles.chip}
+                  onPress={() => handleSend(chip)}
+                  disabled={isLoading}
+                  activeOpacity={0.75}
+                >
+                  <Text style={styles.chipText}>{chip}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
 
           {/* Messages Feed */}
           <ScrollView
@@ -271,18 +275,27 @@ const styles = StyleSheet.create({
     justifyContent: "flex-end",
   },
   sheet: {
-    height: "82%",
+    height: "84%",
     backgroundColor: "#ffffff",
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     overflow: "hidden",
-    borderTopWidth: 2,
-    borderTopColor: "#2d81ff",
   },
   header: {
     backgroundColor: "#142748",
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingTop: 10,
+    paddingBottom: 14,
+  },
+  dragPill: {
+    alignSelf: "center",
+    width: 38,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: "rgba(255, 255, 255, 0.25)",
+    marginBottom: 10,
+  },
+  headerRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
@@ -290,18 +303,19 @@ const styles = StyleSheet.create({
   headerLeft: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    gap: 11,
   },
   aiIconBox: {
-    width: 32,
-    height: 32,
+    width: 36,
+    height: 36,
+    borderRadius: 10,
     backgroundColor: "#2d81ff",
     alignItems: "center",
     justifyContent: "center",
   },
   headerTitle: {
-    color: "#f2f1ee",
-    fontSize: 15,
+    color: "#ffffff",
+    fontSize: 16,
     fontWeight: "800",
   },
   headerSub: {
@@ -312,66 +326,74 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   closeBtn: {
-    width: 32,
-    height: 32,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "rgba(242, 241, 238, 0.25)",
+    backgroundColor: "rgba(255, 255, 255, 0.12)",
   },
-  chipsScroll: {
-    maxHeight: 50,
+  chipsWrapper: {
     backgroundColor: "#f2f1ee",
     borderBottomWidth: 1,
     borderBottomColor: "#e5e7eb",
   },
   chipsContent: {
-    paddingHorizontal: 12,
-    paddingVertical: 9,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     gap: 8,
+    flexDirection: "row",
     alignItems: "center",
   },
   chipPrimary: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 5,
+    gap: 6,
     backgroundColor: "#142748",
-    paddingHorizontal: 11,
-    paddingVertical: 6,
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
   },
   chipPrimaryText: {
-    color: "#f2f1ee",
-    fontSize: 11,
+    color: "#ffffff",
+    fontSize: 12,
     fontWeight: "700",
   },
   chip: {
     backgroundColor: "#ffffff",
     borderWidth: 1,
     borderColor: "#d1d5db",
-    paddingHorizontal: 11,
-    paddingVertical: 6,
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
   },
   chipText: {
     color: "#142748",
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: "600",
   },
   messagesScroll: {
     flex: 1,
-    backgroundColor: "#fafafa",
+    backgroundColor: "#f8fafc",
   },
   messagesContent: {
-    padding: 14,
-    gap: 12,
+    padding: 16,
+    gap: 14,
   },
   welcomeCard: {
     backgroundColor: "#ffffff",
     borderWidth: 1,
     borderColor: "#e5e7eb",
-    padding: 16,
+    borderRadius: 16,
+    padding: 18,
+    shadowColor: "#142748",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 2,
   },
   welcomeTitle: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: "800",
     color: "#142748",
     marginBottom: 6,
@@ -379,19 +401,26 @@ const styles = StyleSheet.create({
   welcomeText: {
     fontSize: 13,
     color: "#475569",
-    lineHeight: 19,
+    lineHeight: 20,
   },
   userBubble: {
     alignSelf: "flex-end",
-    maxWidth: "84%",
+    maxWidth: "82%",
     backgroundColor: "#142748",
-    paddingHorizontal: 13,
-    paddingVertical: 10,
+    borderRadius: 18,
+    borderBottomRightRadius: 4,
+    paddingHorizontal: 15,
+    paddingVertical: 11,
+    shadowColor: "#142748",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    elevation: 2,
   },
   userBubbleText: {
-    color: "#f2f1ee",
-    fontSize: 13,
-    lineHeight: 19,
+    color: "#ffffff",
+    fontSize: 13.5,
+    lineHeight: 20,
   },
   aiBubble: {
     alignSelf: "flex-start",
@@ -399,18 +428,25 @@ const styles = StyleSheet.create({
     backgroundColor: "#ffffff",
     borderWidth: 1,
     borderColor: "#e5e7eb",
-    padding: 12,
+    borderRadius: 18,
+    borderBottomLeftRadius: 4,
+    padding: 14,
+    shadowColor: "#142748",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 6,
+    elevation: 2,
   },
   aiBubbleText: {
     color: "#142748",
-    fontSize: 13,
-    lineHeight: 20,
+    fontSize: 13.5,
+    lineHeight: 21,
   },
   aiBubbleFooter: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginTop: 8,
+    marginTop: 10,
     paddingTop: 8,
     borderTopWidth: 1,
     borderTopColor: "#f1f5f9",
@@ -425,10 +461,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 4,
     backgroundColor: "#f2f1ee",
-    borderWidth: 1,
-    borderColor: "#d1d5db",
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
   },
   copyBtnText: {
     fontSize: 10,
@@ -444,20 +479,23 @@ const styles = StyleSheet.create({
     backgroundColor: "#ffffff",
     borderWidth: 1,
     borderColor: "#e5e7eb",
+    borderRadius: 18,
+    borderBottomLeftRadius: 4,
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 11,
   },
   loadingText: {
-    fontSize: 12,
+    fontSize: 12.5,
     fontWeight: "600",
     color: "#2d81ff",
   },
   inputBar: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    padding: 12,
-    paddingBottom: Platform.OS === "ios" ? 24 : 12,
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: Platform.OS === "ios" ? 26 : 14,
     backgroundColor: "#ffffff",
     borderTopWidth: 1,
     borderTopColor: "#e5e7eb",
@@ -465,16 +503,18 @@ const styles = StyleSheet.create({
   textInput: {
     flex: 1,
     borderWidth: 1,
-    borderColor: "#d1d5db",
-    backgroundColor: "#f9fafb",
-    paddingHorizontal: 12,
+    borderColor: "#e5e7eb",
+    borderRadius: 24,
+    backgroundColor: "#f2f1ee",
+    paddingHorizontal: 16,
     paddingVertical: 10,
-    fontSize: 13,
+    fontSize: 13.5,
     color: "#142748",
   },
   sendBtn: {
     width: 42,
     height: 42,
+    borderRadius: 21,
     backgroundColor: "#2d81ff",
     alignItems: "center",
     justifyContent: "center",

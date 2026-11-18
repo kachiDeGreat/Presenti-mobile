@@ -33,8 +33,12 @@ export interface MobileAIContext {
   members: MobileWorkforceSummary[];
 }
 
-const GEMINI_ENDPOINT =
-  "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent";
+const GEMINI_MODELS = [
+  "gemini-3.8-flash",
+  "gemini-flash-lite-latest",
+  "gemini-pro-latest",
+  "gemma-4-31b-it",
+];
 
 function getGeminiKey(): string {
   return (process.env.EXPO_PUBLIC_GEMINI_API_KEY || "").trim();
@@ -97,42 +101,59 @@ async function callGeminiMobile(systemInstruction: string, prompt: string): Prom
     throw new Error("Gemini API key is missing. Check EXPO_PUBLIC_GEMINI_API_KEY in .env.");
   }
 
-  const res = await fetch(`${GEMINI_ENDPOINT}?key=${encodeURIComponent(apiKey)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      systemInstruction: {
-        parts: [{ text: systemInstruction }],
-      },
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: prompt }],
-        },
-      ],
-      generationConfig: {
-        temperature: 0.3,
-        maxOutputTokens: 700,
-      },
-    }),
-  });
+  let lastError = "Unable to reach Presenti AI.";
 
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const errMsg = data?.error?.message || `Gemini API error (${res.status})`;
-    throw new Error(errMsg);
+  for (const model of GEMINI_MODELS) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
+      apiKey
+    )}`;
+    const isGemma = model.startsWith("gemma-");
+    const payload = isGemma
+      ? {
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: `${systemInstruction}\n\n${prompt}` }],
+            },
+          ],
+          generationConfig: { temperature: 0.3, maxOutputTokens: 700 },
+        }
+      : {
+          systemInstruction: { parts: [{ text: systemInstruction }] },
+          contents: [{ role: "user", parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0.3, maxOutputTokens: 700 },
+        };
+
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        lastError = data?.error?.message || `API error (${res.status})`;
+        // Retry next model on rate limit, overload, high demand, or unavailable model
+        continue;
+      }
+
+      const text =
+        data?.candidates?.[0]?.content?.parts
+          ?.map((p: { text?: string }) => p.text || "")
+          .join("")
+          .trim() || "";
+
+      if (text) {
+        return text;
+      }
+      lastError = "Model returned an empty response.";
+    } catch (err: any) {
+      lastError = err?.message || "Network error contacting Gemini.";
+    }
   }
 
-  const text =
-    data?.candidates?.[0]?.content?.parts
-      ?.map((p: { text?: string }) => p.text || "")
-      .join("")
-      .trim() || "";
-
-  if (!text) {
-    throw new Error("Gemini returned an empty response.");
-  }
-  return text;
+  throw new Error(lastError);
 }
 
 export async function askPresentiMobileAI(
