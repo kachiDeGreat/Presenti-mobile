@@ -33,10 +33,9 @@ const QUICK_CHIPS = [
   "Who hasn't checked in?",
 ];
 
-/** Renders **bold** markdown segments and clean bullets inside React Native Text */
-function renderFormattedAIText(raw: string) {
-  const normalized = raw.replace(/^(\s*)[*-]\s+/gm, "$1• ");
-  const parts = normalized.split(/(\*\*[^*]+\*\*)/g);
+function renderInlineMarkdown(line: string) {
+  const normalized = line.replace(/^(\s*)[*-]\s+/, "$1• ");
+  const parts = normalized.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
   return parts.map((part, i) => {
     if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
       return (
@@ -45,8 +44,68 @@ function renderFormattedAIText(raw: string) {
         </Text>
       );
     }
+    if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
+      return (
+        <Text
+          key={i}
+          style={{
+            fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+            backgroundColor: "#f2f1ee",
+            color: "#142748",
+            fontSize: 12,
+          }}
+        >
+          {part.slice(1, -1)}
+        </Text>
+      );
+    }
     return <Text key={i}>{part}</Text>;
   });
+}
+
+/** Renders headings (###), dividers (---), **bold**, `code`, and bullets cleanly */
+function renderFormattedAIText(raw: string) {
+  const lines = raw.split(/\r?\n/);
+  return (
+    <View style={{ gap: 4 }}>
+      {lines.map((line, idx) => {
+        const trimmed = line.trim();
+        if (!trimmed) {
+          return <View key={idx} style={{ height: 4 }} />;
+        }
+        if (/^[-*_]{3,}$/.test(trimmed)) {
+          return (
+            <View
+              key={idx}
+              style={{ height: 1, backgroundColor: "#e5e7eb", marginVertical: 5 }}
+            />
+          );
+        }
+        const headingMatch = trimmed.match(/^#{1,4}\s+(.+)$/);
+        if (headingMatch) {
+          return (
+            <Text
+              key={idx}
+              style={{
+                fontSize: 14,
+                fontWeight: "800",
+                color: "#142748",
+                marginTop: idx === 0 ? 0 : 4,
+                marginBottom: 2,
+              }}
+            >
+              {renderInlineMarkdown(headingMatch[1])}
+            </Text>
+          );
+        }
+        return (
+          <Text key={idx} style={styles.aiBubbleText}>
+            {renderInlineMarkdown(line)}
+          </Text>
+        );
+      })}
+    </View>
+  );
 }
 
 export const AskPresentiChatModal: React.FC<AskPresentiChatModalProps> = ({
@@ -226,7 +285,7 @@ export const AskPresentiChatModal: React.FC<AskPresentiChatModalProps> = ({
                   </View>
                 ) : (
                   <View key={idx} style={styles.aiBubble}>
-                    <Text style={styles.aiBubbleText}>{renderFormattedAIText(msg.content)}</Text>
+                    {renderFormattedAIText(msg.content)}
                     <View style={styles.aiBubbleFooter}>
                       <Text style={styles.aiTimeText}>GEMINI • {msg.timestamp}</Text>
                       <TouchableOpacity
