@@ -18,7 +18,6 @@
     },
     "android": {
       "package": "com.attendance.mobile",
-      "versionCode": 2,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "ACCESS_COARSE_LOCATION",
