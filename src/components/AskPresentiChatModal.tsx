@@ -151,11 +151,11 @@ export const AskPresentiChatModal: React.FC<AskPresentiChatModalProps> = ({
     }
   }, [messages, isLoading, visible]);
 
-  const handleClearChat = async () => {
+  const handleClearChat = () => {
     if (messages.length === 0 || isLoading) return;
     setMessages([]);
-    await clearAIChatHistory(organizationId, userId);
     toast.success("Chat history cleared across devices.");
+    clearAIChatHistory(organizationId, userId).catch(() => {});
   };
 
   const handleBriefing = async () => {
