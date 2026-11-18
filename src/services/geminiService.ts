@@ -34,8 +34,8 @@ export interface MobileAIContext {
 }
 
 const GEMINI_MODELS = [
-  "gemini-3.8-flash",
   "gemini-flash-lite-latest",
+  "gemini-3.8-flash",
   "gemini-pro-latest",
   "gemma-4-31b-it",
 ];
@@ -59,40 +59,40 @@ function buildMobileSnapshot(ctx: MobileAIContext): string {
       ? Math.round((ctx.onTimeCount / ctx.totalCheckedIn) * 100)
       : 100;
 
-  return JSON.stringify(
-    {
-      organization: ctx.organizationName,
-      branch: ctx.branchName || "Main Campus",
-      date: ctx.dateLabel,
-      metrics: {
-        totalCheckedIn: ctx.totalCheckedIn,
-        onTime: ctx.onTimeCount,
-        late: ctx.lateCount,
-        punctualityRatePercent: punctualityPct,
-        totalRegisteredWorkforce: ctx.totalWorkforceCount,
-      },
-      departments: ctx.departments,
-      departmentBreakdown: deptCounts,
-      recentPunches: ctx.records.slice(0, 45).map((r) => ({
-        name: r.memberName,
-        dept: r.department,
-        status: r.status || "ON_TIME",
-        time: r.punchedAt
-          ? new Date(r.punchedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-          : "N/A",
-        method: r.verificationMethod,
-        signedOut: Boolean(r.signedOutAt),
-      })),
-      registeredMembersSample: ctx.members.slice(0, 45).map((m) => ({
-        name: m.fullName,
-        dept: m.department,
-        status: m.status || "ACTIVE",
-        faceEnrolled: Boolean(m.isFaceEnrolled),
-      })),
-    },
-    null,
-    2
+  const checkedInNames = new Set(
+    ctx.records.map((r) => (r.memberName || "").trim().toLowerCase())
   );
+  const notCheckedInMembers = ctx.members
+    .filter((m) => !checkedInNames.has((m.fullName || "").trim().toLowerCase()))
+    .slice(0, 30)
+    .map((m) => `${m.fullName} (${m.department || "General"})`);
+
+  return JSON.stringify({
+    organization: ctx.organizationName,
+    branch: ctx.branchName || "Main Campus",
+    date: ctx.dateLabel,
+    hasAnyPunchesToday: ctx.totalCheckedIn > 0,
+    metrics: {
+      totalCheckedIn: ctx.totalCheckedIn,
+      onTime: ctx.onTimeCount,
+      late: ctx.lateCount,
+      punctualityRatePercent: punctualityPct,
+      totalRegisteredWorkforce: ctx.totalWorkforceCount,
+    },
+    departments: ctx.departments,
+    departmentBreakdown: deptCounts,
+    notCheckedInYet: notCheckedInMembers,
+    recentPunches: ctx.records.slice(0, 35).map((r) => ({
+      name: r.memberName,
+      dept: r.department,
+      status: r.status || "ON_TIME",
+      time: r.punchedAt
+        ? new Date(r.punchedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+        : "N/A",
+      method: r.verificationMethod,
+      signedOut: Boolean(r.signedOutAt),
+    })),
+  });
 }
 
 async function callGeminiMobile(systemInstruction: string, prompt: string): Promise<string> {
@@ -116,12 +116,16 @@ async function callGeminiMobile(systemInstruction: string, prompt: string): Prom
               parts: [{ text: `${systemInstruction}\n\n${prompt}` }],
             },
           ],
-          generationConfig: { temperature: 0.3, maxOutputTokens: 700 },
+          generationConfig: { temperature: 0.2, maxOutputTokens: 450 },
         }
       : {
           systemInstruction: { parts: [{ text: systemInstruction }] },
           contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: { temperature: 0.3, maxOutputTokens: 700 },
+          generationConfig: {
+            temperature: 0.2,
+            maxOutputTokens: 450,
+            thinkingConfig: { thinkingBudget: 0 },
+          },
         };
 
     try {
@@ -161,10 +165,11 @@ export async function askPresentiMobileAI(
   context: MobileAIContext,
   history: MobileChatMessage[] = []
 ): Promise<string> {
-  const systemInstruction = `You are Presenti AI, a mobile workforce intelligence assistant for "${context.organizationName}".
+  const systemInstruction = `You are Presenti AI, a fast workforce intelligence assistant for "${context.organizationName}".
 Answer concisely and accurately using ONLY the live telemetry provided.
+- CRITICAL: If "hasAnyPunchesToday" is false (0 check-ins today), ALWAYS state clearly that 0 employees have checked in today for ${context.organizationName} (and mention totalRegisteredWorkforce / notCheckedInYet if relevant) instead of simply saying "no one is late".
 - Never invent names or numbers not present in the telemetry.
-- Format cleanly for a mobile chat bubble using short bullet points.`;
+- Keep answers short, direct, and formatted with clean bullet points.`;
 
   const recentHistory = history
     .slice(-6)
