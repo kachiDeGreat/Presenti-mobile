@@ -259,9 +259,7 @@ export const AskPresentiChatModal: React.FC<AskPresentiChatModalProps> = ({
                 </View>
                 <View>
                   <Text style={styles.headerTitle}>Ask Presenti AI</Text>
-                  <Text style={styles.headerSub}>
-                    PRESENTI INTELLIGENCE • {context.totalCheckedIn} PUNCHES
-                  </Text>
+                  <Text style={styles.headerSub}>PRESENTI INTELLIGENCE</Text>
                 </View>
               </View>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
