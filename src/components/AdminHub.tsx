@@ -783,9 +783,30 @@ export const AdminHub: React.FC = () => {
     setRefreshing(true);
     try {
       await refreshOrganization().catch(() => {});
-      if (organization?.id && db) {
-        const attRef = collection(db, "churches", organization.id, "attendance");
-        const membersRef = collection(db, "churches", organization.id, "members");
+
+      let targetOrgId = organization?.id;
+      if (!targetOrgId) {
+        try {
+          const cached = await getCachedOrganization();
+          if (cached?.id) targetOrgId = cached.id;
+        } catch {}
+      }
+      if (!targetOrgId) {
+        try {
+          const cachedAnchors = await getCachedAnchors();
+          if (cachedAnchors?.churchId) targetOrgId = cachedAnchors.churchId;
+        } catch {}
+      }
+      if (!targetOrgId && user) {
+        try {
+          const adminOrg = await getAdminOrganization(user.email, user.uid);
+          if (adminOrg?.id) targetOrgId = adminOrg.id;
+        } catch {}
+      }
+
+      if (targetOrgId && db) {
+        const attRef = collection(db, "churches", targetOrgId, "attendance");
+        const membersRef = collection(db, "churches", targetOrgId, "members");
         const [attSnap, memSnap] = await Promise.all([
           getDocs(attRef).catch(() => null),
           getDocs(membersRef).catch(() => null),
@@ -893,12 +914,16 @@ export const AdminHub: React.FC = () => {
               contentContainerStyle={styles.scrollContent}
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
+              alwaysBounceVertical
+              overScrollMode="always"
               nestedScrollEnabled
               refreshControl={
                 <RefreshControl
                   refreshing={refreshing}
                   onRefresh={handlePullRefresh}
-                  tintColor="#142748"
+                  tintColor="#2d81ff"
+                  colors={["#2d81ff", "#142748"]}
+                  progressBackgroundColor="#ffffff"
                 />
               }
             >
@@ -1047,14 +1072,10 @@ export const AdminHub: React.FC = () => {
                 )}
 
                 {!organization?.id && (
-                  <TouchableOpacity
-                    style={styles.reconnectBtn}
-                    onPress={handlePullRefresh}
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons name="refresh-outline" size={15} color="#142748" style={{ marginRight: 6 }} />
-                    <Text style={styles.reconnectBtnText}>RECONNECT WORKSPACE</Text>
-                  </TouchableOpacity>
+                  <View style={styles.pullHintRow}>
+                    <Ionicons name="arrow-down-outline" size={14} color="#64748b" style={{ marginRight: 5 }} />
+                    <Text style={styles.pullHintText}>Pull down to refresh workspace</Text>
+                  </View>
                 )}
               </View>
             ) : (
@@ -1163,12 +1184,16 @@ export const AdminHub: React.FC = () => {
               contentContainerStyle={styles.scrollContent}
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
+              alwaysBounceVertical
+              overScrollMode="always"
               nestedScrollEnabled
               refreshControl={
                 <RefreshControl
                   refreshing={refreshing}
                   onRefresh={handlePullRefresh}
-                  tintColor="#142748"
+                  tintColor="#2d81ff"
+                  colors={["#2d81ff", "#142748"]}
+                  progressBackgroundColor="#ffffff"
                 />
               }
             >
@@ -1510,12 +1535,16 @@ export const AdminHub: React.FC = () => {
               contentContainerStyle={styles.scrollContent}
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
+              alwaysBounceVertical
+              overScrollMode="always"
               nestedScrollEnabled
               refreshControl={
                 <RefreshControl
                   refreshing={refreshing}
                   onRefresh={handlePullRefresh}
-                  tintColor="#142748"
+                  tintColor="#2d81ff"
+                  colors={["#2d81ff", "#142748"]}
+                  progressBackgroundColor="#ffffff"
                 />
               }
             >
@@ -1655,14 +1684,10 @@ export const AdminHub: React.FC = () => {
                     : "Workers who register on the mobile app will appear here."}
                 </Text>
                 {!organization?.id && (
-                  <TouchableOpacity
-                    style={styles.reconnectBtn}
-                    onPress={handlePullRefresh}
-                    activeOpacity={0.8}
-                  >
-                    <Ionicons name="refresh-outline" size={15} color="#142748" style={{ marginRight: 6 }} />
-                    <Text style={styles.reconnectBtnText}>RECONNECT WORKSPACE</Text>
-                  </TouchableOpacity>
+                  <View style={styles.pullHintRow}>
+                    <Ionicons name="arrow-down-outline" size={14} color="#64748b" style={{ marginRight: 5 }} />
+                    <Text style={styles.pullHintText}>Pull down to refresh workspace</Text>
+                  </View>
                 )}
               </View>
             ) : (
@@ -2344,6 +2369,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
+    flexGrow: 1,
     padding: 16,
     paddingBottom: 110,
   },
@@ -2388,23 +2414,16 @@ const styles = StyleSheet.create({
     letterSpacing: 0.6,
     fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
   },
-  reconnectBtn: {
+  pullHintRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#f2f1ee",
-    borderWidth: 1,
-    borderColor: "#142748",
-    paddingVertical: 10,
-    paddingHorizontal: 16,
     marginTop: 14,
   },
-  reconnectBtnText: {
-    color: "#142748",
-    fontSize: 10,
-    fontWeight: "800",
-    letterSpacing: 0.6,
-    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+  pullHintText: {
+    color: "#64748b",
+    fontSize: 12,
+    fontWeight: "600",
   },
   tabContent: {
     gap: 16,
