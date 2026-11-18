@@ -1,5 +1,6 @@
 import React from 'react';
 import { View, Text, ActivityIndicator, StyleSheet, Modal, Image } from 'react-native';
+import { C, R, S, T, shadow } from '../constants/premium';
 
 const APP_ICON = require('../image/app-icon.png');
 
@@ -58,49 +59,44 @@ const styles = StyleSheet.create({
     height: '100%',
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#f2f1ee',
-    padding: 24,
-    gap: 20,
+    backgroundColor: C.canvas,
+    padding: S.xl,
+    gap: S.lg,
   },
   splashIcon: {
-    width: 90,
-    height: 90,
-    borderRadius: 0,
+    width: 84,
+    height: 84,
+    borderRadius: R.xl,
   },
   inlineCluster: {
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 12,
-    padding: 16,
+    gap: S.sm,
+    padding: S.md,
   },
   overlayBackdrop: {
     flex: 1,
-    backgroundColor: 'rgba(20, 39, 72, 0.45)',
+    backgroundColor: C.overlay,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 24,
+    padding: S.xl,
   },
   card: {
-    backgroundColor: '#ffffff',
-    borderRadius: 0,
+    backgroundColor: C.card,
+    borderRadius: R.lg,
     paddingHorizontal: 28,
     paddingVertical: 24,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 14,
-    minWidth: 180,
+    minWidth: 190,
     maxWidth: 320,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    elevation: 0,
-    shadowOpacity: 0,
+    ...shadow.raised,
   },
   messageText: {
-    fontSize: 13,
+    ...T.caption,
     fontWeight: '600',
-    color: '#142748',
+    color: C.ink,
     textAlign: 'center',
-    lineHeight: 18,
-    letterSpacing: -0.1,
   },
 });

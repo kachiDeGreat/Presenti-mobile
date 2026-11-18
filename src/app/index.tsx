@@ -41,6 +41,7 @@ import type { TodayPunchRecord } from "../types";
 import { AdminCalibrationModal } from "../components/AdminCalibrationModal";
 import { AdminHub } from "../components/AdminHub";
 import { FaceScannerModal } from "../components/FaceScannerModal";
+import { C, MONO, R, S, T, shadow, ui } from "../constants/premium";
 
 export default function DashboardScreen() {
   const {
@@ -879,10 +880,10 @@ export default function DashboardScreen() {
                     activeOpacity={0.85}
                   >
                     {isSyncingSignOut ? (
-                      <ActivityIndicator size="small" color="#f2f1ee" />
+                      <ActivityIndicator size="small" color={C.ink} />
                     ) : (
                       <>
-                        <Ionicons name="log-out-outline" size={18} color="#f2f1ee" />
+                        <Ionicons name="log-out-outline" size={18} color={C.ink} />
                         <Text style={styles.signOutActionText}>CLOCK OUT / END SHIFT</Text>
                       </>
                     )}
@@ -1052,11 +1053,11 @@ export default function DashboardScreen() {
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: "#f2f1ee",
+    backgroundColor: C.canvas,
   },
   scrollContent: {
-    paddingHorizontal: 18,
-    paddingTop: 12,
+    paddingHorizontal: S.screenX,
+    paddingTop: S.sm,
     paddingBottom: 40,
     gap: 14,
     maxWidth: 540,
@@ -1064,24 +1065,24 @@ const styles = StyleSheet.create({
     alignSelf: "center",
   },
 
-  // 1. Top Bar / App Branding
+  // 1. Top Bar / App Branding (Light canvas header)
   topBar: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    paddingVertical: 4,
+    paddingVertical: 6,
   },
   brandRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 10,
+    gap: 12,
     flex: 1,
     marginRight: 10,
   },
   brandLogo: {
-    height: 38,
-    width: 38,
-    borderRadius: 0,
+    height: 40,
+    width: 40,
+    borderRadius: R.sm,
   },
   brandBadgeRow: {
     flexDirection: "row",
@@ -1089,155 +1090,125 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   livePulseDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: "#10b981",
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    backgroundColor: C.success,
   },
   brandTag: {
-    fontSize: 9,
-    fontWeight: "800",
-    color: "#142748",
-    letterSpacing: 0.8,
-    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+    ...T.labelSm,
+    color: C.ink,
   },
   orgCodePill: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    paddingHorizontal: 6,
+    backgroundColor: C.card,
+    borderRadius: R.pill,
+    paddingHorizontal: 8,
     paddingVertical: 2,
+    borderWidth: 1,
+    borderColor: C.lineCard,
   },
   orgCodeText: {
+    ...T.labelSm,
     fontSize: 9,
-    fontWeight: "700",
-    color: "#142748",
-    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+    color: C.ink,
   },
   orgName: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#142748",
-    letterSpacing: -0.3,
+    ...T.title,
+    fontSize: 18,
   },
   topBarRight: {
     flexDirection: "row",
     alignItems: "center",
   },
   topAvatar: {
-    width: 38,
-    height: 38,
-    borderRadius: 0,
-    borderWidth: 1.5,
-    borderColor: "#142748",
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    borderWidth: 2,
+    borderColor: C.card,
   },
   topAvatarFallback: {
-    width: 38,
-    height: 38,
-    borderRadius: 0,
-    backgroundColor: "#142748",
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: C.ink,
     alignItems: "center",
     justifyContent: "center",
+    ...shadow.card,
   },
   topAvatarLetter: {
-    color: "#f2f1ee",
-    fontSize: 14,
+    color: C.white,
+    fontSize: 15,
     fontWeight: "800",
   },
 
   // 2. Profile Quick Chip Card
   profileChipCard: {
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    padding: 14,
+    ...ui.card,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    gap: 10,
   },
   profileName: {
-    fontSize: 14,
-    fontWeight: "800",
-    color: "#142748",
+    ...T.heading,
+    fontSize: 15,
   },
   profileDept: {
-    fontSize: 11,
-    color: "#64748b",
+    ...T.caption,
+    fontSize: 12,
   },
   biometricBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    backgroundColor: "#ecfdf5",
-    borderWidth: 1,
-    borderColor: "#a7f3d0",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    ...ui.pill,
+    backgroundColor: C.successSoft,
   },
   biometricBadgeText: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#10b981",
-    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+    ...T.labelSm,
+    color: C.success,
   },
 
-  // 3. Hero Clock & Shift Surface (Material Brutalist Surface)
+  // 3. Hero Digital Shift Clock Card
   clockSurface: {
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    paddingVertical: 20,
-    paddingHorizontal: 16,
+    ...ui.card,
+    paddingVertical: 24,
+    paddingHorizontal: S.lg,
     alignItems: "center",
   },
   clockDateText: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#64748b",
-    textTransform: "uppercase",
-    letterSpacing: 0.8,
-    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+    ...T.label,
+    color: C.muted,
   },
   clockTimeText: {
-    fontSize: 42,
-    fontWeight: "800",
-    color: "#142748",
-    letterSpacing: -1,
-    marginVertical: 4,
+    ...T.hero,
+    fontSize: 44,
+    marginVertical: 6,
     fontVariant: ["tabular-nums"],
   },
   shiftBadgeRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    marginTop: 4,
+    gap: 10,
+    marginTop: 6,
   },
   statusBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderWidth: 1,
+    ...ui.pill,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
   },
   badgeActive: {
-    backgroundColor: "#ecfdf5",
-    borderColor: "#a7f3d0",
+    backgroundColor: C.successSoft,
   },
   badgeWarning: {
-    backgroundColor: "#fffbeb",
-    borderColor: "#fde68a",
+    backgroundColor: C.warnSoft,
   },
   badgeError: {
-    backgroundColor: "#fef2f2",
-    borderColor: "#fecaca",
+    backgroundColor: C.dangerSoft,
   },
   badgeNeutral: {
-    backgroundColor: "#f1f5f9",
-    borderColor: "#e2e8f0",
+    backgroundColor: C.cardAlt,
   },
   badgeDot: {
     width: 6,
@@ -1245,56 +1216,50 @@ const styles = StyleSheet.create({
     borderRadius: 3,
   },
   dotActive: {
-    backgroundColor: "#10b981",
+    backgroundColor: C.success,
   },
   dotWarning: {
-    backgroundColor: "#f59e0b",
+    backgroundColor: C.warn,
   },
   dotError: {
-    backgroundColor: "#d92d20",
+    backgroundColor: C.danger,
   },
   dotNeutral: {
-    backgroundColor: "#64748b",
+    backgroundColor: C.muted,
   },
   badgeText: {
-    fontSize: 10,
-    fontWeight: "800",
-    letterSpacing: 0.4,
-    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+    ...T.labelSm,
   },
   textActive: {
-    color: "#10b981",
+    color: C.success,
   },
   textWarning: {
-    color: "#f59e0b",
+    color: C.warn,
   },
   textError: {
-    color: "#d92d20",
+    color: C.danger,
   },
   textNeutral: {
-    color: "#64748b",
+    color: C.muted,
   },
   shiftHoursText: {
-    fontSize: 11,
-    fontWeight: "600",
-    color: "#64748b",
-    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+    ...T.labelSm,
+    color: C.ink2,
   },
 
   // 4. Primary Punch Button (Bolt Style Hero Action)
   primaryPunchBtn: {
-    backgroundColor: "#142748",
-    borderWidth: 1,
-    borderColor: "#142748",
-    paddingVertical: 18,
+    backgroundColor: C.ink,
+    borderRadius: R.md,
+    paddingVertical: 16,
     paddingHorizontal: 18,
     flexDirection: "row",
     alignItems: "center",
     gap: 14,
+    ...shadow.raised,
   },
   punchBtnLate: {
-    backgroundColor: "#d97706",
-    borderColor: "#b45309",
+    backgroundColor: C.warn,
   },
   punchBtnDisabled: {
     opacity: 0.7,
@@ -1305,34 +1270,30 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 10,
     width: "100%",
+    paddingVertical: 6,
   },
   punchIconCircle: {
     width: 44,
     height: 44,
-    backgroundColor: "rgba(255, 255, 255, 0.15)",
+    borderRadius: 22,
+    backgroundColor: "rgba(255, 255, 255, 0.16)",
     alignItems: "center",
     justifyContent: "center",
   },
   punchBtnTitle: {
-    fontSize: 13,
-    fontWeight: "800",
-    color: "#f2f1ee",
-    letterSpacing: 0.6,
-    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+    ...ui.btnPrimaryText,
   },
   punchBtnSubtitle: {
-    fontSize: 11,
-    color: "rgba(242, 241, 238, 0.8)",
+    fontSize: 12,
+    color: "rgba(255, 255, 255, 0.8)",
     fontWeight: "500",
+    marginTop: 2,
   },
 
   // 5. Signed-In Status Card
   punchedCard: {
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    padding: 16,
-    gap: 12,
+    ...ui.card,
+    gap: 14,
   },
   punchedHeaderRow: {
     flexDirection: "row",
@@ -1340,59 +1301,48 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   checkCircle: {
-    width: 38,
-    height: 38,
-    backgroundColor: "#10b981",
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: C.success,
     alignItems: "center",
     justifyContent: "center",
   },
   checkCircleLate: {
-    backgroundColor: "#f59e0b",
+    backgroundColor: C.warn,
   },
   punchedTitle: {
-    fontSize: 14,
-    fontWeight: "800",
-    color: "#142748",
+    ...T.heading,
   },
   punchedSubtitle: {
-    fontSize: 11,
-    color: "#64748b",
+    ...T.caption,
   },
   pillGeneric: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    ...ui.pill,
   },
   pillOnTime: {
-    backgroundColor: "#ecfdf5",
-    borderWidth: 1,
-    borderColor: "#a7f3d0",
+    backgroundColor: C.successSoft,
   },
   pillLate: {
-    backgroundColor: "#fffbeb",
-    borderWidth: 1,
-    borderColor: "#fde68a",
+    backgroundColor: C.warnSoft,
   },
   pillTextGeneric: {
-    fontSize: 9,
-    fontWeight: "800",
-    letterSpacing: 0.6,
-    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+    ...T.labelSm,
   },
   pillTextOnTime: {
-    color: "#10b981",
+    color: C.success,
   },
   pillTextLate: {
-    color: "#d97706",
+    color: C.warn,
   },
   punchedMetaRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: "#f8fafc",
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    borderColor: "#f1f5f9",
+    backgroundColor: C.cardAlt,
+    borderRadius: R.md,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
   },
   metaItem: {
     flexDirection: "row",
@@ -1400,8 +1350,8 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   metaText: {
-    fontSize: 11,
-    color: "#475569",
+    fontSize: 12,
+    color: C.ink2,
     fontWeight: "600",
   },
 
@@ -1414,33 +1364,20 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-    backgroundColor: "#ecfdf5",
+    backgroundColor: C.successSoft,
+    borderRadius: R.md,
     paddingVertical: 12,
-    borderWidth: 1,
-    borderColor: "#a7f3d0",
   },
   signOutCompletedText: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#10b981",
-    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+    ...T.labelSm,
+    color: C.success,
   },
   signOutActionBtn: {
-    backgroundColor: "#ffffff",
-    borderWidth: 1.5,
-    borderColor: "#142748",
-    paddingVertical: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
+    ...ui.btnSecondary,
+    width: "100%",
   },
   signOutActionText: {
-    fontSize: 11,
-    fontWeight: "800",
-    color: "#142748",
-    letterSpacing: 0.8,
-    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+    ...ui.btnSecondaryText,
   },
   signOutWaitingRow: {
     flexDirection: "row",
@@ -1450,64 +1387,49 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   signOutWaitingText: {
-    fontSize: 11,
-    color: "#64748b",
-    fontWeight: "500",
+    ...T.caption,
+    fontSize: 12,
   },
 
   // 6. Blocked Window Card
   blockedCard: {
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "#fca5a5",
-    padding: 22,
+    ...ui.card,
+    padding: S.lg,
     alignItems: "center",
     gap: 8,
   },
   blockedTitle: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#d92d20",
+    ...T.heading,
+    color: C.danger,
     marginTop: 4,
   },
   blockedSubtitle: {
-    fontSize: 12,
-    color: "#64748b",
+    ...T.caption,
     textAlign: "center",
-    lineHeight: 18,
   },
 
   // 7. Minimal Info Grid
   gridRow: {
     flexDirection: "row",
-    gap: 10,
+    gap: 12,
   },
   gridTile: {
     flex: 1,
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    padding: 14,
+    ...ui.card,
     gap: 4,
   },
   gridIconWrap: {
-    width: 32,
-    height: 32,
-    backgroundColor: "#f2f1ee",
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 4,
+    ...ui.iconBubble,
+    backgroundColor: C.cardAlt,
+    marginBottom: 6,
   },
   gridTitle: {
-    fontSize: 11,
-    fontWeight: "800",
-    color: "#142748",
-    letterSpacing: 0.4,
-    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+    ...T.labelSm,
+    color: C.ink,
   },
   gridDesc: {
-    fontSize: 11,
-    color: "#64748b",
+    ...T.caption,
+    fontSize: 12,
   },
 
   // 8. Footer
@@ -1519,14 +1441,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
   },
   minimalSignOutText: {
-    fontSize: 11,
-    color: "#64748b",
-    fontWeight: "700",
-    letterSpacing: 0.4,
-    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+    ...T.labelSm,
+    color: C.muted,
   },
 });

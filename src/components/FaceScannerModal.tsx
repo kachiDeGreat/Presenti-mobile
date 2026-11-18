@@ -17,6 +17,7 @@ import {
   verifyFaceEnrollment,
   verifyFaceMatch,
 } from "../services/aiFaceVerificationService";
+import { C, MONO, R, S } from "../constants/premium";
 
 export type FaceScannerMode = "enroll" | "verify";
 
@@ -385,9 +386,9 @@ const styles = StyleSheet.create({
   guidanceBox: {
     backgroundColor: "rgba(20, 39, 72, 0.85)",
     borderWidth: 1,
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    borderRadius: R.lg,
+    paddingHorizontal: S.md,
+    paddingVertical: 14,
     alignItems: "center",
   },
   guidanceTitle: {
@@ -509,13 +510,13 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   scanBtn: {
+    height: 56,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 10,
-    backgroundColor: "#2d81ff",
-    paddingVertical: 16,
-    borderRadius: 14,
+    backgroundColor: C.accent,
+    borderRadius: R.md,
   },
   scanBtnDisabled: {
     backgroundColor: "#1e3a8a",
@@ -525,8 +526,8 @@ const styles = StyleSheet.create({
     color: "#ffffff",
     fontSize: 13,
     fontWeight: "800",
-    letterSpacing: 0.6,
-    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+    letterSpacing: 0.9,
+    fontFamily: MONO,
   },
   fallbackBtn: {
     flexDirection: "row",

@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { MONO, shadow } from '../constants/premium';
 
 export type ToastType = 'success' | 'error' | 'info' | 'warn' | 'syncing';
 
@@ -268,18 +269,18 @@ const styles = StyleSheet.create({
     maxWidth: 520,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+    borderRadius: 16,
     borderWidth: 1,
     gap: 12,
-    elevation: 12,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.22,
-    shadowRadius: 12,
+    ...shadow.raised,
   },
   iconContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255, 255, 255, 0.18)',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -288,10 +289,10 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   title: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '700',
-    letterSpacing: 0.8,
-    fontFamily: Platform.OS === 'ios' ? 'ui-monospace' : 'monospace',
+    letterSpacing: 0.9,
+    fontFamily: MONO,
     textTransform: 'uppercase',
   },
   message: {

@@ -14,6 +14,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import { useToast } from "../context/ToastContext";
+import { C, MONO, R, S, T, shadow, ui } from "../constants/premium";
 import {
   askPresentiMobileAI,
   generateMobileBriefing,
@@ -258,11 +259,11 @@ export const AskPresentiChatModal: React.FC<AskPresentiChatModalProps> = ({
         <View style={styles.sheet}>
           {/* Header */}
           <View style={styles.header}>
-            <View style={styles.dragPill} />
+            <View style={ui.grabber} />
             <View style={styles.headerRow}>
               <View style={styles.headerLeft}>
                 <View style={styles.aiIconBox}>
-                  <Ionicons name="sparkles" size={17} color="#ffffff" />
+                  <Ionicons name="sparkles" size={18} color={C.accent} />
                 </View>
                 <View>
                   <Text style={styles.headerTitle}>Ask Presenti AI</Text>
@@ -277,11 +278,11 @@ export const AskPresentiChatModal: React.FC<AskPresentiChatModalProps> = ({
                     style={styles.closeBtn}
                     activeOpacity={0.7}
                   >
-                    <Ionicons name="trash-outline" size={16} color="#f2f1ee" />
+                    <Ionicons name="trash-outline" size={17} color={C.ink} />
                   </TouchableOpacity>
                 )}
                 <TouchableOpacity onPress={onClose} style={styles.closeBtn} activeOpacity={0.7}>
-                  <Ionicons name="close" size={18} color="#f2f1ee" />
+                  <Ionicons name="close" size={19} color={C.ink} />
                 </TouchableOpacity>
               </View>
             </View>
@@ -403,75 +404,65 @@ export const AskPresentiChatModal: React.FC<AskPresentiChatModalProps> = ({
 const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: "rgba(20, 39, 72, 0.55)",
+    backgroundColor: C.overlay,
     justifyContent: "flex-end",
   },
   sheet: {
-    height: "84%",
-    backgroundColor: "#ffffff",
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+    height: "86%",
+    ...ui.sheet,
     overflow: "hidden",
   },
   header: {
-    backgroundColor: "#142748",
-    paddingHorizontal: 16,
-    paddingTop: 10,
+    backgroundColor: C.card,
+    paddingHorizontal: S.lg,
+    paddingTop: 4,
     paddingBottom: 14,
-  },
-  dragPill: {
-    alignSelf: "center",
-    width: 38,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: "rgba(255, 255, 255, 0.25)",
-    marginBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: C.lineCard,
   },
   headerRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    marginTop: 4,
   },
   headerLeft: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 11,
+    gap: 12,
   },
   aiIconBox: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: "#2d81ff",
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: C.accentSoft,
     alignItems: "center",
     justifyContent: "center",
   },
   headerTitle: {
-    color: "#ffffff",
-    fontSize: 16,
-    fontWeight: "800",
+    ...T.title,
+    fontSize: 17,
   },
   headerSub: {
-    color: "#93c5fd",
-    fontSize: 10,
-    fontWeight: "700",
-    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+    ...T.labelSm,
+    color: C.accent,
     marginTop: 2,
   },
   closeBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255, 255, 255, 0.12)",
+    backgroundColor: C.cardAlt,
   },
   chipsWrapper: {
-    backgroundColor: "#f2f1ee",
+    backgroundColor: C.canvas,
     borderBottomWidth: 1,
-    borderBottomColor: "#e5e7eb",
+    borderBottomColor: C.line,
   },
   chipsContent: {
-    paddingHorizontal: 14,
+    paddingHorizontal: S.md,
     paddingVertical: 10,
     gap: 8,
     flexDirection: "row",
@@ -481,97 +472,77 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    backgroundColor: "#142748",
-    borderRadius: 20,
+    backgroundColor: C.ink,
+    borderRadius: R.pill,
     paddingHorizontal: 14,
     paddingVertical: 8,
   },
   chipPrimaryText: {
-    color: "#ffffff",
+    color: C.white,
     fontSize: 12,
     fontWeight: "700",
   },
   chip: {
-    backgroundColor: "#ffffff",
+    backgroundColor: C.card,
     borderWidth: 1,
-    borderColor: "#d1d5db",
-    borderRadius: 20,
+    borderColor: C.lineCard,
+    borderRadius: R.pill,
     paddingHorizontal: 14,
     paddingVertical: 8,
   },
   chipText: {
-    color: "#142748",
+    color: C.ink,
     fontSize: 12,
     fontWeight: "600",
   },
   messagesScroll: {
     flex: 1,
-    backgroundColor: "#f8fafc",
+    backgroundColor: C.canvas,
   },
   messagesContent: {
-    padding: 16,
+    padding: S.md,
     gap: 14,
   },
   welcomeCard: {
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
-    borderRadius: 16,
-    padding: 18,
-    shadowColor: "#142748",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04,
-    shadowRadius: 6,
-    elevation: 2,
+    ...ui.card,
+    padding: S.lg,
   },
   welcomeTitle: {
-    fontSize: 15,
-    fontWeight: "800",
-    color: "#142748",
+    ...T.heading,
     marginBottom: 6,
   },
   welcomeText: {
-    fontSize: 13,
-    color: "#475569",
+    ...T.caption,
+    color: C.ink2,
     lineHeight: 20,
   },
   userBubble: {
     alignSelf: "flex-end",
     maxWidth: "82%",
-    backgroundColor: "#142748",
+    backgroundColor: C.ink,
     borderRadius: 18,
     borderBottomRightRadius: 4,
     paddingHorizontal: 15,
     paddingVertical: 11,
-    shadowColor: "#142748",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.12,
-    shadowRadius: 4,
-    elevation: 2,
+    ...shadow.card,
   },
   userBubbleText: {
-    color: "#ffffff",
-    fontSize: 13.5,
+    color: C.white,
+    fontSize: 14,
     lineHeight: 20,
   },
   aiBubble: {
     alignSelf: "flex-start",
     maxWidth: "92%",
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
+    backgroundColor: C.card,
     borderRadius: 18,
     borderBottomLeftRadius: 4,
-    padding: 14,
-    shadowColor: "#142748",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-    elevation: 2,
+    padding: S.md,
+    ...shadow.card,
   },
   aiBubbleText: {
-    color: "#142748",
-    fontSize: 13.5,
+    color: C.ink,
+    fontSize: 14,
     lineHeight: 21,
   },
   aiBubbleFooter: {
@@ -581,77 +552,73 @@ const styles = StyleSheet.create({
     marginTop: 10,
     paddingTop: 8,
     borderTopWidth: 1,
-    borderTopColor: "#f1f5f9",
+    borderTopColor: C.lineCard,
   },
   aiTimeText: {
-    fontSize: 10,
-    color: "#64748b",
-    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+    ...T.labelSm,
+    color: C.muted,
   },
   copyBtn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    backgroundColor: "#f2f1ee",
-    borderRadius: 12,
+    backgroundColor: C.cardAlt,
+    borderRadius: R.pill,
     paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingVertical: 5,
   },
   copyBtnText: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#142748",
-    fontFamily: Platform.OS === "ios" ? "ui-monospace" : "monospace",
+    ...T.labelSm,
+    color: C.ink,
   },
   loadingBubble: {
     alignSelf: "flex-start",
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    backgroundColor: "#ffffff",
-    borderWidth: 1,
-    borderColor: "#e5e7eb",
+    backgroundColor: C.card,
     borderRadius: 18,
     borderBottomLeftRadius: 4,
     paddingHorizontal: 14,
     paddingVertical: 11,
+    ...shadow.card,
   },
   loadingText: {
-    fontSize: 12.5,
+    fontSize: 13,
     fontWeight: "600",
-    color: "#2d81ff",
+    color: C.accent,
   },
   inputBar: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    paddingHorizontal: 14,
+    paddingHorizontal: S.md,
     paddingTop: 10,
     paddingBottom: Platform.OS === "ios" ? 26 : 14,
-    backgroundColor: "#ffffff",
+    backgroundColor: C.card,
     borderTopWidth: 1,
-    borderTopColor: "#e5e7eb",
+    borderTopColor: C.lineCard,
   },
   textInput: {
     flex: 1,
     borderWidth: 1,
-    borderColor: "#e5e7eb",
-    borderRadius: 24,
-    backgroundColor: "#f2f1ee",
+    borderColor: C.line,
+    borderRadius: R.pill,
+    backgroundColor: C.cardAlt,
     paddingHorizontal: 16,
-    paddingVertical: 10,
-    fontSize: 13.5,
-    color: "#142748",
+    paddingVertical: 11,
+    fontSize: 14,
+    color: C.ink,
   },
   sendBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: "#2d81ff",
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: C.ink,
     alignItems: "center",
     justifyContent: "center",
   },
   sendBtnDisabled: {
-    backgroundColor: "#cbd5e1",
+    backgroundColor: C.faint,
   },
 });
