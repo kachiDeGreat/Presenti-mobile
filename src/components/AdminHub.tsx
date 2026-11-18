@@ -51,6 +51,8 @@ import {
 } from "../services/organizationService";
 import { reverseGeocodeCoords } from "../services/geocodingService";
 import { acquireDeviceCoordinates } from "../services/locationService";
+import { AskPresentiChatModal } from "./AskPresentiChatModal";
+import type { MobileAIContext } from "../services/geminiService";
 import type { ChurchMember } from "../types";
 
 const RADIUS_OPTIONS = [
@@ -767,6 +769,49 @@ export const AdminHub: React.FC = () => {
   // MODAL 3: ADMIN PROFILE & WEB PORTAL DIALOG
   // ----------------------------------------------------------------------
   const [showAdminProfileModal, setShowAdminProfileModal] = useState(false);
+  const [showAskPresenti, setShowAskPresenti] = useState(false);
+
+  const mobileAIContext: MobileAIContext = useMemo(
+    () => ({
+      organizationName: organization?.churchName || "Organization",
+      branchName: organization?.branchName || "Main Campus",
+      dateLabel: new Date().toLocaleDateString("en-US", {
+        weekday: "long",
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      }),
+      totalCheckedIn: todayRecords.length,
+      onTimeCount,
+      lateCount,
+      totalWorkforceCount: totalMembersCount,
+      departments: organization?.departments || [],
+      records: todayRecords.map((r) => ({
+        memberName: r.memberName || "Unknown",
+        department: r.department || "General",
+        status: r.status || "ON_TIME",
+        punchedAt: r.punchedAt || "",
+        verificationMethod: r.verificationMethod || "WIFI_BSSID",
+        signedOutAt: r.signedOutAt,
+      })),
+      members: members.map((m) => ({
+        fullName: m.fullName || "Worker",
+        department: m.department || "General",
+        isFaceEnrolled: Boolean(m.isFaceEnrolled),
+        status: (m as any).status || "ACTIVE",
+      })),
+    }),
+    [
+      organization?.churchName,
+      organization?.branchName,
+      organization?.departments,
+      todayRecords,
+      onTimeCount,
+      lateCount,
+      totalMembersCount,
+      members,
+    ]
+  );
 
   const copyOrgCode = async () => {
     if (!organization?.churchCode) return;
@@ -1832,6 +1877,24 @@ export const AdminHub: React.FC = () => {
         })}
       </View>
 
+      {/* Floating Ask Presenti AI Chat Bubble */}
+      <TouchableOpacity
+        style={styles.askPresentiFab}
+        onPress={() => setShowAskPresenti(true)}
+        activeOpacity={0.88}
+      >
+        <Ionicons name="chatbubble-ellipses" size={20} color="#ffffff" />
+        <View style={styles.askPresentiSparkBadge}>
+          <Ionicons name="sparkles" size={10} color="#142748" />
+        </View>
+      </TouchableOpacity>
+
+      <AskPresentiChatModal
+        visible={showAskPresenti}
+        onClose={() => setShowAskPresenti(false)}
+        context={mobileAIContext}
+      />
+
       {/* ---------------------------------------------------------------- */}
       {/* MODAL 1: ATTENDANCE RECORD DETAIL POPUP                           */}
       {/* ---------------------------------------------------------------- */}
@@ -2293,6 +2356,38 @@ const styles = StyleSheet.create({
   },
   pagerContainer: {
     flex: 1,
+  },
+  askPresentiFab: {
+    position: "absolute",
+    bottom: Platform.OS === "ios" ? 96 : 82,
+    right: 16,
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: "#142748",
+    borderWidth: 2,
+    borderColor: "#2d81ff",
+    alignItems: "center",
+    justifyContent: "center",
+    elevation: 10,
+    shadowColor: "#142748",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.28,
+    shadowRadius: 8,
+    zIndex: 40,
+  },
+  askPresentiSparkBadge: {
+    position: "absolute",
+    top: -3,
+    right: -3,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: "#2d81ff",
+    borderWidth: 1.5,
+    borderColor: "#ffffff",
+    alignItems: "center",
+    justifyContent: "center",
   },
   bottomTabBar: {
     flexDirection: "row",
