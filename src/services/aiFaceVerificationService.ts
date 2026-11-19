@@ -1,8 +1,7 @@
 const VISION_MODELS = [
   "gemini-2.5-flash",
-  "gemini-flash-latest",
-  "gemini-2.0-flash",
   "gemini-flash-lite-latest",
+  "gemini-2.0-flash",
 ];
 
 function getApiKey(): string {
@@ -45,18 +44,28 @@ async function urlToBase64(urlOrDataUri: string): Promise<string> {
   });
 }
 
-async function callVisionJSON<T>(parts: Array<Record<string, unknown>>): Promise<T | null> {
+async function callVisionJSON<T>(
+  parts: Array<Record<string, unknown>>,
+  externalSignal?: AbortSignal
+): Promise<T | null> {
   const apiKey = getApiKey();
   if (!apiKey) return null;
 
   for (const model of VISION_MODELS) {
+    if (externalSignal?.aborted) return null;
+
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
       apiKey
     )}`;
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 9000);
+    const onExternalAbort = () => controller.abort();
+    externalSignal?.addEventListener("abort", onExternalAbort);
+    const timeoutId = setTimeout(() => controller.abort(), 5500);
 
     try {
+      const supportsThinkingConfig =
+        model.includes("2.5") || model.includes("latest");
+
       const res = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -64,14 +73,19 @@ async function callVisionJSON<T>(parts: Array<Record<string, unknown>>): Promise
           contents: [{ role: "user", parts }],
           generationConfig: {
             temperature: 0.1,
-            maxOutputTokens: 512,
+            maxOutputTokens: 140,
             responseMimeType: "application/json",
+            ...(supportsThinkingConfig
+              ? { thinkingConfig: { thinkingBudget: 0 } }
+              : {}),
           },
         }),
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
+      externalSignal?.removeEventListener("abort", onExternalAbort);
 
+      if (externalSignal?.aborted) return null;
       if (!res.ok) continue;
 
       const data = await res.json().catch(() => ({}));
@@ -93,6 +107,8 @@ async function callVisionJSON<T>(parts: Array<Record<string, unknown>>): Promise
       return JSON.parse(cleaned) as T;
     } catch {
       clearTimeout(timeoutId);
+      externalSignal?.removeEventListener("abort", onExternalAbort);
+      if (externalSignal?.aborted) return null;
     }
   }
 
@@ -102,7 +118,10 @@ async function callVisionJSON<T>(parts: Array<Record<string, unknown>>): Promise
 /**
  * Validates that a captured enrollment selfie clearly shows one live human face.
  */
-export async function verifyFaceEnrollment(liveBase64: string): Promise<FaceEnrollmentResult> {
+export async function verifyFaceEnrollment(
+  liveBase64: string,
+  externalSignal?: AbortSignal
+): Promise<FaceEnrollmentResult> {
   const cleanB64 = stripDataUriPrefix(liveBase64);
   if (!cleanB64) {
     return {
@@ -126,10 +145,13 @@ Return ONLY valid JSON:
   "guidance": string
 }`;
 
-  const result = await callVisionJSON<FaceEnrollmentResult>([
-    { text: prompt },
-    { inlineData: { mimeType: "image/jpeg", data: cleanB64 } },
-  ]);
+  const result = await callVisionJSON<FaceEnrollmentResult>(
+    [
+      { text: prompt },
+      { inlineData: { mimeType: "image/jpeg", data: cleanB64 } },
+    ],
+    externalSignal
+  );
 
   if (!result) {
     return {
@@ -156,7 +178,8 @@ Return ONLY valid JSON:
  */
 export async function verifyFaceMatch(
   liveBase64: string,
-  referencePhotoUrlOrBase64: string
+  referencePhotoUrlOrBase64: string,
+  externalSignal?: AbortSignal
 ): Promise<FaceMatchResult> {
   const cleanLive = stripDataUriPrefix(liveBase64);
   if (!cleanLive) {
@@ -211,11 +234,14 @@ Return ONLY valid JSON:
   "reason": string
 }`;
 
-  const result = await callVisionJSON<FaceMatchResult>([
-    { text: prompt },
-    { inlineData: { mimeType: "image/jpeg", data: cleanRef } },
-    { inlineData: { mimeType: "image/jpeg", data: cleanLive } },
-  ]);
+  const result = await callVisionJSON<FaceMatchResult>(
+    [
+      { text: prompt },
+      { inlineData: { mimeType: "image/jpeg", data: cleanRef } },
+      { inlineData: { mimeType: "image/jpeg", data: cleanLive } },
+    ],
+    externalSignal
+  );
 
   if (!result) {
     return {

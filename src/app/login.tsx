@@ -80,17 +80,21 @@ export default function LoginScreen() {
   // Animation for OTP shake on failure
   const shakeAnim = useRef(new Animated.Value(0)).current;
   const otpInputRefs = useRef<(TextInput | null)[]>([]);
+  const hasNavigatedRef = useRef(false);
 
-  // Auto-redirect if user is already authenticated
+  // Auto-redirect only if user session was already restored before interacting with LoginScreen
   useEffect(() => {
+    if (isAnyLoading || isVerifyingOtp || hasNavigatedRef.current) return;
     if (user && (isAdmin || user.isAdmin)) {
+      hasNavigatedRef.current = true;
       router.replace("/");
       return;
     }
     if (user && organization && member) {
+      hasNavigatedRef.current = true;
       router.replace("/");
     }
-  }, [isAdmin, user, organization, member]);
+  }, [isAdmin, user, organization, member, isAnyLoading, isVerifyingOtp]);
 
   // Configure Google Sign-In on Native
   useEffect(() => {
@@ -140,8 +144,11 @@ export default function LoginScreen() {
     ]).start();
   };
 
-  // Central Navigation Dispatcher after Successful Authentication
+  // Central Navigation Dispatcher after Successful Authentication (Fires exactly once)
   const navigateAfterAuth = (result: AuthResult) => {
+    if (hasNavigatedRef.current) return;
+    hasNavigatedRef.current = true;
+
     if (result.user?.isAdmin || isAdmin) {
       toast.success(
         `Welcome to Presenti Admin, ${result.user.displayName || "Admin"}!`

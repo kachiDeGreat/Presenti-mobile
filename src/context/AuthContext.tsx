@@ -306,7 +306,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const isAdmin = authUser.isAdmin === true || (await checkIfUserIsAdmin(cleanEmail, uid));
       if (isAdmin) {
         const adminUser: MobileUser = { ...authUser, isAdmin: true };
+        const adminOrg = await getAdminOrganization(cleanEmail, uid);
+
         await AsyncStorage.setItem(STORAGE_KEY_USER, JSON.stringify(adminUser));
+        if (adminOrg) {
+          await cacheOrganizationAnchors(adminOrg);
+          setOrganization(adminOrg);
+        }
+        setMember(null);
         setUser(adminUser);
 
         setKnownAccounts((prev) => {
@@ -316,11 +323,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return updated;
         });
 
-        const adminOrg = await getAdminOrganization(cleanEmail, uid);
-        if (adminOrg) {
-          setOrganization(adminOrg);
-          await cacheOrganizationAnchors(adminOrg);
-        }
         return { user: adminUser, organization: adminOrg, member: null };
       }
 
@@ -347,11 +349,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         throw lockErr;
       }
 
-      // 3. Instant user session persistence
+      // 3. Persist to known accounts list on this device (commit setUser together with org/member at the end)
       AsyncStorage.setItem(STORAGE_KEY_USER, JSON.stringify(authUser)).catch(() => {});
-      setUser(authUser);
-
-      // 4. Persist to known accounts list on this device
       setKnownAccounts((prev) => {
         const filtered = prev.filter((a) => a.email.toLowerCase() !== authUser.email.toLowerCase());
         const updated = [authUser, ...filtered];
@@ -535,12 +534,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           existingMember,
           activeOrg?.id
         );
-        setMember(existingMember);
         await AsyncStorage.setItem(STORAGE_KEY_MEMBER, JSON.stringify(existingMember));
       } else {
-        setMember(null);
         await AsyncStorage.removeItem(STORAGE_KEY_MEMBER);
       }
+
+      // Commit organization, member, and user together in one synchronous React render batch
+      setOrganization(activeOrg);
+      setMember(existingMember);
+      setUser(authUser);
 
       return {
         user: authUser,

@@ -159,10 +159,33 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
 
   const cameraRef = useRef<CameraView>(null);
   const detectorRef = useRef<RNMLKitFaceDetector | null>(null);
-  const isProbingRef = useRef(false);
   const isMountedRef = useRef(true);
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
+  const scanSessionIdRef = useRef(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const errorResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const laserAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  const clearPendingTimersAndAbort = useCallback(() => {
+    scanSessionIdRef.current += 1;
+    if (abortControllerRef.current) {
+      try {
+        abortControllerRef.current.abort();
+      } catch {}
+      abortControllerRef.current = null;
+    }
+    if (errorResetTimerRef.current) {
+      clearTimeout(errorResetTimerRef.current);
+      errorResetTimerRef.current = null;
+    }
+    if (successTimerRef.current) {
+      clearTimeout(successTimerRef.current);
+      successTimerRef.current = null;
+    }
+  }, []);
 
   const handleCameraReady = useCallback(async () => {
     try {
@@ -170,7 +193,7 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
       const sizes = await cameraRef.current.getAvailablePictureSizesAsync();
       if (!Array.isArray(sizes) || sizes.length === 0) return;
 
-      // Pick a crisp, Firestore-friendly resolution (target max dimension 640..1280)
+      // Pick a fast, compact 480p–720p resolution (~20-45KB JPEG) for 1-3s verification
       const parsed = sizes
         .map((raw) => {
           const parts = raw.split("x").map((n) => parseInt(n, 10));
@@ -182,11 +205,15 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
         .filter((x): x is { raw: string; maxDim: number; minDim: number } => Boolean(x));
 
       const ideal = parsed
-        .filter((s) => s.maxDim >= 640 && s.maxDim <= 1280 && s.minDim >= 480)
-        .sort((a, b) => b.maxDim - a.maxDim)[0];
+        .filter((s) => s.maxDim >= 640 && s.maxDim <= 960 && s.minDim >= 480)
+        .sort((a, b) => a.maxDim - b.maxDim)[0];
+
+      const fallbackMedium = parsed
+        .filter((s) => s.maxDim >= 640 && s.maxDim <= 1280)
+        .sort((a, b) => a.maxDim - b.maxDim)[0];
 
       const fallbackSmall = parsed.sort((a, b) => a.maxDim - b.maxDim)[0];
-      const chosen = ideal?.raw || fallbackSmall?.raw;
+      const chosen = ideal?.raw || fallbackMedium?.raw || fallbackSmall?.raw;
       if (chosen && isMountedRef.current) {
         setPictureSize(chosen);
       }
@@ -199,8 +226,9 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
+      clearPendingTimersAndAbort();
     };
-  }, []);
+  }, [clearPendingTimersAndAbort]);
 
   // Initialize on-device ML Kit face detector once when modal opens
   useEffect(() => {
@@ -221,6 +249,7 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
   }, [visible]);
 
   const resetToLiveCamera = useCallback(() => {
+    clearPendingTimersAndAbort();
     setCapturedUri(null);
     setScanState("ready");
     setStatusMessage("Position your face inside the circle");
@@ -229,71 +258,51 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
         ? "One-time setup: center your face in good lighting"
         : "Look directly into the frame to confirm attendance"
     );
-  }, [mode]);
+  }, [mode, clearPendingTimersAndAbort]);
 
-  // Reset state whenever modal opens
+  const handleCloseModal = useCallback(() => {
+    clearPendingTimersAndAbort();
+    setScanState("ready");
+    onCancel();
+  }, [clearPendingTimersAndAbort, onCancel]);
+
+  // Show error for 3 seconds, stop verification, and automatically reset to ready state for a new scan
+  const showErrorAndAutoReset = useCallback(
+    (title: string, subtitle: string, vibrationPattern: number | number[] = 110) => {
+      clearPendingTimersAndAbort();
+      if (!isMountedRef.current || !visibleRef.current) return;
+      setScanState("error");
+      setStatusMessage(title);
+      setSubMessage(subtitle);
+      try {
+        Vibration.vibrate(vibrationPattern);
+      } catch {}
+
+      errorResetTimerRef.current = setTimeout(() => {
+        if (!isMountedRef.current || !visibleRef.current) return;
+        setScanState("ready");
+        setStatusMessage("Position your face inside the circle");
+        setSubMessage(
+          mode === "enroll"
+            ? "Ready for new scan — center your face in good lighting"
+            : "Ready for new scan — look directly into the frame"
+        );
+      }, 3000);
+    },
+    [clearPendingTimersAndAbort, mode]
+  );
+
+  // Reset state whenever modal opens or closes
   useEffect(() => {
     if (visible) {
       resetToLiveCamera();
       if (permission && !permission.granted && permission.canAskAgain) {
         requestPermission().catch(() => {});
       }
+    } else {
+      clearPendingTimersAndAbort();
     }
-  }, [visible, resetToLiveCamera]);
-
-  // Real-time continuous face detection & framing feedback while preview is active
-  useEffect(() => {
-    if (
-      !visible ||
-      !permission?.granted ||
-      (scanState !== "ready" && scanState !== "aligned")
-    ) {
-      return;
-    }
-
-    const interval = setInterval(async () => {
-      if (
-        isProbingRef.current ||
-        !cameraRef.current ||
-        !detectorRef.current ||
-        detectorRef.current.status !== "ready"
-      ) {
-        return;
-      }
-
-      isProbingRef.current = true;
-      try {
-        const probe = await cameraRef.current.takePictureAsync({
-          quality: 0.15,
-          skipProcessing: true,
-          shutterSound: false,
-        });
-        if (!probe?.uri || !isMountedRef.current) return;
-
-        const detection = await detectorRef.current.detectFaces(probe.uri);
-        if (!detection || !isMountedRef.current) return;
-
-        // Only update if still in live preview state
-        setScanState((curr) => {
-          if (curr !== "ready" && curr !== "aligned") return curr;
-          const check = evaluateFaceGeometry(
-            detection.faces,
-            probe.width,
-            probe.height
-          );
-          setStatusMessage(check.status);
-          setSubMessage(check.sub);
-          return check.aligned ? "aligned" : "ready";
-        });
-      } catch {
-        // Silent probe failure — keep camera responsive
-      } finally {
-        isProbingRef.current = false;
-      }
-    }, 850);
-
-    return () => clearInterval(interval);
-  }, [visible, permission?.granted, scanState]);
+  }, [visible, resetToLiveCamera, clearPendingTimersAndAbort]);
 
   // Laser scan beam animation during analysis
   useEffect(() => {
@@ -320,9 +329,9 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
     }
   }, [scanState, laserAnim]);
 
-  // Subtle breathing ring pulse while ready / aligned
+  // Subtle breathing ring pulse while ready
   useEffect(() => {
-    if (scanState === "ready" || scanState === "aligned") {
+    if (scanState === "ready") {
       const pulse = Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, {
@@ -356,39 +365,52 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
       return;
     }
 
+    clearPendingTimersAndAbort();
+    const sessionId = scanSessionIdRef.current;
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     setScanState("analyzing");
-    setStatusMessage("Capturing & analyzing...");
-    setSubMessage("Checking lighting, framing & anti-spoofing");
+    setStatusMessage("Scanning face...");
+    setSubMessage("Hold still for 1–2 seconds");
 
     try {
-      let photo = await cameraRef.current.takePictureAsync({
+      const photo = await cameraRef.current.takePictureAsync({
         base64: true,
-        quality: 0.25,
+        quality: 0.22,
         shutterSound: false,
       });
 
-      if (photo?.base64 && photo.base64.length > 750000 && cameraRef.current) {
-        const compactPhoto = await cameraRef.current.takePictureAsync({
-          base64: true,
-          quality: 0.12,
-          shutterSound: false,
-        });
-        if (compactPhoto?.base64) {
-          photo = compactPhoto;
-        }
-      }
-
-      if (!photo?.base64) {
-        setScanState("error");
-        setStatusMessage("Could not capture frame");
-        setSubMessage("Hold steady and try again.");
+      if (
+        !isMountedRef.current ||
+        !visibleRef.current ||
+        scanSessionIdRef.current !== sessionId ||
+        controller.signal.aborted
+      ) {
         return;
       }
 
-      // Fast local ML Kit gate first (instant feedback before cloud call)
+      if (!photo?.base64) {
+        showErrorAndAutoReset(
+          "Could not capture frame",
+          "Hold steady and try again."
+        );
+        return;
+      }
+
+      // Fast on-device ML Kit geometry & lighting check (~100ms offline)
+      let passedOnDeviceCheck = false;
       if (detectorRef.current?.status === "ready" && photo.uri) {
         try {
           const localDet = await detectorRef.current.detectFaces(photo.uri);
+          if (
+            !isMountedRef.current ||
+            !visibleRef.current ||
+            scanSessionIdRef.current !== sessionId ||
+            controller.signal.aborted
+          ) {
+            return;
+          }
           if (localDet) {
             const check = evaluateFaceGeometry(
               localDet.faces,
@@ -396,12 +418,10 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
               photo.height
             );
             if (!check.aligned) {
-              setScanState("error");
-              setStatusMessage(check.status);
-              setSubMessage(check.sub);
-              Vibration.vibrate(100);
+              showErrorAndAutoReset(check.status, check.sub, 100);
               return;
             }
+            passedOnDeviceCheck = true;
           }
         } catch {
           // Proceed to cloud check if local ML Kit throws
@@ -411,7 +431,27 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
       const dataUri = `data:image/jpeg;base64,${photo.base64}`;
 
       if (mode === "enroll") {
-        const res = await verifyFaceEnrollment(photo.base64);
+        // If on-device ML Kit already confirmed a single, centered, well-lit live face,
+        // show the photo confirmation screen immediately (<0.5s total)!
+        if (passedOnDeviceCheck) {
+          setCapturedUri(dataUri);
+          setScanState("confirm");
+          setStatusMessage("Confirm Your Photo");
+          setSubMessage("Make sure your face is clear, or retake below.");
+          Vibration.vibrate([0, 50, 40, 50]);
+          return;
+        }
+
+        const res = await verifyFaceEnrollment(photo.base64, controller.signal);
+        if (
+          !isMountedRef.current ||
+          !visibleRef.current ||
+          scanSessionIdRef.current !== sessionId ||
+          controller.signal.aborted
+        ) {
+          return;
+        }
+
         if (res.valid) {
           setCapturedUri(dataUri);
           setScanState("confirm");
@@ -419,34 +459,64 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
           setSubMessage("Make sure your face is clear, or retake below.");
           Vibration.vibrate([0, 50, 40, 50]);
         } else {
-          setScanState("error");
-          setStatusMessage(res.reason || "Face Not Clear");
-          setSubMessage(res.guidance);
-          Vibration.vibrate(120);
+          showErrorAndAutoReset(
+            res.reason || "Face Not Clear",
+            res.guidance,
+            120
+          );
         }
       } else {
-        const res = await verifyFaceMatch(photo.base64, referencePhotoUrl || "");
+        const res = await verifyFaceMatch(
+          photo.base64,
+          referencePhotoUrl || "",
+          controller.signal
+        );
+        if (
+          !isMountedRef.current ||
+          !visibleRef.current ||
+          scanSessionIdRef.current !== sessionId ||
+          controller.signal.aborted
+        ) {
+          return;
+        }
+
         if (res.verified) {
           setScanState("success");
           setStatusMessage("Biometric Identity Verified");
           setSubMessage(`Match confidence: ${Math.round(res.confidence)}%`);
           Vibration.vibrate([0, 60, 40, 60]);
-          setTimeout(() => {
+          successTimerRef.current = setTimeout(() => {
+            if (
+              !isMountedRef.current ||
+              !visibleRef.current ||
+              scanSessionIdRef.current !== sessionId
+            ) {
+              return;
+            }
             onSuccess(dataUri);
-          }, 650);
+          }, 500);
         } else {
-          setScanState("error");
-          setStatusMessage(
-            !res.isLivePerson ? "Liveness Check Failed" : "Verification Failed"
+          // Wrong face or liveness failed -> stop verification, show error for 3s, then auto-reset
+          showErrorAndAutoReset(
+            !res.isLivePerson ? "Liveness Check Failed" : "Verification Failed",
+            res.reason,
+            [0, 100, 60, 100]
           );
-          setSubMessage(res.reason);
-          Vibration.vibrate([0, 100, 60, 100]);
         }
       }
     } catch (err: any) {
-      setScanState("error");
-      setStatusMessage("Camera Scan Interrupted");
-      setSubMessage(err?.message || "Please center your face and try again.");
+      if (
+        !isMountedRef.current ||
+        !visibleRef.current ||
+        scanSessionIdRef.current !== sessionId ||
+        controller.signal.aborted
+      ) {
+        return;
+      }
+      showErrorAndAutoReset(
+        "Camera Scan Interrupted",
+        err?.message || "Please center your face and try again."
+      );
     }
   };
 
@@ -479,7 +549,7 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
       animationType="slide"
       transparent={false}
       statusBarTranslucent
-      onRequestClose={onCancel}
+      onRequestClose={handleCloseModal}
     >
       <View
         style={[
@@ -500,7 +570,7 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
               {mode === "enroll" ? "Register Your Face" : "Face Biometric Scan"}
             </Text>
           </View>
-          <TouchableOpacity onPress={onCancel} style={styles.closeBtn} activeOpacity={0.7}>
+          <TouchableOpacity onPress={handleCloseModal} style={styles.closeBtn} activeOpacity={0.7}>
             <Ionicons name="close" size={20} color={C.ink} />
           </TouchableOpacity>
         </View>

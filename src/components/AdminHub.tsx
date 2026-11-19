@@ -116,7 +116,6 @@ export const AdminHub: React.FC = () => {
   }, [organization?.id, user, refreshOrganization]);
 
   const handleTabPress = (tabKey: "feed" | "anchors" | "workforce", index: number) => {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setActiveTab(tabKey);
     activeTabRef.current = tabKey;
     (horizontalPagerRef.current as any)?.scrollTo({ x: index * screenWidth, animated: true });
