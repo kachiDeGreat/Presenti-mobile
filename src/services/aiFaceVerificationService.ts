@@ -1,10 +1,7 @@
-const FAST_LITE_MODELS = [
+// Single-request sequential fallback: 1 API call per scan (preserves RPM quota for 30+ concurrent workers)
+const VISION_MODELS = [
   "gemini-3.5-flash-lite",
   "gemini-3.1-flash-lite",
-  "gemini-2.5-flash-lite",
-];
-
-const FALLBACK_MODELS = [
   "gemini-flash-lite-latest",
   "gemini-3.7-flash",
   "gemini-3.8-flash",
@@ -112,6 +109,7 @@ async function requestVisionModel<T>(
     return JSON.parse(jsonSlice) as T;
   } catch (err: any) {
     clearTimeout(timeoutId);
+    console.warn(`[FaceAI] Model ${model} failed:`, err?.message || err);
     throw err;
   }
 }
@@ -123,21 +121,15 @@ async function callVisionJSON<T>(parts: Array<Record<string, unknown>>): Promise
     return null;
   }
 
-  // Wave 1: Race the fastest flash-lite models in parallel (8s cap for 2-image cellular upload)
-  try {
-    return await Promise.any(
-      FAST_LITE_MODELS.map((model) => requestVisionModel<T>(model, apiKey, parts, 8000))
-    );
-  } catch {
-    // Fall through to Wave 2
-  }
-
-  // Wave 2: Sequential fallback across remaining models (7s cap each)
-  for (const model of FALLBACK_MODELS) {
+  for (let i = 0; i < VISION_MODELS.length; i++) {
+    const model = VISION_MODELS[i];
     try {
-      return await requestVisionModel<T>(model, apiKey, parts, 7000);
+      return await requestVisionModel<T>(model, apiKey, parts, i === 0 ? 12000 : 9000);
     } catch {
-      // Try next model
+      // Brief pause before falling back so we don't slam the rate limiter
+      if (i < VISION_MODELS.length - 1) {
+        await new Promise((r) => setTimeout(r, 250));
+      }
     }
   }
 
