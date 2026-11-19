@@ -15,6 +15,7 @@ import {
   Modal,
   Pressable,
   Dimensions,
+  LayoutAnimation,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
@@ -53,6 +54,7 @@ import { reverseGeocodeCoords } from "../services/geocodingService";
 import { acquireDeviceCoordinates } from "../services/locationService";
 import { AskPresentiChatModal } from "./AskPresentiChatModal";
 import { FaceScannerModal } from "./FaceScannerModal";
+import { TactilePressable } from "./TactilePressable";
 import { C, MONO, R, S, T, shadow, ui } from "../constants/premium";
 import type { MobileAIContext } from "../services/geminiService";
 import type { ChurchMember } from "../types";
@@ -114,6 +116,7 @@ export const AdminHub: React.FC = () => {
   }, [organization?.id, user, refreshOrganization]);
 
   const handleTabPress = (tabKey: "feed" | "anchors" | "workforce", index: number) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setActiveTab(tabKey);
     activeTabRef.current = tabKey;
     (horizontalPagerRef.current as any)?.scrollTo({ x: index * screenWidth, animated: true });
@@ -978,23 +981,23 @@ export const AdminHub: React.FC = () => {
               <View style={styles.tabContent}>
             {/* KPI Metrics Row */}
             <View style={styles.kpiRow}>
-              <View style={styles.kpiCard}>
+              <View style={[styles.kpiCard, { borderTopWidth: 3, borderTopColor: C.accent }]}>
                 <Text style={styles.kpiLabel}>CHECKED IN</Text>
-                <Text style={styles.kpiValue}>{todayRecords.length}</Text>
+                <Text style={[styles.kpiValue, { color: C.accent }]}>{todayRecords.length}</Text>
                 <Text style={styles.kpiSub}>Today's punches</Text>
               </View>
 
-              <View style={styles.kpiCard}>
+              <View style={[styles.kpiCard, { borderTopWidth: 3, borderTopColor: C.success }]}>
                 <Text style={styles.kpiLabel}>ON TIME</Text>
-                <Text style={[styles.kpiValue, { color: "#10b981" }]}>{onTimeCount}</Text>
+                <Text style={[styles.kpiValue, { color: C.success }]}>{onTimeCount}</Text>
                 <Text style={styles.kpiSub}>
                   {todayRecords.length > 0 ? `${punctualityRate}% rate` : "100% rate"}
                 </Text>
               </View>
 
-              <View style={styles.kpiCard}>
+              <View style={[styles.kpiCard, { borderTopWidth: 3, borderTopColor: C.warn }]}>
                 <Text style={styles.kpiLabel}>LATE</Text>
-                <Text style={[styles.kpiValue, { color: lateCount > 0 ? "#f59e0b" : "#64748b" }]}>
+                <Text style={[styles.kpiValue, { color: lateCount > 0 ? C.warn : C.muted }]}>
                   {lateCount}
                 </Text>
                 <Text style={styles.kpiSub}>Flagged arrivals</Text>
@@ -1852,17 +1855,22 @@ export const AdminHub: React.FC = () => {
         {TABS.map((tab, idx) => {
           const isActive = activeTab === tab.key;
           return (
-            <TouchableOpacity
+            <TactilePressable
               key={tab.key}
               style={styles.bottomTabItem}
+              scaleTo={0.92}
               onPress={() => handleTabPress(tab.key, idx)}
-              activeOpacity={0.7}
             >
-              <View style={styles.bottomTabIconContainer}>
+              <View
+                style={[
+                  styles.bottomTabIconContainer,
+                  isActive && { backgroundColor: C.accentSoft, width: 48, height: 30 },
+                ]}
+              >
                 <Ionicons
                   name={isActive ? tab.activeIcon : tab.icon}
-                  size={22}
-                  color={isActive ? "#2d81ff" : "#142748"}
+                  size={21}
+                  color={isActive ? C.accent : C.ink}
                 />
                 {tab.key === "feed" && todayRecords.length > 0 && (
                   <View style={[styles.bottomBadge, isActive && styles.bottomBadgeActive]}>
@@ -1875,7 +1883,7 @@ export const AdminHub: React.FC = () => {
                   <View
                     style={[
                       styles.bottomStatusDot,
-                      { backgroundColor: isCalibrated ? "#10b981" : "#f59e0b" },
+                      { backgroundColor: isCalibrated ? C.success : C.warn },
                     ]}
                   />
                 )}
@@ -1897,22 +1905,23 @@ export const AdminHub: React.FC = () => {
               >
                 {tab.label}
               </Text>
-            </TouchableOpacity>
+            </TactilePressable>
           );
         })}
       </View>
 
       {/* Floating Ask Presenti AI Chat Bubble */}
-      <TouchableOpacity
+      <TactilePressable
         style={styles.askPresentiFab}
+        scaleTo={0.9}
+        rippleColor="rgba(255,255,255,0.2)"
         onPress={() => setShowAskPresenti(true)}
-        activeOpacity={0.88}
       >
         <Ionicons name="chatbubble-ellipses" size={20} color="#ffffff" />
         <View style={styles.askPresentiSparkBadge}>
           <Ionicons name="sparkles" size={10} color="#142748" />
         </View>
-      </TouchableOpacity>
+      </TactilePressable>
 
       <AskPresentiChatModal
         visible={showAskPresenti}

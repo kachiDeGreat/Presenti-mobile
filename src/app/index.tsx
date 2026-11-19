@@ -44,7 +44,36 @@ import type { TodayPunchRecord } from "../types";
 import { AdminCalibrationModal } from "../components/AdminCalibrationModal";
 import { AdminHub } from "../components/AdminHub";
 import { FaceScannerModal } from "../components/FaceScannerModal";
+import { TactilePressable } from "../components/TactilePressable";
 import { C, MONO, R, S, T, shadow, ui } from "../constants/premium";
+
+/** Isolated 1s clock so DashboardScreen doesn't re-render every second on budget phones */
+const LiveClockDisplay = React.memo(() => {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const hoursString = now.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  const dateString = now.toLocaleDateString([], {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+
+  return (
+    <>
+      <Text style={styles.clockDateText}>{dateString}</Text>
+      <Text style={styles.clockTimeText}>{hoursString}</Text>
+    </>
+  );
+});
 
 export default function DashboardScreen() {
   const {
@@ -72,7 +101,7 @@ export default function DashboardScreen() {
   }>({ visible: false, mode: "verify", action: "clockIn" });
   const verifiedPresenceRef = React.useRef<PresenceVerificationResult | null>(null);
 
-  // Real-time clock ticking every second
+  // Policy evaluation tick (30s cadence — live seconds live inside LiveClockDisplay)
   const [currentTime, setCurrentTime] = useState(new Date());
 
   // Today's trapped punch record (local or cloud)
@@ -81,11 +110,11 @@ export default function DashboardScreen() {
   const [isSyncingSignOut, setIsSyncingSignOut] = useState(false);
   const [hasCheckedToday, setHasCheckedToday] = useState(false);
 
-  // Ticking interval
+  // Ticking interval (30s)
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(new Date());
-    }, 1000);
+    }, 30000);
     return () => clearInterval(timer);
   }, []);
 
@@ -660,19 +689,6 @@ export default function DashboardScreen() {
 
   const avatarUrl = member.facePhotoURL || member.photoURL || user.photoURL;
 
-  // Format digital clock time strings
-  const hoursString = currentTime.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-  const dateString = currentTime.toLocaleDateString([], {
-    weekday: "long",
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-
   return (
     <SafeAreaView style={styles.safeArea}>
       <ScrollView
@@ -757,10 +773,9 @@ export default function DashboardScreen() {
           </View>
         </View>
 
-        {/* Hero Digital Shift Clock Card (ArtCraft Brutalist Surface) */}
+        {/* Hero Digital Shift Clock Card */}
         <View style={styles.clockSurface}>
-          <Text style={styles.clockDateText}>{dateString}</Text>
-          <Text style={styles.clockTimeText}>{hoursString}</Text>
+          <LiveClockDisplay />
 
           <View style={styles.shiftBadgeRow}>
             <View
@@ -932,16 +947,16 @@ export default function DashboardScreen() {
             </Text>
           </View>
         ) : (
-          /* STATE C: WINDOW OPEN - TAP TO CLOCK IN (Bolt Style Hero Action) */
-          <TouchableOpacity
+          /* STATE C: WINDOW OPEN - TAP TO CLOCK IN (Tactile Native Spring CTA) */
+          <TactilePressable
             style={[
               styles.primaryPunchBtn,
               windowEval.status === "WINDOW_OPEN_LATE" && styles.punchBtnLate,
               isSyncingToCloud && styles.punchBtnDisabled,
             ]}
+            rippleColor="rgba(255,255,255,0.18)"
             onPress={handleClockIn}
             disabled={isSyncingToCloud}
-            activeOpacity={0.88}
           >
             {isSyncingToCloud ? (
               <View style={styles.punchBtnLoadingRow}>
@@ -966,14 +981,14 @@ export default function DashboardScreen() {
                 <Ionicons name="arrow-forward" size={18} color="rgba(242, 241, 238, 0.7)" />
               </>
             )}
-          </TouchableOpacity>
+          </TactilePressable>
         )}
 
-        {/* Quick Info Grid (ArtCraft Brutalist Tiles) */}
+        {/* Quick Info Grid */}
         <View style={styles.gridRow}>
           <View style={styles.gridTile}>
-            <View style={styles.gridIconWrap}>
-              <Ionicons name="compass-outline" size={18} color="#142748" />
+            <View style={[styles.gridIconWrap, { backgroundColor: C.accentSoft }]}>
+              <Ionicons name="compass-outline" size={18} color={C.accent} />
             </View>
             <Text style={styles.gridTitle}>Premises Anchor</Text>
             <Text style={styles.gridDesc}>
@@ -982,8 +997,8 @@ export default function DashboardScreen() {
           </View>
 
           <View style={styles.gridTile}>
-            <View style={styles.gridIconWrap}>
-              <Ionicons name="shield-checkmark-outline" size={18} color="#10b981" />
+            <View style={[styles.gridIconWrap, { backgroundColor: C.successSoft }]}>
+              <Ionicons name="shield-checkmark-outline" size={18} color={C.success} />
             </View>
             <Text style={styles.gridTitle}>Security Isolation</Text>
             <Text style={styles.gridDesc}>Bound to Smartphone Hardware</Text>

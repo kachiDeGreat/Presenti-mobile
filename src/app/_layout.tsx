@@ -1,11 +1,17 @@
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import React, { useEffect } from 'react';
+import { Platform, UIManager } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from '../context/AuthContext';
 import { ToastProvider } from '../context/ToastContext';
 import { LoadingIndicator } from '../components/LoadingIndicator';
 import { requestAllAppPermissions } from '../services/permissionService';
+
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 SplashScreen.preventAutoHideAsync();
 
@@ -34,7 +40,7 @@ function RootNavigator() {
       <Stack
         screenOptions={{
           headerShown: false,
-          animation: 'fade',
+          animation: 'slide_from_right',
           contentStyle: { backgroundColor: '#f2f1ee' },
         }}
       >
@@ -49,12 +55,14 @@ function RootNavigator() {
 
 export default function RootLayout() {
   return (
-    <SafeAreaProvider>
-      <ToastProvider>
-        <AuthProvider>
-          <RootNavigator />
-        </AuthProvider>
-      </ToastProvider>
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <ToastProvider>
+          <AuthProvider>
+            <RootNavigator />
+          </AuthProvider>
+        </ToastProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }
