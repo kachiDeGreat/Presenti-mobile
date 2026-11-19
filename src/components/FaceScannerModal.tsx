@@ -14,7 +14,6 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { Ionicons } from "@expo/vector-icons";
-import { RNMLKitFaceDetector } from "@infinitered/react-native-mlkit-face-detection";
 import {
   verifyFaceEnrollment,
   verifyFaceMatch,
@@ -33,109 +32,6 @@ interface FaceScannerModalProps {
 }
 
 type ScanState = "ready" | "aligned" | "analyzing" | "confirm" | "success" | "error";
-
-interface LiveFrameCheck {
-  aligned: boolean;
-  status: string;
-  sub: string;
-  isWarning?: boolean;
-}
-
-/** Evaluates on-device ML Kit face geometry against the circular portal */
-function evaluateFaceGeometry(
-  faces: any[],
-  rawWidth: number,
-  rawHeight: number
-): LiveFrameCheck {
-  if (!faces || faces.length === 0) {
-    return {
-      aligned: false,
-      isWarning: true,
-      status: "No face detected",
-      sub: "Position your face in good light inside the circle",
-    };
-  }
-  if (faces.length > 1) {
-    return {
-      aligned: false,
-      isWarning: true,
-      status: "Multiple faces in frame",
-      sub: "Only one person should be visible",
-    };
-  }
-
-  const face = faces[0];
-  const imgW = Math.min(rawWidth || 480, rawHeight || 640);
-  const imgH = Math.max(rawWidth || 480, rawHeight || 640);
-  const fw = face?.frame?.size?.x ?? 0;
-  const fh = face?.frame?.size?.y ?? 0;
-  const fx = face?.frame?.origin?.x ?? 0;
-  const fy = face?.frame?.origin?.y ?? 0;
-
-  if (fw > 0 && imgW > 0) {
-    const widthRatio = fw / imgW;
-    const cx = (fx + fw / 2) / imgW;
-    const cy = (fy + fh / 2) / imgH;
-
-    if (widthRatio < 0.18) {
-      return {
-        aligned: false,
-        isWarning: true,
-        status: "Move closer",
-        sub: "Bring your face closer to fill the dashed oval",
-      };
-    }
-    if (widthRatio > 0.88) {
-      return {
-        aligned: false,
-        isWarning: true,
-        status: "Move slightly back",
-        sub: "Keep your full face inside the circle",
-      };
-    }
-    if (Math.abs(cx - 0.5) > 0.26 || Math.abs(cy - 0.5) > 0.28) {
-      return {
-        aligned: false,
-        isWarning: true,
-        status: "Face not well fitted",
-        sub: "Center your face inside the dashed oval",
-      };
-    }
-  }
-
-  const yaw = Math.abs(face?.headEulerAngleY ?? 0);
-  const roll = Math.abs(face?.headEulerAngleZ ?? 0);
-  if (yaw > 22 || roll > 22) {
-    return {
-      aligned: false,
-      isWarning: true,
-      status: "Look straight ahead",
-      sub: "Keep your head level and face the camera",
-    };
-  }
-
-  const leftEye = face?.leftEyeOpenProbability;
-  const rightEye = face?.rightEyeOpenProbability;
-  if (
-    typeof leftEye === "number" &&
-    typeof rightEye === "number" &&
-    leftEye < 0.28 &&
-    rightEye < 0.28
-  ) {
-    return {
-      aligned: false,
-      isWarning: true,
-      status: "Keep your eyes open",
-      sub: "Look directly into the camera lens",
-    };
-  }
-
-  return {
-    aligned: true,
-    status: "Face aligned — Ready",
-    sub: "Hold steady and tap Capture below",
-  };
-}
 
 export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
   visible,
@@ -158,7 +54,6 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
   );
 
   const cameraRef = useRef<CameraView>(null);
-  const detectorRef = useRef<RNMLKitFaceDetector | null>(null);
   const isMountedRef = useRef(true);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
@@ -229,24 +124,6 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
       clearPendingTimersAndAbort();
     };
   }, [clearPendingTimersAndAbort]);
-
-  // Initialize on-device ML Kit face detector once when modal opens
-  useEffect(() => {
-    if (!visible) return;
-    if (!detectorRef.current) {
-      try {
-        detectorRef.current = new RNMLKitFaceDetector({
-          performanceMode: "fast",
-          landmarkMode: false,
-          contourMode: false,
-          classificationMode: true,
-          minFaceSize: 0.15,
-        });
-      } catch {
-        detectorRef.current = null;
-      }
-    }
-  }, [visible]);
 
   const resetToLiveCamera = useCallback(() => {
     clearPendingTimersAndAbort();
@@ -398,50 +275,9 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
         return;
       }
 
-      // Fast on-device ML Kit geometry & lighting check (~100ms offline)
-      let passedOnDeviceCheck = false;
-      if (detectorRef.current?.status === "ready" && photo.uri) {
-        try {
-          const localDet = await detectorRef.current.detectFaces(photo.uri);
-          if (
-            !isMountedRef.current ||
-            !visibleRef.current ||
-            scanSessionIdRef.current !== sessionId ||
-            controller.signal.aborted
-          ) {
-            return;
-          }
-          if (localDet) {
-            const check = evaluateFaceGeometry(
-              localDet.faces,
-              photo.width,
-              photo.height
-            );
-            if (!check.aligned) {
-              showErrorAndAutoReset(check.status, check.sub, 100);
-              return;
-            }
-            passedOnDeviceCheck = true;
-          }
-        } catch {
-          // Proceed to cloud check if local ML Kit throws
-        }
-      }
-
       const dataUri = `data:image/jpeg;base64,${photo.base64}`;
 
       if (mode === "enroll") {
-        // If on-device ML Kit already confirmed a single, centered, well-lit live face,
-        // show the photo confirmation screen immediately (<0.5s total)!
-        if (passedOnDeviceCheck) {
-          setCapturedUri(dataUri);
-          setScanState("confirm");
-          setStatusMessage("Confirm Your Photo");
-          setSubMessage("Make sure your face is clear, or retake below.");
-          Vibration.vibrate([0, 50, 40, 50]);
-          return;
-        }
-
         const res = await verifyFaceEnrollment(photo.base64, controller.signal);
         if (
           !isMountedRef.current ||
