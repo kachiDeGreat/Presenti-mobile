@@ -104,6 +104,7 @@ export default function DashboardScreen() {
     member?.facePhotoURL
   );
   const verifiedPresenceRef = React.useRef<PresenceVerificationResult | null>(null);
+  const punchCancelledRef = React.useRef(false);
 
   // Instant 0ms On-Device Face Vault lookup so verification reads locally without cloud lag
   useEffect(() => {
@@ -347,6 +348,7 @@ export default function DashboardScreen() {
         ? "HYBRID"
         : "GEOFENCE_ONLY");
 
+    punchCancelledRef.current = false;
     setIsSyncingToCloud(true);
     toast.syncing(
       effectiveMode === "GEOFENCE_ONLY"
@@ -391,6 +393,12 @@ export default function DashboardScreen() {
       setIsSyncingToCloud(false);
     }
 
+    if (punchCancelledRef.current) {
+      toast.hide();
+      verifiedPresenceRef.current = null;
+      return null;
+    }
+
     if (!presence.isVerified) {
       toast.error(
         presence.failureReason ||
@@ -400,6 +408,7 @@ export default function DashboardScreen() {
       return null;
     }
 
+    toast.hide();
     verifiedPresenceRef.current = presence;
     return presence;
   };
@@ -1123,7 +1132,13 @@ export default function DashboardScreen() {
         visible={faceModal.visible}
         mode={faceModal.mode}
         referencePhotoUrl={localFacePhoto || member?.facePhotoURL}
-        onCancel={() => setFaceModal((prev) => ({ ...prev, visible: false }))}
+        onCancel={() => {
+          punchCancelledRef.current = true;
+          verifiedPresenceRef.current = null;
+          setIsSyncingToCloud(false);
+          toast.hide();
+          setFaceModal((prev) => ({ ...prev, visible: false }));
+        }}
         onSuccess={async (capturedDataUri) => {
           const currentAction = faceModal.action;
           const currentMode = faceModal.mode;
