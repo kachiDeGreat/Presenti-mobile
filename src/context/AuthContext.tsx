@@ -14,11 +14,7 @@ import {
   limit,
 } from 'firebase/firestore';
 import { auth, db, googleProvider } from '../config/firebase';
-import {
-  getDeviceFingerprint,
-  isSamePhysicalPhone,
-  adoptDeviceFingerprint,
-} from '../services/deviceService';
+import { getDeviceFingerprint } from '../services/deviceService';
 import {
   fetchOrganizationByCode,
   fetchFreshOrganizationById,
@@ -473,15 +469,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 const mData = memberDoc.data();
                 const boundDev = (mData.boundDeviceId || '').trim();
                 if (
-                  boundDev &&
-                  boundDev !== 'UNBOUND' &&
-                  activeDeviceId &&
-                  boundDev !== activeDeviceId &&
-                  isSamePhysicalPhone(boundDev, activeDeviceId)
-                ) {
-                  await adoptDeviceFingerprint(boundDev);
-                  setDeviceId(boundDev);
-                } else if (
                   boundDev &&
                   boundDev !== 'UNBOUND' &&
                   activeDeviceId &&
