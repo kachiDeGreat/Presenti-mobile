@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   collection,
+  collectionGroup,
   query,
   where,
   getDocs,
@@ -266,6 +267,35 @@ export async function enforceDeviceWorkerLock(params: {
       const cloudSnap = await getDoc(doc(db, 'device_bindings', cleanDeviceId));
       if (cloudSnap.exists()) {
         lock = cloudSnap.data() as DeviceWorkerLock;
+      } else {
+        // Fallback: query all organization members in Firestore for this boundDeviceId
+        // (protects against cleared App Data even if device_bindings doc wasn't written yet)
+        const cgSnap = await getDocs(
+          query(collectionGroup(db, 'members'), where('boundDeviceId', '==', cleanDeviceId), limit(1))
+        );
+        if (!cgSnap.empty) {
+          const memDoc = cgSnap.docs[0];
+          const memData = memDoc.data();
+          const orgRef = memDoc.ref.parent.parent;
+          const orgId = orgRef?.id || '';
+          const orgSnap = orgId ? await getDoc(doc(db, 'churches', orgId)).catch(() => null) : null;
+          if (orgId && (!orgSnap || orgSnap.exists())) {
+            lock = {
+              deviceId: cleanDeviceId,
+              memberId: memDoc.id,
+              email: (memData.email || '').trim().toLowerCase(),
+              fullName: memData.fullName || 'an enrolled worker',
+              orgId,
+              orgName: orgSnap?.data()?.churchName || 'their organization',
+              boundAt: memData.registeredAt || new Date().toISOString(),
+            };
+            await setDoc(
+              doc(db, 'device_bindings', cleanDeviceId),
+              cleanFirestorePayload(lock),
+              { merge: true }
+            ).catch(() => {});
+          }
+        }
       }
     } catch {}
 
