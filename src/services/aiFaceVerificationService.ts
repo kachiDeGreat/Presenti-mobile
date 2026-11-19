@@ -1,6 +1,14 @@
-const VISION_MODELS = [
-  "gemini-2.5-flash",
+// Primary fast vision models raced in parallel so the fastest model wins in ~1-3s
+const PRIMARY_VISION_MODELS = [
   "gemini-flash-lite-latest",
+  "gemini-2.5-flash-lite",
+  "gemini-flash-latest",
+];
+
+// Secondary fallback models raced in parallel if primary wave encounters transient errors
+const BACKUP_VISION_MODELS = [
+  "gemini-2.5-flash",
+  "gemini-3.8-flash",
   "gemini-2.0-flash",
 ];
 
@@ -44,75 +52,121 @@ async function urlToBase64(urlOrDataUri: string): Promise<string> {
   });
 }
 
+async function requestSingleVisionModel<T>(
+  model: string,
+  apiKey: string,
+  parts: Array<Record<string, unknown>>,
+  signal: AbortSignal
+): Promise<T> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
+    apiKey
+  )}`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ role: "user", parts }],
+      generationConfig: {
+        temperature: 0.1,
+        maxOutputTokens: 300,
+        responseMimeType: "application/json",
+      },
+    }),
+    signal,
+  });
+
+  if (!res.ok) {
+    throw new Error(`Model ${model} returned HTTP ${res.status}`);
+  }
+
+  const data = await res.json();
+  const rawText =
+    data?.candidates?.[0]?.content?.parts
+      ?.filter((p: { thought?: boolean; text?: string }) => !p.thought && Boolean(p.text))
+      .map((p: { text?: string }) => p.text || "")
+      .join("")
+      .trim() || "";
+
+  if (!rawText) {
+    throw new Error(`Model ${model} returned empty text`);
+  }
+
+  const cleaned = rawText
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/```$/i, "")
+    .trim();
+
+  // Extract JSON object even if model wrapped it in prose
+  const firstBrace = cleaned.indexOf("{");
+  const lastBrace = cleaned.lastIndexOf("}");
+  const jsonSlice =
+    firstBrace !== -1 && lastBrace > firstBrace
+      ? cleaned.slice(firstBrace, lastBrace + 1)
+      : cleaned;
+
+  return JSON.parse(jsonSlice) as T;
+}
+
+async function raceModelWave<T>(
+  models: string[],
+  apiKey: string,
+  parts: Array<Record<string, unknown>>,
+  timeoutMs: number,
+  externalSignal?: AbortSignal
+): Promise<T | null> {
+  if (externalSignal?.aborted) return null;
+
+  const waveController = new AbortController();
+  const onExternalAbort = () => waveController.abort();
+  externalSignal?.addEventListener("abort", onExternalAbort);
+  const timeoutId = setTimeout(() => waveController.abort(), timeoutMs);
+
+  try {
+    const winner = await Promise.any(
+      models.map((model) =>
+        requestSingleVisionModel<T>(model, apiKey, parts, waveController.signal)
+      )
+    );
+    clearTimeout(timeoutId);
+    externalSignal?.removeEventListener("abort", onExternalAbort);
+    // Abort remaining slower models in this wave as soon as the fastest model succeeds
+    waveController.abort();
+    return winner;
+  } catch {
+    clearTimeout(timeoutId);
+    externalSignal?.removeEventListener("abort", onExternalAbort);
+    return null;
+  }
+}
+
 async function callVisionJSON<T>(
   parts: Array<Record<string, unknown>>,
   externalSignal?: AbortSignal
 ): Promise<T | null> {
   const apiKey = getApiKey();
-  if (!apiKey) return null;
+  if (!apiKey || externalSignal?.aborted) return null;
 
-  for (const model of VISION_MODELS) {
-    if (externalSignal?.aborted) return null;
+  // Wave 1: Race primary fast models concurrently (~1-2.5s response, cancels slower ones on first win)
+  const primaryResult = await raceModelWave<T>(
+    PRIMARY_VISION_MODELS,
+    apiKey,
+    parts,
+    7000,
+    externalSignal
+  );
+  if (primaryResult) return primaryResult;
+  if (externalSignal?.aborted) return null;
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
-      apiKey
-    )}`;
-    const controller = new AbortController();
-    const onExternalAbort = () => controller.abort();
-    externalSignal?.addEventListener("abort", onExternalAbort);
-    const timeoutId = setTimeout(() => controller.abort(), 5500);
-
-    try {
-      const supportsThinkingConfig =
-        model.includes("2.5") || model.includes("latest");
-
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts }],
-          generationConfig: {
-            temperature: 0.1,
-            maxOutputTokens: 140,
-            responseMimeType: "application/json",
-            ...(supportsThinkingConfig
-              ? { thinkingConfig: { thinkingBudget: 0 } }
-              : {}),
-          },
-        }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-      externalSignal?.removeEventListener("abort", onExternalAbort);
-
-      if (externalSignal?.aborted) return null;
-      if (!res.ok) continue;
-
-      const data = await res.json().catch(() => ({}));
-      const rawText =
-        data?.candidates?.[0]?.content?.parts
-          ?.filter((p: { thought?: boolean; text?: string }) => !p.thought && Boolean(p.text))
-          .map((p: { text?: string }) => p.text || "")
-          .join("")
-          .trim() || "";
-
-      if (!rawText) continue;
-
-      const cleaned = rawText
-        .replace(/^```json\s*/i, "")
-        .replace(/^```\s*/i, "")
-        .replace(/```$/i, "")
-        .trim();
-
-      return JSON.parse(cleaned) as T;
-    } catch {
-      clearTimeout(timeoutId);
-      externalSignal?.removeEventListener("abort", onExternalAbort);
-      if (externalSignal?.aborted) return null;
-    }
-  }
-
-  return null;
+  // Wave 2: Race backup models concurrently if Wave 1 failed
+  return await raceModelWave<T>(
+    BACKUP_VISION_MODELS,
+    apiKey,
+    parts,
+    8000,
+    externalSignal
+  );
 }
 
 /**
