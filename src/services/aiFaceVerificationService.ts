@@ -304,28 +304,13 @@ export async function verifyFaceMatch(
     };
   }
 
-  const prompt = `You are a strict 1-to-1 biometric identity verification system for workforce attendance.
-Image 1 is the ENROLLED ACCOUNT OWNER's reference face photo captured during onboarding.
-Image 2 is the LIVE CAMERA CAPTURE of the person currently attempting to clock in or out.
-
-CRITICAL SECURITY RULES:
-1. First check if Image 2 actually contains a clearly visible human face. If there is NO face in Image 2 or it is too dark/blank/covered, you MUST set "verified": false, "isLivePerson": false, "confidence": 0, and "reason": "No face detected. Position your face clearly inside the circle."
-2. Do NOT verify two different people just because they share the same gender, age range, or ethnicity.
-3. Carefully compare unique individual identity markers between Image 1 and Image 2:
-   - Cranial & facial bone structure, face shape, forehead-to-chin ratio, cheekbone width, and jawline contour
-   - Eye shape, inter-pupillary distance, and eyebrow shape/arch
-   - Nose bridge width, tip shape, nostril contour, and nose-to-lip proportion
-   - Mouth/lip structure, ears, facial hair pattern, and distinctive facial features
-4. If Image 1 and Image 2 are TWO DIFFERENT INDIVIDUALS (e.g., a friend, colleague, or another person trying to sign in on this account), you MUST set "verified": false, "confidence" below 40, and "reason": "Face mismatch: Live face does not match the enrolled account owner."
-5. Check Image 2 for spoofing (holding up a phone screen, printed photo, or mask). If spoofed, set "isLivePerson": false and "verified": false.
-
-Return ONLY valid JSON:
-{
-  "verified": boolean,
-  "confidence": number,
-  "isLivePerson": boolean,
-  "reason": string
-}`;
+  const prompt = `Strict 1-to-1 face verification.
+Image 1: enrolled owner. Image 2: live camera.
+Rules:
+1. If Image 2 has no clear face or is too dark, set verified=false, isLivePerson=false, confidence=0, reason="No face detected. Position your face clearly inside the circle."
+2. Compare unique facial structure (eyes, nose bridge, jawline, cheekbones, proportions). Never match two different people. If different individuals, set verified=false, confidence<40, reason="Face mismatch: Live face does not match the enrolled account owner."
+3. If Image 2 is a screen/photo/mask, set isLivePerson=false, verified=false.
+Return ONLY JSON: {"verified":boolean,"confidence":number,"isLivePerson":boolean,"reason":string}`;
 
   const result =
     (await callGroqVisionJSON<FaceMatchResult>(prompt, [cleanRef, cleanLive])) ||

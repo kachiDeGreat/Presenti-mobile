@@ -90,7 +90,7 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
       const sizes = await cameraRef.current.getAvailablePictureSizesAsync();
       if (!Array.isArray(sizes) || sizes.length === 0) return;
 
-      // Pick a fast, compact 480p–720p resolution (~20-45KB JPEG) for 1-3s verification
+      // Pick a compact 320p–640p resolution (~8-20KB JPEG, 4x fewer vision tokens)
       const parsed = sizes
         .map((raw) => {
           const parts = raw.split("x").map((n) => parseInt(n, 10));
@@ -102,11 +102,11 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
         .filter((x): x is { raw: string; maxDim: number; minDim: number } => Boolean(x));
 
       const ideal = parsed
-        .filter((s) => s.maxDim >= 640 && s.maxDim <= 960 && s.minDim >= 480)
+        .filter((s) => s.maxDim >= 480 && s.maxDim <= 640 && s.minDim >= 320)
         .sort((a, b) => a.maxDim - b.maxDim)[0];
 
       const fallbackMedium = parsed
-        .filter((s) => s.maxDim >= 640 && s.maxDim <= 1280)
+        .filter((s) => s.maxDim >= 320 && s.maxDim <= 800)
         .sort((a, b) => a.maxDim - b.maxDim)[0];
 
       const fallbackSmall = parsed.sort((a, b) => a.maxDim - b.maxDim)[0];
