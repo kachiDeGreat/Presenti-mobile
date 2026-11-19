@@ -1,13 +1,13 @@
 const FAST_LITE_MODELS = [
   "gemini-3.5-flash-lite",
   "gemini-3.1-flash-lite",
+  "gemini-2.5-flash-lite",
 ];
 
 const FALLBACK_MODELS = [
-  "gemini-2.5-flash-lite",
   "gemini-flash-lite-latest",
-  "gemini-3.8-flash",
   "gemini-3.7-flash",
+  "gemini-3.8-flash",
 ];
 
 function getApiKey(): string {
@@ -123,19 +123,19 @@ async function callVisionJSON<T>(parts: Array<Record<string, unknown>>): Promise
     return null;
   }
 
-  // Wave 1: Race the two fastest flash-lite models in parallel (5s cap)
+  // Wave 1: Race the fastest flash-lite models in parallel (8s cap for 2-image cellular upload)
   try {
     return await Promise.any(
-      FAST_LITE_MODELS.map((model) => requestVisionModel<T>(model, apiKey, parts, 5000))
+      FAST_LITE_MODELS.map((model) => requestVisionModel<T>(model, apiKey, parts, 8000))
     );
   } catch {
     // Fall through to Wave 2
   }
 
-  // Wave 2: Sequential fallback across remaining models (5s cap each)
+  // Wave 2: Sequential fallback across remaining models (7s cap each)
   for (const model of FALLBACK_MODELS) {
     try {
-      return await requestVisionModel<T>(model, apiKey, parts, 5500);
+      return await requestVisionModel<T>(model, apiKey, parts, 7000);
     } catch {
       // Try next model
     }

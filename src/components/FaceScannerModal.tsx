@@ -296,7 +296,6 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
       }
 
       // Instant ~100ms on-device pre-check: immediately catch empty/no-face frames before cloud AI
-      let localFaceConfirmed = false;
       if (detectorRef.current?.status === "ready" && photo.uri) {
         try {
           const localDet = await detectorRef.current.detectFaces(photo.uri);
@@ -324,7 +323,6 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
             );
             return;
           }
-          localFaceConfirmed = true;
         } catch {
           // Continue to Gemini AI if local detector throws
         }
@@ -343,17 +341,6 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
         }
 
         if (res.valid) {
-          setCapturedUri(dataUri);
-          setScanState("confirm");
-          setStatusMessage("Confirm Your Photo");
-          setSubMessage("Make sure your face is clear, or retake below.");
-          Vibration.vibrate([0, 50, 40, 50]);
-        } else if (
-          localFaceConfirmed &&
-          res.reason === "Verification service busy."
-        ) {
-          // If Gemini quota/network is temporarily busy during enrollment AND local face detection
-          // already confirmed a single clear face, let user confirm their photo instead of stranding them
           setCapturedUri(dataUri);
           setScanState("confirm");
           setStatusMessage("Confirm Your Photo");
