@@ -35,7 +35,10 @@ import {
   DAY_NAMES,
   type WindowEvaluationResult,
 } from "../utils/timePolicy";
-import { verifyPresenceAnchors } from "../services/presenceVerificationService";
+import {
+  verifyPresenceAnchors,
+  type PresenceVerificationResult,
+} from "../services/presenceVerificationService";
 import { verifyIdentityForClockIn } from "../services/biometricAuthService";
 import type { TodayPunchRecord } from "../types";
 import { AdminCalibrationModal } from "../components/AdminCalibrationModal";
@@ -67,6 +70,7 @@ export default function DashboardScreen() {
     mode: "enroll" | "verify";
     action: "clockIn" | "signOut";
   }>({ visible: false, mode: "verify", action: "clockIn" });
+  const verifiedPresenceRef = React.useRef<PresenceVerificationResult | null>(null);
 
   // Real-time clock ticking every second
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -260,7 +264,91 @@ export default function DashboardScreen() {
     );
   }
 
-  // Clock-in execution with presence verification and native device biometrics
+  // Verify Wi-Fi / GPS Geofence BEFORE opening the face scanner
+  const verifyOnPremiseBeforeScan = async (): Promise<PresenceVerificationResult | null> => {
+    const isCalibrated = Boolean(
+      organization.isCalibrated ||
+        organization.geoFallback?.isCalibrated ||
+        (organization.geoFallback?.latitude &&
+          organization.geoFallback?.longitude &&
+          organization.geoFallback?.latitude !== 0) ||
+        (organization.beaconConfig?.targetBssid &&
+          organization.beaconConfig.targetBssid.trim().length > 0),
+    );
+
+    if (!isCalibrated) {
+      toast.warn(
+        "Admin has not calibrated this account. Contact admin to calibrate it.",
+        { title: "Account Not Calibrated", duration: 6000 },
+      );
+      return null;
+    }
+
+    const effectiveMode =
+      organization.beaconConfig?.verificationMode ||
+      cachedAnchors?.verificationMode ||
+      (organization.beaconConfig?.targetBssid || cachedAnchors?.targetBssid
+        ? "HYBRID"
+        : "GEOFENCE_ONLY");
+
+    setIsSyncingToCloud(true);
+    toast.syncing(
+      effectiveMode === "GEOFENCE_ONLY"
+        ? "Checking GPS Geofence perimeter..."
+        : "Checking Wi-Fi & GPS premises anchor...",
+      { title: "Verifying Location" },
+    );
+
+    const effectiveAnchors = {
+      verificationMode: effectiveMode,
+      targetBssid:
+        organization.beaconConfig?.targetBssid ||
+        cachedAnchors?.targetBssid ||
+        "",
+      ssidHint:
+        organization.beaconConfig?.ssidHint || cachedAnchors?.ssidHint || "",
+      latitude: Number(
+        organization.geoFallback?.latitude ?? cachedAnchors?.latitude ?? 0,
+      ),
+      longitude: Number(
+        organization.geoFallback?.longitude ?? cachedAnchors?.longitude ?? 0,
+      ),
+      radiusMeters: Number(
+        organization.geoFallback?.radiusMeters ??
+          cachedAnchors?.radiusMeters ??
+          30,
+      ),
+    };
+
+    let presence: PresenceVerificationResult;
+    try {
+      presence = await verifyPresenceAnchors(effectiveAnchors);
+    } catch (presenceErr: any) {
+      presence = {
+        isVerified: false,
+        method: "GEO_FALLBACK",
+        failureReason:
+          presenceErr?.message || "Failed to verify presence on device.",
+        details: "Verification error",
+      };
+    } finally {
+      setIsSyncingToCloud(false);
+    }
+
+    if (!presence.isVerified) {
+      toast.error(
+        presence.failureReason ||
+          "You are outside the organization premises. Move closer to clock in.",
+        { title: "Outside Geofence", duration: 6000 },
+      );
+      return null;
+    }
+
+    verifiedPresenceRef.current = presence;
+    return presence;
+  };
+
+  // Clock-in execution: 1) Window check -> 2) Location/Wi-Fi check -> 3) AI Face Scan
   const handleClockIn = async () => {
     // 1. Safety check: prevent double punch if already recorded
     if (todayPunch) {
@@ -278,7 +366,11 @@ export default function DashboardScreen() {
       return;
     }
 
-    // 3. MANDATORY AI FACE VERIFICATION (OPay-style Circular Scanner)
+    // 3. MANDATORY ON-PREMISE LOCATION / WI-FI CHECK BEFORE FACE SCAN
+    const presence = await verifyOnPremiseBeforeScan();
+    if (!presence) return;
+
+    // 4. MANDATORY AI FACE VERIFICATION (OPay-style Circular Scanner)
     setFaceModal({
       visible: true,
       mode: member?.isFaceEnrolled && member?.facePhotoURL ? "verify" : "enroll",
@@ -347,94 +439,15 @@ export default function DashboardScreen() {
       second: "2-digit",
     });
 
-    // 4b. Check if Admin has calibrated this account's presence anchors
-    const isCalibrated = Boolean(
-      organization.isCalibrated ||
-      organization.geoFallback?.isCalibrated ||
-      (organization.geoFallback?.latitude &&
-        organization.geoFallback?.longitude &&
-        organization.geoFallback?.latitude !== 0) ||
-      (organization.beaconConfig?.targetBssid &&
-        organization.beaconConfig.targetBssid.trim().length > 0),
-    );
-
-    if (!isCalibrated) {
-      setIsSyncingToCloud(false);
-      toast.warn(
-        "Admin has not calibrated this account. Contact admin to calibrate it.",
-        {
-          title: "Account Not Calibrated",
-          duration: 7000,
-        },
-      );
-      return;
+    // 5. Confirm physical presence (reuse pre-scan lock or re-verify)
+    let presence = verifiedPresenceRef.current;
+    verifiedPresenceRef.current = null;
+    if (!presence || !presence.isVerified) {
+      presence = await verifyOnPremiseBeforeScan();
+      if (!presence) return;
     }
 
     setIsSyncingToCloud(true);
-
-    const effectiveMode =
-      organization.beaconConfig?.verificationMode ||
-      cachedAnchors?.verificationMode ||
-      (organization.beaconConfig?.targetBssid || cachedAnchors?.targetBssid
-        ? "HYBRID"
-        : "GEOFENCE_ONLY");
-
-    // Drop down animated toast while checking physical presence anchors
-    toast.syncing(
-      effectiveMode === "GEOFENCE_ONLY"
-        ? `Trapped at ${timeDisplay}. Verifying GPS Satellite Geofence...`
-        : `Trapped at ${timeDisplay}. Scanning Wi-Fi & verifying GPS presence...`,
-      {
-        title: "Verifying Presence",
-      },
-    );
-
-    // 5. Physical Presence Verification (Wi-Fi Anchor or Geofence fallback)
-    const effectiveAnchors = {
-      verificationMode: effectiveMode,
-      targetBssid:
-        organization.beaconConfig?.targetBssid ||
-        cachedAnchors?.targetBssid ||
-        "",
-      ssidHint:
-        organization.beaconConfig?.ssidHint || cachedAnchors?.ssidHint || "",
-      latitude: Number(
-        organization.geoFallback?.latitude ?? cachedAnchors?.latitude ?? 0,
-      ),
-      longitude: Number(
-        organization.geoFallback?.longitude ?? cachedAnchors?.longitude ?? 0,
-      ),
-      radiusMeters: Number(
-        organization.geoFallback?.radiusMeters ??
-          cachedAnchors?.radiusMeters ??
-          30,
-      ),
-    };
-
-    let presence;
-    try {
-      presence = await verifyPresenceAnchors(effectiveAnchors);
-    } catch (presenceErr: any) {
-      console.warn("Presence check error:", presenceErr);
-      presence = {
-        isVerified: false,
-        method: "GEO_FALLBACK" as const,
-        failureReason:
-          presenceErr?.message || "Failed to verify presence on device.",
-        details: "Verification error",
-      };
-    }
-
-    // If neither Wi-Fi anchor nor GPS geofence confirmed worker is on premises
-    if (!presence.isVerified) {
-      toast.error(
-        presence.failureReason ||
-          "Physical presence verification failed. You must be on-premise to clock in.",
-        { title: "Not On-Premise", duration: 6000 },
-      );
-      setIsSyncingToCloud(false);
-      return;
-    }
 
     // 6. Confirmed on-premise! Set local state with trapped time & verified biometric method
     const initialRecord: TodayPunchRecord = {
@@ -565,6 +578,10 @@ export default function DashboardScreen() {
       );
       return;
     }
+
+    // Verify on-premise location BEFORE opening Face Scanner
+    const presence = await verifyOnPremiseBeforeScan();
+    if (!presence) return;
 
     // MANDATORY AI FACE VERIFICATION (OPay-style Circular Scanner)
     setFaceModal({

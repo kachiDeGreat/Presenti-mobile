@@ -19,7 +19,7 @@ import {
   verifyFaceEnrollment,
   verifyFaceMatch,
 } from "../services/aiFaceVerificationService";
-import { C, MONO, R, S } from "../constants/premium";
+import { C, MONO, R, S, T, shadow, ui } from "../constants/premium";
 
 export type FaceScannerMode = "enroll" | "verify";
 
@@ -409,16 +409,25 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
 
   const ringColor =
     scanState === "success" || scanState === "confirm" || scanState === "aligned"
-      ? "#10b981"
+      ? C.success
       : scanState === "error"
-      ? "#d92d20"
+      ? C.danger
       : scanState === "analyzing"
-      ? "#f59e0b"
+      ? C.warn
       : C.accent;
+
+  const statusBg =
+    scanState === "success" || scanState === "confirm" || scanState === "aligned"
+      ? C.successSoft
+      : scanState === "error"
+      ? C.dangerSoft
+      : scanState === "analyzing"
+      ? C.warnSoft
+      : C.accentSoft;
 
   const laserTranslateY = laserAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: [20, 224],
+    outputRange: [20, 232],
   });
 
   return (
@@ -438,39 +447,41 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
           },
         ]}
       >
-        {/* Top Bar */}
+        {/* Light Editorial Header */}
         <View style={styles.topBar}>
           <View style={{ flex: 1, paddingRight: 12 }}>
             <Text style={styles.topTag}>
-              {mode === "enroll" ? "// BIOMETRIC ENROLLMENT" : "// PRESENCE VERIFICATION"}
+              {mode === "enroll" ? "BIOMETRIC ENROLLMENT" : "PRESENCE VERIFICATION"}
             </Text>
             <Text style={styles.topTitle}>
               {mode === "enroll" ? "Register Your Face" : "Face Biometric Scan"}
             </Text>
           </View>
           <TouchableOpacity onPress={onCancel} style={styles.closeBtn} activeOpacity={0.7}>
-            <Ionicons name="close" size={20} color="#ffffff" />
+            <Ionicons name="close" size={20} color={C.ink} />
           </TouchableOpacity>
         </View>
 
-        {/* Guidance Pill */}
-        <View style={[styles.guidanceBox, { borderColor: ringColor }]}>
-          <Text
-            style={[
-              styles.guidanceTitle,
-              { color: ringColor === C.accent ? "#93c5fd" : ringColor },
-            ]}
-          >
-            {statusMessage}
-          </Text>
-          <Text style={styles.guidanceSub}>{subMessage}</Text>
+        {/* Floating Guidance Card */}
+        <View style={styles.guidanceCard}>
+          <View style={[styles.guidanceDotWrap, { backgroundColor: statusBg }]}>
+            <View style={[styles.guidanceDot, { backgroundColor: ringColor }]} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.guidanceTitle, { color: ringColor === C.accent ? C.ink : ringColor }]}>
+              {statusMessage}
+            </Text>
+            <Text style={styles.guidanceSub}>{subMessage}</Text>
+          </View>
         </View>
 
-        {/* Circular OPay-style Camera / Confirmation Portal */}
+        {/* Circular Floating Camera / Confirmation Portal */}
         <View style={styles.portalWrapper}>
           {!permission?.granted ? (
             <View style={styles.permissionBox}>
-              <Ionicons name="camera-outline" size={44} color={C.accent} />
+              <View style={ui.iconBubble}>
+                <Ionicons name="camera-outline" size={24} color={C.accent} />
+              </View>
               <Text style={styles.permissionTitle}>Camera Access Required</Text>
               <Text style={styles.permissionSub}>
                 Presenti needs front camera access to verify your live facial identity.
@@ -484,71 +495,82 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
               </TouchableOpacity>
             </View>
           ) : (
-            <Animated.View
-              style={[
-                styles.outerRing,
-                {
-                  borderColor: ringColor,
-                  transform: [{ scale: pulseAnim }],
-                },
-              ]}
-            >
-              <View style={styles.circleMask}>
-                {scanState === "confirm" && capturedUri ? (
-                  <Image
-                    source={{ uri: capturedUri }}
-                    style={styles.camera}
-                    resizeMode="cover"
-                  />
-                ) : (
-                  <CameraView
-                    ref={cameraRef}
-                    style={styles.camera}
-                    facing="front"
-                  />
-                )}
+            <View style={styles.portalGroup}>
+              <Animated.View
+                style={[
+                  styles.outerRing,
+                  {
+                    borderColor: ringColor,
+                    transform: [{ scale: pulseAnim }],
+                  },
+                ]}
+              >
+                <View style={styles.circleMask}>
+                  {scanState === "confirm" && capturedUri ? (
+                    <Image
+                      source={{ uri: capturedUri }}
+                      style={styles.camera}
+                      resizeMode="cover"
+                    />
+                  ) : (
+                    <CameraView
+                      ref={cameraRef}
+                      style={styles.camera}
+                      facing="front"
+                    />
+                  )}
 
-                {/* Dotted Face Alignment Oval */}
-                {scanState !== "success" && scanState !== "confirm" && (
-                  <View
-                    style={[
-                      styles.faceGuideOval,
-                      scanState === "aligned" && styles.faceGuideOvalAligned,
-                    ]}
-                    pointerEvents="none"
-                  />
-                )}
+                  {/* Dotted Face Alignment Oval */}
+                  {scanState !== "success" && scanState !== "confirm" && (
+                    <View
+                      style={[
+                        styles.faceGuideOval,
+                        scanState === "aligned" && styles.faceGuideOvalAligned,
+                      ]}
+                      pointerEvents="none"
+                    />
+                  )}
 
-                {/* Laser Scan Beam */}
-                {scanState === "analyzing" && (
-                  <Animated.View
-                    style={[
-                      styles.laserLine,
-                      { transform: [{ translateY: laserTranslateY }] },
-                    ]}
-                    pointerEvents="none"
-                  />
-                )}
+                  {/* Laser Scan Beam */}
+                  {scanState === "analyzing" && (
+                    <Animated.View
+                      style={[
+                        styles.laserLine,
+                        { transform: [{ translateY: laserTranslateY }] },
+                      ]}
+                      pointerEvents="none"
+                    />
+                  )}
 
-                {/* Success Checkmark Overlay */}
-                {scanState === "success" && (
-                  <View style={styles.successOverlay}>
-                    <View style={styles.successCheckCircle}>
-                      <Ionicons name="checkmark" size={48} color="#ffffff" />
+                  {/* Success Checkmark Overlay */}
+                  {scanState === "success" && (
+                    <View style={styles.successOverlay}>
+                      <View style={styles.successCheckCircle}>
+                        <Ionicons name="checkmark" size={48} color="#ffffff" />
+                      </View>
                     </View>
-                  </View>
-                )}
+                  )}
+                </View>
+              </Animated.View>
+
+              <View style={styles.securityPill}>
+                <Ionicons name="shield-checkmark" size={13} color={C.accent} />
+                <Text style={styles.securityPillText}>
+                  {scanState === "confirm"
+                    ? "PREVIEW & CONFIRM CAPTURE"
+                    : "LIVENESS & ANTI-SPOOFING ACTIVE"}
+                </Text>
               </View>
-            </Animated.View>
+            </View>
           )}
         </View>
 
-        {/* Bottom Controls */}
+        {/* Bottom Action Dock */}
         <View style={styles.bottomActions}>
           {permission?.granted && scanState === "confirm" && capturedUri ? (
             <View style={{ gap: 10 }}>
               <TouchableOpacity
-                style={[styles.scanBtn, { backgroundColor: "#10b981" }]}
+                style={[styles.scanBtn, { backgroundColor: C.success }]}
                 onPress={() => onSuccess(capturedUri)}
                 activeOpacity={0.85}
               >
@@ -561,7 +583,7 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
                 onPress={resetToLiveCamera}
                 activeOpacity={0.8}
               >
-                <Ionicons name="refresh" size={18} color="#ffffff" />
+                <Ionicons name="refresh" size={18} color={C.ink} />
                 <Text style={styles.retakeSecondaryBtnText}>RETAKE PHOTO</Text>
               </TouchableOpacity>
             </View>
@@ -570,9 +592,9 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
               <TouchableOpacity
                 style={[
                   styles.scanBtn,
-                  scanState === "aligned" && { backgroundColor: "#10b981" },
+                  scanState === "aligned" && { backgroundColor: C.success },
                   scanState === "analyzing" && styles.scanBtnDisabled,
-                  scanState === "success" && { backgroundColor: "#10b981" },
+                  scanState === "success" && { backgroundColor: C.success },
                 ]}
                 onPress={handleCaptureAndVerify}
                 disabled={scanState === "analyzing" || scanState === "success"}
@@ -618,7 +640,7 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
                 <Ionicons
                   name="finger-print-outline"
                   size={16}
-                  color="#93c5fd"
+                  color={C.ink2}
                 />
                 <Text style={styles.fallbackBtnText}>
                   Use Device Biometric / PIN Instead
@@ -634,7 +656,7 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#0b1629",
+    backgroundColor: C.canvas,
     paddingHorizontal: S.screenX,
     justifyContent: "space-between",
   },
@@ -642,75 +664,81 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 8,
+    marginBottom: 10,
   },
   topTag: {
-    fontSize: 10,
-    fontWeight: "700",
-    color: "#60a5fa",
-    fontFamily: MONO,
-    letterSpacing: 0.9,
+    ...T.labelSm,
+    color: C.accent,
   },
   topTitle: {
-    fontSize: 22,
-    fontWeight: "800",
-    color: "#ffffff",
+    ...T.display,
+    fontSize: 24,
     marginTop: 2,
   },
   closeBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    backgroundColor: "rgba(255,255,255,0.14)",
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: C.card,
+    alignItems: "center",
+    justifyContent: "center",
+    ...shadow.card,
+  },
+  guidanceCard: {
+    ...ui.card,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingVertical: 14,
+    paddingHorizontal: S.md,
+  },
+  guidanceDotWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: "center",
     justifyContent: "center",
   },
-  guidanceBox: {
-    backgroundColor: "rgba(20, 39, 72, 0.9)",
-    borderWidth: 1.5,
-    borderRadius: R.lg,
-    paddingHorizontal: S.md,
-    paddingVertical: 14,
-    alignItems: "center",
+  guidanceDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
   },
   guidanceTitle: {
+    ...T.heading,
     fontSize: 15,
-    fontWeight: "800",
-    textAlign: "center",
   },
   guidanceSub: {
+    ...T.caption,
     fontSize: 12.5,
-    color: "#cbd5e1",
-    textAlign: "center",
-    marginTop: 4,
-    lineHeight: 18,
+    marginTop: 2,
   },
   portalWrapper: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
   },
+  portalGroup: {
+    alignItems: "center",
+    gap: 18,
+  },
   outerRing: {
-    width: 268,
-    height: 268,
-    borderRadius: 134,
-    borderWidth: 4,
+    width: 280,
+    height: 280,
+    borderRadius: 140,
+    borderWidth: 5,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#142748",
-    shadowColor: "#2d81ff",
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.35,
-    shadowRadius: 18,
-    elevation: 10,
+    backgroundColor: C.card,
+    ...shadow.raised,
   },
   circleMask: {
-    width: 252,
-    height: 252,
-    borderRadius: 126,
+    width: 258,
+    height: 258,
+    borderRadius: 129,
     overflow: "hidden",
     position: "relative",
-    backgroundColor: "#000000",
+    backgroundColor: "#0f172a",
   },
   camera: {
     width: "100%",
@@ -723,21 +751,21 @@ const styles = StyleSheet.create({
     right: 44,
     bottom: 26,
     borderRadius: 100,
-    borderWidth: 1.5,
+    borderWidth: 2,
     borderStyle: "dashed",
-    borderColor: "rgba(255, 255, 255, 0.55)",
+    borderColor: "rgba(255, 255, 255, 0.65)",
   },
   faceGuideOvalAligned: {
-    borderColor: "#10b981",
-    borderWidth: 2,
+    borderColor: C.success,
+    borderWidth: 2.5,
   },
   laserLine: {
     position: "absolute",
     left: 0,
     right: 0,
     height: 3,
-    backgroundColor: "#2d81ff",
-    shadowColor: "#60a5fa",
+    backgroundColor: C.accent,
+    shadowColor: C.accent,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 1,
     shadowRadius: 8,
@@ -748,7 +776,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "rgba(16, 185, 129, 0.35)",
+    backgroundColor: "rgba(18, 161, 80, 0.35)",
     alignItems: "center",
     justifyContent: "center",
   },
@@ -756,83 +784,64 @@ const styles = StyleSheet.create({
     width: 82,
     height: 82,
     borderRadius: 41,
-    backgroundColor: "#10b981",
+    backgroundColor: C.success,
     alignItems: "center",
     justifyContent: "center",
   },
-  permissionBox: {
-    backgroundColor: "#142748",
-    borderRadius: 18,
-    padding: 24,
-    alignItems: "center",
+  securityPill: {
+    ...ui.pill,
+    backgroundColor: C.card,
     borderWidth: 1,
-    borderColor: C.accent,
+    borderColor: C.lineCard,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+  },
+  securityPillText: {
+    ...T.labelSm,
+    fontSize: 10,
+    color: C.ink2,
+  },
+  permissionBox: {
+    ...ui.card,
+    padding: S.lg,
+    alignItems: "center",
     gap: 10,
+    maxWidth: 340,
   },
   permissionTitle: {
-    color: "#ffffff",
-    fontSize: 16,
-    fontWeight: "800",
+    ...T.title,
+    fontSize: 17,
   },
   permissionSub: {
-    color: "#cbd5e1",
-    fontSize: 13,
+    ...T.caption,
     textAlign: "center",
-    lineHeight: 19,
   },
   permissionBtn: {
+    ...ui.btnPrimary,
     marginTop: 8,
-    backgroundColor: C.accent,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: R.md,
+    width: "100%",
   },
   permissionBtnText: {
-    color: "#ffffff",
-    fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 0.6,
+    ...ui.btnPrimaryText,
   },
   bottomActions: {
     gap: 10,
   },
   scanBtn: {
-    height: 56,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-    backgroundColor: C.accent,
-    borderRadius: R.md,
+    ...ui.btnPrimary,
+    ...shadow.raised,
   },
   scanBtnDisabled: {
-    backgroundColor: "#1e3a8a",
-    opacity: 0.85,
+    opacity: 0.75,
   },
   scanBtnText: {
-    color: "#ffffff",
-    fontSize: 13,
-    fontWeight: "800",
-    letterSpacing: 0.9,
-    fontFamily: MONO,
+    ...ui.btnPrimaryText,
   },
   retakeSecondaryBtn: {
-    height: 50,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    borderRadius: R.md,
-    borderWidth: 1.5,
-    borderColor: "rgba(255,255,255,0.28)",
-    backgroundColor: "rgba(255,255,255,0.08)",
+    ...ui.btnSecondary,
   },
   retakeSecondaryBtnText: {
-    color: "#ffffff",
-    fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 0.9,
-    fontFamily: MONO,
+    ...ui.btnSecondaryText,
   },
   fallbackBtn: {
     flexDirection: "row",
@@ -842,8 +851,8 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
   },
   fallbackBtnText: {
-    color: "#93c5fd",
-    fontSize: 12.5,
+    ...T.caption,
+    color: C.ink2,
     fontWeight: "600",
   },
 });
