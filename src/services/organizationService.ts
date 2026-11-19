@@ -20,6 +20,375 @@ import type { Organization, CachedAnchors, ChurchMember, AttendanceRecordInput }
 const STORAGE_KEY_ANCHORS = '@sanctuary_cached_anchors';
 const STORAGE_KEY_ORG = '@sanctuary_active_org';
 const STORAGE_KEY_MEMBER = '@sanctuary_member_profile';
+const STORAGE_KEY_FACE_VAULT_DEVICE = '@presenti_face_vault_device';
+const STORAGE_KEY_DEVICE_WORKER_LOCK = '@presenti_device_worker_lock';
+
+export interface LocalFaceVaultEntry {
+  facePhotoURL: string;
+  faceEmbedding: number[];
+  faceEnrolledAt: string;
+  memberId?: string;
+  email?: string;
+  orgId?: string;
+}
+
+export interface DeviceWorkerLock {
+  deviceId: string;
+  memberId: string;
+  email: string;
+  fullName: string;
+  orgId: string;
+  orgName: string;
+  boundAt: string;
+}
+
+function getFaceVaultEmailKey(email: string): string {
+  return `@presenti_face_vault_email_${email.trim().toLowerCase()}`;
+}
+
+function getFaceVaultMemberKey(memberId: string): string {
+  return `@presenti_face_vault_member_${memberId.trim()}`;
+}
+
+/**
+ * Permanently stores the worker's enrolled face on the device (survives sign-out
+ * and Admin <-> Worker account switches) so AI verification reads locally in 0ms.
+ */
+export async function saveFaceToLocalVault(params: {
+  facePhotoURL: string;
+  faceEmbedding?: number[];
+  faceEnrolledAt?: string;
+  email?: string;
+  memberId?: string;
+  orgId?: string;
+}): Promise<void> {
+  if (!params.facePhotoURL || !params.facePhotoURL.trim()) return;
+  const entry: LocalFaceVaultEntry = {
+    facePhotoURL: params.facePhotoURL.trim(),
+    faceEmbedding:
+      params.faceEmbedding && params.faceEmbedding.length > 0
+        ? params.faceEmbedding
+        : [1],
+    faceEnrolledAt: params.faceEnrolledAt || new Date().toISOString(),
+    email: params.email?.trim().toLowerCase(),
+    memberId: params.memberId?.trim(),
+    orgId: params.orgId?.trim(),
+  };
+
+  const payload = JSON.stringify(entry);
+  const writes: Array<Promise<void>> = [
+    AsyncStorage.setItem(STORAGE_KEY_FACE_VAULT_DEVICE, payload),
+  ];
+  if (entry.email) {
+    writes.push(AsyncStorage.setItem(getFaceVaultEmailKey(entry.email), payload));
+  }
+  if (entry.memberId) {
+    writes.push(AsyncStorage.setItem(getFaceVaultMemberKey(entry.memberId), payload));
+  }
+  await Promise.all(writes).catch(() => {});
+}
+
+/**
+ * Reads the enrolled face directly from the local device storage (0ms offline read).
+ */
+export async function loadFaceFromLocalVault(
+  email?: string,
+  memberId?: string
+): Promise<LocalFaceVaultEntry | null> {
+  const cleanEmail = (email || '').trim().toLowerCase();
+  const cleanMemberId = (memberId || '').trim();
+
+  try {
+    if (cleanEmail) {
+      const rawByEmail = await AsyncStorage.getItem(getFaceVaultEmailKey(cleanEmail));
+      if (rawByEmail) {
+        const parsed = JSON.parse(rawByEmail) as LocalFaceVaultEntry;
+        if (parsed?.facePhotoURL) return parsed;
+      }
+    }
+
+    if (cleanMemberId) {
+      const rawByMember = await AsyncStorage.getItem(getFaceVaultMemberKey(cleanMemberId));
+      if (rawByMember) {
+        const parsed = JSON.parse(rawByMember) as LocalFaceVaultEntry;
+        if (parsed?.facePhotoURL) return parsed;
+      }
+    }
+
+    const rawDevice = await AsyncStorage.getItem(STORAGE_KEY_FACE_VAULT_DEVICE);
+    if (rawDevice) {
+      const parsed = JSON.parse(rawDevice) as LocalFaceVaultEntry;
+      if (
+        parsed?.facePhotoURL &&
+        (!cleanEmail || !parsed.email || parsed.email.toLowerCase() === cleanEmail)
+      ) {
+        return parsed;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+export async function clearLocalFaceVault(
+  email?: string,
+  memberId?: string
+): Promise<void> {
+  const keys: string[] = [STORAGE_KEY_FACE_VAULT_DEVICE];
+  if (email && email.trim()) {
+    keys.push(getFaceVaultEmailKey(email));
+  }
+  if (memberId && memberId.trim()) {
+    keys.push(getFaceVaultMemberKey(memberId));
+  }
+  await AsyncStorage.multiRemove(keys).catch(() => {});
+}
+
+/**
+ * Hydrates a member profile with their on-device enrolled face photo so switching
+ * from Admin back to Worker (or signing back in) immediately restores the face.
+ */
+export async function hydrateMemberWithLocalFaceVault(
+  member: ChurchMember,
+  orgId?: string
+): Promise<ChurchMember> {
+  const adminResetAt = (member as any).faceResetByAdminAt as string | undefined;
+  const localVault = await loadFaceFromLocalVault(member.email, member.id);
+
+  // If an admin explicitly reset this worker's Face ID after the local vault was saved,
+  // respect the admin reset and clear the local vault so the worker re-enrolls once.
+  if (adminResetAt && !member.isFaceEnrolled) {
+    if (!localVault?.faceEnrolledAt || localVault.faceEnrolledAt <= adminResetAt) {
+      await clearLocalFaceVault(member.email, member.id);
+      return member;
+    }
+  }
+
+  if (localVault?.facePhotoURL) {
+    const needsCloudSync = !member.facePhotoURL || !member.isFaceEnrolled;
+    member.facePhotoURL = localVault.facePhotoURL;
+    member.isFaceEnrolled = true;
+    member.faceEmbedding =
+      member.faceEmbedding && member.faceEmbedding.length > 0
+        ? member.faceEmbedding
+        : localVault.faceEmbedding || [1];
+    member.faceEnrolledAt = member.faceEnrolledAt || localVault.faceEnrolledAt;
+
+    if (needsCloudSync && orgId && member.id) {
+      updateDoc(
+        doc(db, 'churches', orgId, 'members', member.id),
+        cleanFirestorePayload({
+          isFaceEnrolled: true,
+          faceEmbedding: member.faceEmbedding,
+          faceEnrolledAt: member.faceEnrolledAt,
+          facePhotoURL: localVault.facePhotoURL,
+        })
+      ).catch(() => {});
+    }
+    return member;
+  }
+
+  // If local vault was empty but Firestore has the enrolled face, cache it to local vault now
+  if (member.facePhotoURL) {
+    await saveFaceToLocalVault({
+      facePhotoURL: member.facePhotoURL,
+      faceEmbedding: member.faceEmbedding,
+      faceEnrolledAt: member.faceEnrolledAt,
+      email: member.email,
+      memberId: member.id,
+      orgId,
+    });
+  }
+
+  return member;
+}
+
+/**
+ * Saves the 1-Worker-1-Phone binding both locally on the device and in Firestore.
+ */
+export async function saveDeviceWorkerLock(lock: DeviceWorkerLock): Promise<void> {
+  if (!lock.deviceId) return;
+  const cleanLock: DeviceWorkerLock = {
+    ...lock,
+    email: (lock.email || '').trim().toLowerCase(),
+  };
+  await AsyncStorage.setItem(
+    STORAGE_KEY_DEVICE_WORKER_LOCK,
+    JSON.stringify(cleanLock)
+  ).catch(() => {});
+
+  try {
+    await setDoc(
+      doc(db, 'device_bindings', cleanLock.deviceId),
+      cleanFirestorePayload(cleanLock),
+      { merge: true }
+    );
+  } catch {
+    // Non-fatal if offline
+  }
+}
+
+export async function clearDeviceWorkerLock(deviceId?: string): Promise<void> {
+  await AsyncStorage.removeItem(STORAGE_KEY_DEVICE_WORKER_LOCK).catch(() => {});
+  if (deviceId) {
+    await deleteDoc(doc(db, 'device_bindings', deviceId)).catch(() => {});
+  }
+}
+
+/**
+ * Enforces strict 1-Worker-1-Phone and 1-Organization-Until-Admin-Releases security:
+ * - Once a phone has created or signed into a worker account, NO other worker account
+ *   can sign in or be created on that phone unless the Admin deletes that worker or unbinds the phone.
+ * - A registered worker cannot join another organization until their previous organization's
+ *   Admin deletes their worker profile from the organization.
+ */
+export async function enforceDeviceWorkerLock(params: {
+  deviceId?: string;
+  candidateEmail?: string;
+  targetOrgId?: string;
+}): Promise<void> {
+  const cleanDeviceId = (params.deviceId || '').trim();
+  const cleanEmail = (params.candidateEmail || '').trim().toLowerCase();
+  const targetOrgId = (params.targetOrgId || '').trim();
+
+  // 1. Check active device lock (local + cloud device_bindings)
+  if (cleanDeviceId) {
+    let lock: DeviceWorkerLock | null = null;
+    try {
+      const localRaw = await AsyncStorage.getItem(STORAGE_KEY_DEVICE_WORKER_LOCK);
+      if (localRaw) {
+        lock = JSON.parse(localRaw) as DeviceWorkerLock;
+      }
+    } catch {}
+
+    try {
+      const cloudSnap = await getDoc(doc(db, 'device_bindings', cleanDeviceId));
+      if (cloudSnap.exists()) {
+        lock = cloudSnap.data() as DeviceWorkerLock;
+      }
+    } catch {}
+
+    if (lock && lock.orgId && lock.memberId) {
+      // Verify whether the member & org still exist in Firestore and are still bound to this device
+      let stillActiveInCloud = true;
+      let resolvedOrgName = lock.orgName || 'their organization';
+      let resolvedFullName = lock.fullName || 'an enrolled worker';
+      let resolvedEmail = (lock.email || '').trim().toLowerCase();
+
+      try {
+        const [orgSnap, memberSnap] = await Promise.all([
+          getDoc(doc(db, 'churches', lock.orgId)),
+          getDoc(doc(db, 'churches', lock.orgId, 'members', lock.memberId)),
+        ]);
+
+        if (!orgSnap.exists() || !memberSnap.exists()) {
+          // Admin deleted the worker or organization -> release the phone!
+          stillActiveInCloud = false;
+        } else {
+          const orgData = orgSnap.data();
+          const memData = memberSnap.data();
+          resolvedOrgName = orgData.churchName || resolvedOrgName;
+          resolvedFullName = memData.fullName || resolvedFullName;
+          resolvedEmail = (memData.email || resolvedEmail).trim().toLowerCase();
+          const currentBoundDevice = (memData.boundDeviceId || '').trim();
+
+          if (
+            !currentBoundDevice ||
+            currentBoundDevice === 'UNBOUND' ||
+            currentBoundDevice !== cleanDeviceId
+          ) {
+            // Admin released/unbound this phone!
+            stillActiveInCloud = false;
+          }
+        }
+      } catch {
+        // Offline fallback: trust local lock
+      }
+
+      if (!stillActiveInCloud) {
+        await clearDeviceWorkerLock(cleanDeviceId);
+      } else {
+        // Refresh local lock metadata
+        await AsyncStorage.setItem(
+          STORAGE_KEY_DEVICE_WORKER_LOCK,
+          JSON.stringify({
+            ...lock,
+            orgName: resolvedOrgName,
+            fullName: resolvedFullName,
+            email: resolvedEmail,
+          })
+        ).catch(() => {});
+
+        // Rule 1A: Block any OTHER worker account from signing in or creating an account on this bound phone
+        if (cleanEmail && resolvedEmail && cleanEmail !== resolvedEmail) {
+          throw new Error(
+            `This mobile phone is already bound to ${resolvedFullName} (${resolvedEmail}) under ${resolvedOrgName}. Only one worker account is allowed per phone. Please contact the ${resolvedOrgName} administrator to delete that worker account and release this mobile phone.`
+          );
+        }
+
+        // Rule 1B: Block the bound worker from joining a SECOND organization until deleted by previous Admin
+        if (targetOrgId && targetOrgId !== lock.orgId) {
+          throw new Error(
+            `Your account and phone are still registered under ${resolvedOrgName}. To register under another organization, please contact the ${resolvedOrgName} administrator to delete your worker profile and release your phone first.`
+          );
+        }
+      }
+    }
+  }
+
+  // 2. Check if candidateEmail is already registered as a worker in account_roles
+  if (cleanEmail) {
+    try {
+      const roleSnap = await getDoc(doc(db, 'account_roles', cleanEmail));
+      if (roleSnap.exists()) {
+        const roleData = roleSnap.data();
+        if (roleData.role === 'WORKER' && roleData.churchId && roleData.memberId) {
+          const [orgSnap, memSnap] = await Promise.all([
+            getDoc(doc(db, 'churches', roleData.churchId)),
+            getDoc(doc(db, 'churches', roleData.churchId, 'members', roleData.memberId)),
+          ]);
+
+          if (!orgSnap.exists() || !memSnap.exists()) {
+            // Stale account_roles entry — worker was deleted by Admin; clean it up!
+            await deleteDoc(doc(db, 'account_roles', cleanEmail)).catch(() => {});
+          } else {
+            const orgName = orgSnap.data()?.churchName || 'your organization';
+            const memData = memSnap.data();
+            const boundDev = (memData?.boundDeviceId || '').trim();
+
+            // If worker is already bound to a DIFFERENT phone, block sign-in on this phone
+            if (
+              boundDev &&
+              boundDev !== 'UNBOUND' &&
+              cleanDeviceId &&
+              boundDev !== cleanDeviceId
+            ) {
+              throw new Error(
+                `Your worker account (${cleanEmail}) is already bound to another mobile phone under ${orgName}. Please use your registered phone or contact the ${orgName} administrator to release your device.`
+              );
+            }
+
+            // If worker tries to pair/join a DIFFERENT organization while still active in their current org, block!
+            if (targetOrgId && targetOrgId !== roleData.churchId) {
+              throw new Error(
+                `Your worker account (${cleanEmail}) is still registered under ${orgName}. Please contact the ${orgName} administrator to delete your worker account before enrolling in another organization.`
+              );
+            }
+          }
+        }
+      }
+    } catch (err) {
+      if (
+        err instanceof Error &&
+        (err.message.includes('already bound') ||
+          err.message.includes('still registered'))
+      ) {
+        throw err;
+      }
+    }
+  }
+}
 
 // Uploads face photo to Firebase Storage or validates payload size limits
 export async function sanitizeOrUploadFacePhoto(
@@ -420,22 +789,30 @@ export async function registerMember(
     const cleanEmail = (memberData.email || '').trim().toLowerCase();
 
     // 0. Security Guard: Prevent administrators from registering as workforce members
-    if (cleanEmail) {
-      const orgDoc = await getDoc(doc(db, 'churches', orgId));
-      if (orgDoc.exists()) {
-        const orgData = orgDoc.data();
-        if (
-          (orgData.adminEmail && orgData.adminEmail.toLowerCase() === cleanEmail) ||
-          (Array.isArray(orgData.adminUids) && orgData.adminUids.includes(cleanEmail))
-        ) {
-          throw new Error(
-            `This account (${cleanEmail}) is registered as an organization administrator on the web portal. Administrator accounts cannot be registered as workforce members on the mobile app. Please sign in with a designated workforce account.`
-          );
-        }
+    let orgName = 'Organization';
+    const orgDoc = await getDoc(doc(db, 'churches', orgId));
+    if (orgDoc.exists()) {
+      const orgData = orgDoc.data();
+      orgName = orgData.churchName || orgName;
+      if (
+        cleanEmail &&
+        ((orgData.adminEmail && orgData.adminEmail.toLowerCase() === cleanEmail) ||
+          (Array.isArray(orgData.adminUids) && orgData.adminUids.includes(cleanEmail)))
+      ) {
+        throw new Error(
+          `This account (${cleanEmail}) is registered as an organization administrator on the web portal. Administrator accounts cannot be registered as workforce members on the mobile app. Please sign in with a designated workforce account.`
+        );
       }
     }
 
-    // 1. Silent Background Check: Is this physical hardware already bound to someone else?
+    // 0b. Global & Local 1-Worker-1-Phone + 1-Org Lock Check
+    await enforceDeviceWorkerLock({
+      deviceId: memberData.boundDeviceId,
+      candidateEmail: cleanEmail,
+      targetOrgId: orgId,
+    });
+
+    // 1. Silent Background Check: Is this physical hardware already bound to someone else in this org?
     if (memberData.boundDeviceId) {
       const qDevice = query(membersRef, where('boundDeviceId', '==', memberData.boundDeviceId));
       const snapDevice = await getDocs(qDevice);
@@ -445,7 +822,7 @@ export async function registerMember(
           const boundEmail = (bound.email || '').trim().toLowerCase();
           if (boundEmail && cleanEmail && boundEmail !== cleanEmail) {
             throw new Error(
-              `This device has already been bound to ${bound.fullName || 'another worker'} (${bound.email || 'another account'}). Please contact your organization administrator to unbind this device.`
+              `This mobile phone is already bound to ${bound.fullName || 'another worker'} (${bound.email || 'another account'}) under ${orgName}. Only one worker account is allowed per phone. Please contact the ${orgName} administrator to delete that worker account and release this mobile phone.`
             );
           }
         }
@@ -459,15 +836,23 @@ export async function registerMember(
       if (!snapEmail.empty) {
         const existingDoc = snapEmail.docs[0];
         const existingMember = { id: existingDoc.id, ...existingDoc.data() } as ChurchMember;
+        const existingBoundDev = (existingMember.boundDeviceId || '').trim();
 
-        if (existingMember.boundDeviceId && existingMember.boundDeviceId !== memberData.boundDeviceId) {
+        if (
+          existingBoundDev &&
+          existingBoundDev !== 'UNBOUND' &&
+          existingBoundDev !== memberData.boundDeviceId
+        ) {
           throw new Error(
-            `Your account is already bound to another registered device. Please use your registered device or contact your administrator to unbind it.`
+            `Your account is already bound to another registered mobile phone under ${orgName}. Please use your registered phone or contact your administrator to release your device.`
           );
         }
 
         const updatesToApply: Record<string, any> = {};
-        if (!existingMember.boundDeviceId && memberData.boundDeviceId) {
+        if (
+          (!existingBoundDev || existingBoundDev === 'UNBOUND') &&
+          memberData.boundDeviceId
+        ) {
           existingMember.boundDeviceId = memberData.boundDeviceId;
           updatesToApply.boundDeviceId = memberData.boundDeviceId;
         }
@@ -480,13 +865,22 @@ export async function registerMember(
           updatesToApply.isFaceEnrolled = true;
           updatesToApply.faceEnrolledAt = existingMember.faceEnrolledAt;
           if (memberData.facePhotoURL) {
+            // Save immediately to On-Device Face Vault for instant offline/local verification
+            await saveFaceToLocalVault({
+              facePhotoURL: memberData.facePhotoURL,
+              faceEmbedding: memberData.faceEmbedding,
+              faceEnrolledAt: existingMember.faceEnrolledAt,
+              email: cleanEmail,
+              memberId: existingMember.id,
+              orgId,
+            });
             const sanitizedPhoto = await sanitizeOrUploadFacePhoto(
               orgId,
               existingMember.id,
               memberData.facePhotoURL
             );
+            existingMember.facePhotoURL = sanitizedPhoto || memberData.facePhotoURL;
             if (sanitizedPhoto) {
-              existingMember.facePhotoURL = sanitizedPhoto;
               updatesToApply.facePhotoURL = sanitizedPhoto;
             }
           }
@@ -496,12 +890,38 @@ export async function registerMember(
           await updateDoc(doc(db, 'churches', orgId, 'members', existingMember.id), cleanFirestorePayload(updatesToApply));
         }
 
+        await hydrateMemberWithLocalFaceVault(existingMember, orgId);
+        if (memberData.boundDeviceId) {
+          await saveDeviceWorkerLock({
+            deviceId: memberData.boundDeviceId,
+            memberId: existingMember.id,
+            email: cleanEmail,
+            fullName: existingMember.fullName,
+            orgId,
+            orgName,
+            boundAt: new Date().toISOString(),
+          });
+        }
         await AsyncStorage.setItem(STORAGE_KEY_MEMBER, JSON.stringify(existingMember));
         return existingMember;
       }
     }
 
     const memberId = 'mem_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+    const enrolledAt = new Date().toISOString();
+
+    // 1. Save face to On-Device Face Vault FIRST so local storage always has the reference photo
+    if (memberData.facePhotoURL) {
+      await saveFaceToLocalVault({
+        facePhotoURL: memberData.facePhotoURL,
+        faceEmbedding: memberData.faceEmbedding,
+        faceEnrolledAt: enrolledAt,
+        email: cleanEmail,
+        memberId,
+        orgId,
+      });
+    }
+
     const sanitizedFacePhoto = memberData.facePhotoURL
       ? await sanitizeOrUploadFacePhoto(orgId, memberId, memberData.facePhotoURL)
       : undefined;
@@ -514,13 +934,13 @@ export async function registerMember(
       photoURL: memberData.photoURL?.trim() || undefined,
       department: memberData.department,
       boundDeviceId: memberData.boundDeviceId,
-      registeredAt: new Date().toISOString(),
+      registeredAt: enrolledAt,
       ...(memberData.faceEmbedding && memberData.faceEmbedding.length > 0
         ? {
             faceEmbedding: memberData.faceEmbedding,
             isFaceEnrolled: true,
-            faceEnrolledAt: new Date().toISOString(),
-            facePhotoURL: sanitizedFacePhoto,
+            faceEnrolledAt: enrolledAt,
+            facePhotoURL: sanitizedFacePhoto || memberData.facePhotoURL,
           }
         : {
             isFaceEnrolled: false,
@@ -549,6 +969,19 @@ export async function registerMember(
       }
     }
 
+    // Lock this physical phone to this worker account & organization
+    if (memberData.boundDeviceId) {
+      await saveDeviceWorkerLock({
+        deviceId: memberData.boundDeviceId,
+        memberId,
+        email: cleanEmail,
+        fullName: newMember.fullName,
+        orgId,
+        orgName,
+        boundAt: enrolledAt,
+      });
+    }
+
     await AsyncStorage.setItem(STORAGE_KEY_MEMBER, JSON.stringify(newMember));
     return newMember;
   } catch (error) {
@@ -564,6 +997,21 @@ export async function updateMemberFaceEnrollment(
   facePhotoURL?: string
 ): Promise<void> {
   try {
+    const enrolledAt = new Date().toISOString();
+    const cached = await getCachedMember();
+
+    // 1. Save immediately to On-Device Face Vault for instant local verification
+    if (facePhotoURL) {
+      await saveFaceToLocalVault({
+        facePhotoURL,
+        faceEmbedding,
+        faceEnrolledAt: enrolledAt,
+        email: cached?.id === memberId ? cached.email : undefined,
+        memberId,
+        orgId,
+      });
+    }
+
     const memberDocRef = doc(db, 'churches', orgId, 'members', memberId);
     const sanitizedFacePhoto = facePhotoURL
       ? await sanitizeOrUploadFacePhoto(orgId, memberId, facePhotoURL)
@@ -572,7 +1020,8 @@ export async function updateMemberFaceEnrollment(
     const updates: Record<string, any> = {
       faceEmbedding,
       isFaceEnrolled: true,
-      faceEnrolledAt: new Date().toISOString(),
+      faceEnrolledAt: enrolledAt,
+      faceResetByAdminAt: '',
     };
     if (sanitizedFacePhoto) {
       updates.facePhotoURL = sanitizedFacePhoto;
@@ -581,14 +1030,13 @@ export async function updateMemberFaceEnrollment(
     await updateDoc(memberDocRef, cleanFirestorePayload(updates));
 
     // Update local cache
-    const cached = await getCachedMember();
     if (cached && cached.id === memberId) {
       const updatedMember: ChurchMember = {
         ...cached,
         faceEmbedding,
         isFaceEnrolled: true,
         faceEnrolledAt: updates.faceEnrolledAt,
-        ...(sanitizedFacePhoto ? { facePhotoURL: sanitizedFacePhoto } : {}),
+        ...(facePhotoURL ? { facePhotoURL } : {}),
       };
       await AsyncStorage.setItem(STORAGE_KEY_MEMBER, JSON.stringify(updatedMember));
     }
@@ -601,15 +1049,20 @@ export async function updateMemberFaceEnrollment(
 export async function clearMemberFaceEnrollment(orgId: string, memberId: string): Promise<void> {
   try {
     const memberDocRef = doc(db, 'churches', orgId, 'members', memberId);
+    const snap = await getDoc(memberDocRef).catch(() => null);
+    const memberEmail = snap?.exists() ? snap.data()?.email : undefined;
+
     await updateDoc(memberDocRef, {
       faceEmbedding: [],
       isFaceEnrolled: false,
       faceEnrolledAt: '',
       facePhotoURL: '',
+      faceResetByAdminAt: new Date().toISOString(),
     });
 
     const cached = await getCachedMember();
     if (cached && cached.id === memberId) {
+      await clearLocalFaceVault(cached.email || memberEmail, memberId);
       cached.faceEmbedding = [];
       cached.isFaceEnrolled = false;
       delete cached.faceEnrolledAt;
@@ -625,9 +1078,16 @@ export async function clearMemberFaceEnrollment(orgId: string, memberId: string)
 export async function resetMemberDeviceBinding(orgId: string, memberId: string): Promise<void> {
   try {
     const memberDocRef = doc(db, 'churches', orgId, 'members', memberId);
+    const snap = await getDoc(memberDocRef).catch(() => null);
+    const oldDeviceId = snap?.exists() ? snap.data()?.boundDeviceId : undefined;
+
     await updateDoc(memberDocRef, {
       boundDeviceId: '',
     });
+
+    if (oldDeviceId && oldDeviceId !== 'UNBOUND') {
+      await deleteDoc(doc(db, 'device_bindings', oldDeviceId)).catch(() => {});
+    }
   } catch (error) {
     console.error('Error resetting member device binding:', error);
     throw error;
@@ -654,7 +1114,20 @@ export async function updateMemberStatus(
 export async function deleteOrganizationMember(orgId: string, memberId: string): Promise<void> {
   try {
     const memberDocRef = doc(db, 'churches', orgId, 'members', memberId);
+    const snap = await getDoc(memberDocRef).catch(() => null);
+    const memData = snap?.exists() ? snap.data() : null;
+
     await deleteDoc(memberDocRef);
+
+    if (memData?.boundDeviceId && memData.boundDeviceId !== 'UNBOUND') {
+      await deleteDoc(doc(db, 'device_bindings', memData.boundDeviceId)).catch(() => {});
+    }
+    if (memData?.email) {
+      const cleanEmail = String(memData.email).trim().toLowerCase();
+      if (cleanEmail) {
+        await deleteDoc(doc(db, 'account_roles', cleanEmail)).catch(() => {});
+      }
+    }
   } catch (error) {
     console.error('Error deleting member:', error);
     throw error;
@@ -666,82 +1139,109 @@ export async function findExistingMember(orgId: string, email?: string, deviceId
     const membersRef = collection(db, 'churches', orgId, 'members');
     const cleanEmail = (email || '').trim().toLowerCase();
 
+    // Enforce global & local 1-Worker-1-Phone lock before resolving member
+    await enforceDeviceWorkerLock({
+      deviceId,
+      candidateEmail: cleanEmail,
+    });
+
     // Parallelize queries with limit(1) to eliminate sequential network round trips
-    const [snapEmail, snapDevice] = await Promise.all([
+    const [snapEmail, snapDevice, orgSnap] = await Promise.all([
       cleanEmail
         ? getDocs(query(membersRef, where('email', '==', cleanEmail), limit(1)))
         : Promise.resolve(null),
       deviceId
         ? getDocs(query(membersRef, where('boundDeviceId', '==', deviceId), limit(1)))
         : Promise.resolve(null),
+      getDoc(doc(db, 'churches', orgId)).catch(() => null),
     ]);
+    const orgName = orgSnap?.exists() ? orgSnap.data()?.churchName || 'this organization' : 'this organization';
 
-    // 1. Primary check: Email match (highest fidelity account identity)
+    // 1. If device is already bound in this organization to a DIFFERENT worker email, block immediately!
+    if (snapDevice && !snapDevice.empty) {
+      const boundDoc = snapDevice.docs[0];
+      const bound = boundDoc.data();
+      const boundEmail = (bound.email || '').trim().toLowerCase();
+      if (cleanEmail && boundEmail && boundEmail !== cleanEmail) {
+        throw new Error(
+          `This mobile phone is already bound to ${bound.fullName || 'another worker'} (${bound.email || 'another account'}) under ${orgName}. Only one worker account is allowed per phone. Please contact the ${orgName} administrator to delete that worker account and release this mobile phone.`
+        );
+      }
+    }
+
+    // 2. Primary check: Email match (highest fidelity account identity)
     if (snapEmail && !snapEmail.empty) {
       const d = snapEmail.docs[0];
       const member = { id: d.id, ...d.data() } as ChurchMember;
-
-      // Preserve locally enrolled facePhotoURL if Firestore document was missing it
-      if (member.isFaceEnrolled && !member.facePhotoURL) {
-        const cached = await getCachedMember();
-        if (cached && cached.id === member.id && cached.facePhotoURL) {
-          member.facePhotoURL = cached.facePhotoURL;
-          updateDoc(doc(db, 'churches', orgId, 'members', member.id), cleanFirestorePayload({
-            facePhotoURL: cached.facePhotoURL,
-          })).catch(() => {});
-        }
-      }
+      const boundDev = (member.boundDeviceId || '').trim();
 
       // Verify device binding
-      if (member.boundDeviceId && deviceId && member.boundDeviceId !== deviceId) {
+      if (boundDev && boundDev !== 'UNBOUND' && deviceId && boundDev !== deviceId) {
         throw new Error(
-          `Your account is already bound to another registered device. You can only record attendance from your original device. Please contact your administrator to unbind your previous device.`
+          `Your worker account (${cleanEmail}) is already bound to another mobile phone under ${orgName}. You can only sign in from your registered phone. Please contact the ${orgName} administrator to release your previous device.`
         );
       }
 
-      // If member exists but device is not yet bound, bind it asynchronously in background without blocking navigation
-      if (!member.boundDeviceId && deviceId) {
+      // If member exists but device is not yet bound (or was unbound by admin), bind it now
+      if ((!boundDev || boundDev === 'UNBOUND') && deviceId) {
         member.boundDeviceId = deviceId;
         updateDoc(doc(db, 'churches', orgId, 'members', member.id), {
           boundDeviceId: deviceId,
         }).catch((updateErr) => console.warn('Could not update device binding on existing member:', updateErr));
       }
 
+      // Hydrate face directly from On-Device Face Vault (0ms local storage restoration!)
+      await hydrateMemberWithLocalFaceVault(member, orgId);
+
+      if (deviceId) {
+        await saveDeviceWorkerLock({
+          deviceId,
+          memberId: member.id,
+          email: cleanEmail || (member.email || '').toLowerCase(),
+          fullName: member.fullName,
+          orgId,
+          orgName,
+          boundAt: new Date().toISOString(),
+        });
+      }
+
       AsyncStorage.setItem(STORAGE_KEY_MEMBER, JSON.stringify(member)).catch(() => {});
       return member;
     }
 
-    // 2. Secondary check: Bound device match
+    // 3. Secondary check: Bound device match
     if (snapDevice && !snapDevice.empty) {
       const d = snapDevice.docs[0];
       const bound = d.data();
-      const boundEmail = (bound.email || '').trim().toLowerCase();
-
-      // If device is already registered to a DIFFERENT user, reject buddy punching / proxy access
-      if (cleanEmail && boundEmail && boundEmail !== cleanEmail) {
-        throw new Error(
-          `This device is already bound to ${bound.fullName || 'another worker'} (${bound.email || 'another account'}). Please contact your organization administrator to unbind this device.`
-        );
-      }
-
       const member = { id: d.id, ...bound } as ChurchMember;
-      if (member.isFaceEnrolled && !member.facePhotoURL) {
-        const cached = await getCachedMember();
-        if (cached && cached.id === member.id && cached.facePhotoURL) {
-          member.facePhotoURL = cached.facePhotoURL;
-          updateDoc(doc(db, 'churches', orgId, 'members', member.id), cleanFirestorePayload({
-            facePhotoURL: cached.facePhotoURL,
-          })).catch(() => {});
-        }
+
+      await hydrateMemberWithLocalFaceVault(member, orgId);
+
+      if (deviceId) {
+        await saveDeviceWorkerLock({
+          deviceId,
+          memberId: member.id,
+          email: (member.email || cleanEmail).toLowerCase(),
+          fullName: member.fullName,
+          orgId,
+          orgName,
+          boundAt: new Date().toISOString(),
+        });
       }
+
       AsyncStorage.setItem(STORAGE_KEY_MEMBER, JSON.stringify(member)).catch(() => {});
       return member;
     }
 
     return null;
   } catch (error) {
-    // Re-throw security collision errors so they surface to the user
-    if (error instanceof Error && error.message.includes('already bound')) {
+    // Re-throw security collision errors so they surface to the user and block unauthorized login
+    if (
+      error instanceof Error &&
+      (error.message.includes('already bound') ||
+        error.message.includes('still registered') ||
+        error.message.includes('Only one worker'))
+    ) {
       throw error;
     }
     console.warn('Could not query existing member:', error);

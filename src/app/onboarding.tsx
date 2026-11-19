@@ -23,7 +23,11 @@ import {
   requestAllAppPermissions,
   AppPermissionsStatus,
 } from "../services/permissionService";
-import { checkIfUserIsAdmin } from "../services/organizationService";
+import {
+  checkIfUserIsAdmin,
+  saveFaceToLocalVault,
+  loadFaceFromLocalVault,
+} from "../services/organizationService";
 import { FaceScannerModal } from "../components/FaceScannerModal";
 import { C, MONO, R, S, T, shadow, ui } from "../constants/premium";
 
@@ -109,6 +113,15 @@ export default function OnboardingScreen() {
         if (organization && !member) {
           setVerifiedOrg(organization);
           if (organization.churchCode) setChurchCodeInput(organization.churchCode);
+        }
+        if (user?.email) {
+          loadFaceFromLocalVault(user.email, member?.id)
+            .then((vault) => {
+              if (active && vault?.facePhotoURL) {
+                setCapturedFaceUri((prev) => prev || vault.facePhotoURL);
+              }
+            })
+            .catch(() => {});
         }
       })
       .catch(() => {
@@ -620,7 +633,12 @@ export default function OnboardingScreen() {
         onSuccess={(dataUri) => {
           setCapturedFaceUri(dataUri);
           setShowFaceEnrollModal(false);
-          toast.success("Face biometric profile enrolled and validated!");
+          saveFaceToLocalVault({
+            facePhotoURL: dataUri,
+            email: user?.email,
+            orgId: verifiedOrg?.id || organization?.id,
+          }).catch(() => {});
+          toast.success("Face biometric profile saved on device & validated!");
         }}
       />
     </SafeAreaView>

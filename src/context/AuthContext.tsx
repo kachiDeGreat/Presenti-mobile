@@ -29,6 +29,10 @@ import {
   getAdminOrganization,
   updateOrganizationAnchors as updateOrganizationAnchorsService,
   updateMemberFaceEnrollment,
+  hydrateMemberWithLocalFaceVault,
+  saveFaceToLocalVault,
+  enforceDeviceWorkerLock,
+  saveDeviceWorkerLock,
 } from '../services/organizationService';
 import {
   sendMobileSignupOtp,
@@ -151,8 +155,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         }
 
-        if (storedMember) {
-          setMember(storedMember);
+        if (storedMember && loadedOrg) {
+          const hydrated = await hydrateMemberWithLocalFaceVault(storedMember, loadedOrg.id);
+          setMember(hydrated);
+        } else if (storedMember) {
+          const hydrated = await hydrateMemberWithLocalFaceVault(storedMember);
+          setMember(hydrated);
         }
 
         if (storedAnchors) {
@@ -311,11 +319,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { user: adminUser, organization: adminOrg, member: null };
       }
 
-      // 1. Instant user session persistence
+      // 1. Resolve active device ID
+      const activeDeviceId = deviceId || (await getDeviceFingerprint());
+      if (activeDeviceId && !deviceId) {
+        setDeviceId(activeDeviceId);
+      }
+
+      // 2. STRICT 1-WORKER-1-PHONE CHECK:
+      // Before allowing any worker account to sign in or onboard on this phone,
+      // verify that this physical phone is not already bound to another worker!
+      try {
+        await enforceDeviceWorkerLock({
+          deviceId: activeDeviceId,
+          candidateEmail: cleanEmail,
+        });
+      } catch (lockErr) {
+        if (auth.currentUser) {
+          await FirebaseAuth.signOut(auth).catch(() => {});
+        }
+        await AsyncStorage.removeItem(STORAGE_KEY_USER).catch(() => {});
+        setUser(null);
+        throw lockErr;
+      }
+
+      // 3. Instant user session persistence
       AsyncStorage.setItem(STORAGE_KEY_USER, JSON.stringify(authUser)).catch(() => {});
       setUser(authUser);
 
-      // 2. Persist to known accounts list on this device
+      // 4. Persist to known accounts list on this device
       setKnownAccounts((prev) => {
         const filtered = prev.filter((a) => a.email.toLowerCase() !== authUser.email.toLowerCase());
         const updated = [authUser, ...filtered];
@@ -323,13 +354,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return updated;
       });
 
-      // 3. Resolve active device ID
-      const activeDeviceId = deviceId || (await getDeviceFingerprint());
-      if (activeDeviceId && !deviceId) {
-        setDeviceId(activeDeviceId);
-      }
-
-      // 4. Resolve active organization (from state or device local cache)
+      // 5. Resolve active organization (from state or device local cache)
       let activeOrg = organization || (await getCachedOrganization());
       let existingMember: ChurchMember | null = await getCachedMember();
 
@@ -343,7 +368,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         existingMember = null;
       }
 
-      // 5. If organization is cached on this device, verify that it still exists in Firestore
+      // 6. If organization is cached on this device, verify that it still exists in Firestore
       if (activeOrg) {
         const freshOrg = await fetchFreshOrganizationById(activeOrg.id).catch(() => null);
         if (!freshOrg) {
@@ -361,8 +386,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               existingMember = found;
               setOrganization(activeOrg);
             } else {
-              // User is NOT an enrolled member of this cached organization!
-              // Do NOT force this organization onto a new user; let them onboard.
               existingMember = null;
               activeOrg = null;
               setOrganization(null);
@@ -370,12 +393,61 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               await AsyncStorage.multiRemove([STORAGE_KEY_ORG, STORAGE_KEY_ANCHORS, STORAGE_KEY_MEMBER]);
             }
           } catch (error) {
+            if (
+              error instanceof Error &&
+              (error.message.includes('already bound') ||
+                error.message.includes('still registered') ||
+                error.message.includes('Only one worker'))
+            ) {
+              if (auth.currentUser) {
+                await FirebaseAuth.signOut(auth).catch(() => {});
+              }
+              await AsyncStorage.removeItem(STORAGE_KEY_USER).catch(() => {});
+              setUser(null);
+              throw error;
+            }
             console.warn('findExistingMember check error:', error);
           }
         }
       }
 
-      // 5b. If activeOrg not yet known on this device, check if worker is already registered across any organization
+      // 6b. Fast O(1) lookup via account_roles/{cleanEmail} when switching back from Admin to Worker
+      if (!activeOrg && cleanEmail && db) {
+        try {
+          const roleSnap = await getDoc(doc(db, 'account_roles', cleanEmail));
+          if (roleSnap.exists()) {
+            const roleData = roleSnap.data();
+            if (roleData.role === 'WORKER' && roleData.churchId) {
+              const freshOrg = await fetchFreshOrganizationById(roleData.churchId);
+              if (freshOrg) {
+                const found = await findExistingMember(freshOrg.id, cleanEmail, activeDeviceId);
+                if (found) {
+                  activeOrg = freshOrg;
+                  existingMember = found;
+                  setOrganization(activeOrg);
+                  await cacheOrganizationAnchors(activeOrg);
+                }
+              }
+            }
+          }
+        } catch (roleErr) {
+          if (
+            roleErr instanceof Error &&
+            (roleErr.message.includes('already bound') ||
+              roleErr.message.includes('still registered') ||
+              roleErr.message.includes('Only one worker'))
+          ) {
+            if (auth.currentUser) {
+              await FirebaseAuth.signOut(auth).catch(() => {});
+            }
+            await AsyncStorage.removeItem(STORAGE_KEY_USER).catch(() => {});
+            setUser(null);
+            throw roleErr;
+          }
+        }
+      }
+
+      // 6c. Fallback collectionGroup lookup across organizations
       if (!activeOrg && cleanEmail && db) {
         try {
           const membersGroupQuery = query(
@@ -390,29 +462,74 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (churchDocRef) {
               const freshOrg = await fetchFreshOrganizationById(churchDocRef.id);
               if (freshOrg) {
+                const mData = memberDoc.data();
+                const boundDev = (mData.boundDeviceId || '').trim();
+                if (
+                  boundDev &&
+                  boundDev !== 'UNBOUND' &&
+                  activeDeviceId &&
+                  boundDev !== activeDeviceId
+                ) {
+                  if (auth.currentUser) {
+                    await FirebaseAuth.signOut(auth).catch(() => {});
+                  }
+                  await AsyncStorage.removeItem(STORAGE_KEY_USER).catch(() => {});
+                  setUser(null);
+                  throw new Error(
+                    `Your worker account (${cleanEmail}) is already bound to another mobile phone under ${freshOrg.churchName}. Please use your registered phone or contact your administrator to release your device.`
+                  );
+                }
+
                 activeOrg = freshOrg;
                 existingMember = {
                   id: memberDoc.id,
-                  fullName: memberDoc.data().fullName || authUser.displayName || 'Worker',
-                  phone: memberDoc.data().phone || '',
-                  email: memberDoc.data().email || cleanEmail,
-                  department: memberDoc.data().department || 'General',
-                  boundDeviceId: memberDoc.data().boundDeviceId || activeDeviceId,
-                  registeredAt: memberDoc.data().registeredAt || new Date().toISOString(),
-                  isFaceEnrolled: memberDoc.data().isFaceEnrolled || false,
-                  faceEmbedding: memberDoc.data().faceEmbedding || [],
-                };
+                  ...mData,
+                  fullName: mData.fullName || authUser.displayName || 'Worker',
+                  phone: mData.phone || '',
+                  email: mData.email || cleanEmail,
+                  department: mData.department || 'General',
+                  boundDeviceId: boundDev && boundDev !== 'UNBOUND' ? boundDev : activeDeviceId,
+                  registeredAt: mData.registeredAt || new Date().toISOString(),
+                  isFaceEnrolled: Boolean(mData.isFaceEnrolled),
+                  faceEmbedding: mData.faceEmbedding || [],
+                  facePhotoURL: mData.facePhotoURL,
+                } as ChurchMember;
+
+                existingMember = await hydrateMemberWithLocalFaceVault(existingMember, freshOrg.id);
+                if (activeDeviceId) {
+                  await saveDeviceWorkerLock({
+                    deviceId: activeDeviceId,
+                    memberId: existingMember.id,
+                    email: cleanEmail,
+                    fullName: existingMember.fullName,
+                    orgId: freshOrg.id,
+                    orgName: freshOrg.churchName,
+                    boundAt: new Date().toISOString(),
+                  });
+                }
                 setOrganization(activeOrg);
                 await cacheOrganizationAnchors(activeOrg);
               }
             }
           }
         } catch (cgErr) {
+          if (
+            cgErr instanceof Error &&
+            (cgErr.message.includes('already bound') ||
+              cgErr.message.includes('still registered') ||
+              cgErr.message.includes('Only one worker'))
+          ) {
+            throw cgErr;
+          }
           console.warn('Cross-organization member lookup notice:', cgErr);
         }
       }
 
       if (existingMember) {
+        existingMember = await hydrateMemberWithLocalFaceVault(
+          existingMember,
+          activeOrg?.id
+        );
         setMember(existingMember);
         await AsyncStorage.setItem(STORAGE_KEY_MEMBER, JSON.stringify(existingMember));
       } else {
@@ -626,7 +743,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     email: string,
     purpose: 'SIGNUP' | 'RESET_PASSWORD'
   ): Promise<SendMobileOtpResult> => {
+    const cleanEmail = email.trim().toLowerCase();
     if (purpose === 'SIGNUP') {
+      const isAdminEmail = await checkIfUserIsAdmin(cleanEmail);
+      if (!isAdminEmail) {
+        const activeDeviceId = deviceId || (await getDeviceFingerprint());
+        await enforceDeviceWorkerLock({
+          deviceId: activeDeviceId,
+          candidateEmail: cleanEmail,
+        });
+      }
       return await sendMobileSignupOtp(email);
     } else {
       return await sendMobilePasswordResetOtp(email);
@@ -664,12 +790,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       throw new Error('No organization found matching code "' + code.toUpperCase() + '". Please verify with your administrator.');
     }
 
+    const activeDeviceId = deviceId || (await getDeviceFingerprint());
+    await enforceDeviceWorkerLock({
+      deviceId: activeDeviceId,
+      candidateEmail: user?.email,
+      targetOrgId: org.id,
+    });
+
     const anchors = await cacheOrganizationAnchors(org);
     setOrganization(org);
     setCachedAnchors(anchors);
 
-    if (user && deviceId) {
-      const existing = await findExistingMember(org.id, user.email, deviceId);
+    if (user && activeDeviceId) {
+      const existing = await findExistingMember(org.id, user.email, activeDeviceId);
       if (existing) {
         setMember(existing);
       }
@@ -722,12 +855,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!organization?.id || !member?.id) {
       throw new Error('No active organization or member profile found.');
     }
+    const enrolledAt = new Date().toISOString();
+    if (facePhotoURL) {
+      await saveFaceToLocalVault({
+        facePhotoURL,
+        faceEmbedding,
+        faceEnrolledAt: enrolledAt,
+        email: member.email || user?.email,
+        memberId: member.id,
+        orgId: organization.id,
+      });
+    }
     await updateMemberFaceEnrollment(organization.id, member.id, faceEmbedding, facePhotoURL);
     const updatedMember: ChurchMember = {
       ...member,
       faceEmbedding,
       isFaceEnrolled: true,
-      faceEnrolledAt: new Date().toISOString(),
+      faceEnrolledAt: enrolledAt,
       ...(facePhotoURL ? { facePhotoURL } : {}),
     };
     setMember(updatedMember);

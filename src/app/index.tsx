@@ -28,6 +28,7 @@ import {
   getTodayPunchRecord,
   saveTodayPunchRecord,
   fetchTodayMemberAttendance,
+  loadFaceFromLocalVault,
 } from "../services/organizationService";
 import {
   evaluateAttendanceWindow,
@@ -99,7 +100,33 @@ export default function DashboardScreen() {
     mode: "enroll" | "verify";
     action: "clockIn" | "signOut" | "enrollOnly";
   }>({ visible: false, mode: "verify", action: "clockIn" });
+  const [localFacePhoto, setLocalFacePhoto] = useState<string | undefined>(
+    member?.facePhotoURL
+  );
   const verifiedPresenceRef = React.useRef<PresenceVerificationResult | null>(null);
+
+  // Instant 0ms On-Device Face Vault lookup so verification reads locally without cloud lag
+  useEffect(() => {
+    let active = true;
+    const email = member?.email || user?.email;
+    const memberId = member?.id;
+    if (!email && !memberId) return;
+
+    loadFaceFromLocalVault(email, memberId)
+      .then((vault) => {
+        if (!active) return;
+        if (vault?.facePhotoURL) {
+          setLocalFacePhoto(vault.facePhotoURL);
+        } else if (member?.facePhotoURL) {
+          setLocalFacePhoto(member.facePhotoURL);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      active = false;
+    };
+  }, [member?.id, member?.email, member?.facePhotoURL, user?.email]);
 
   // Policy evaluation tick (30s cadence — live seconds live inside LiveClockDisplay)
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -395,10 +422,22 @@ export default function DashboardScreen() {
       return;
     }
 
-    // 3. Ensure account has an enrolled face reference from onboarding
-    if (!member?.isFaceEnrolled || !member?.facePhotoURL) {
+    // 3. Ensure account has an enrolled face reference from On-Device Vault or profile
+    let activeFaceRef = localFacePhoto || member?.facePhotoURL;
+    if (!activeFaceRef) {
+      const vault = await loadFaceFromLocalVault(
+        member?.email || user?.email,
+        member?.id
+      );
+      if (vault?.facePhotoURL) {
+        activeFaceRef = vault.facePhotoURL;
+        setLocalFacePhoto(vault.facePhotoURL);
+      }
+    }
+
+    if (!activeFaceRef) {
       toast.warn(
-        "Your Face ID was reset by an administrator or is missing. Complete Face ID enrollment first, then tap Clock In to verify.",
+        "Your Face ID was reset by an administrator or is missing on this device. Complete Face ID enrollment first, then tap Clock In to verify.",
         { title: "Face ID Enrollment Required", duration: 5000 },
       );
       setFaceModal({
@@ -622,9 +661,21 @@ export default function DashboardScreen() {
       return;
     }
 
-    if (!member?.isFaceEnrolled || !member?.facePhotoURL) {
+    let activeFaceRef = localFacePhoto || member?.facePhotoURL;
+    if (!activeFaceRef) {
+      const vault = await loadFaceFromLocalVault(
+        member?.email || user?.email,
+        member?.id
+      );
+      if (vault?.facePhotoURL) {
+        activeFaceRef = vault.facePhotoURL;
+        setLocalFacePhoto(vault.facePhotoURL);
+      }
+    }
+
+    if (!activeFaceRef) {
       toast.warn(
-        "Your Face ID was reset by an administrator or is missing. Complete Face ID enrollment first, then tap Sign Out to verify.",
+        "Your Face ID was reset by an administrator or is missing on this device. Complete Face ID enrollment first, then tap Sign Out to verify.",
         { title: "Face ID Enrollment Required", duration: 5000 },
       );
       setFaceModal({
@@ -1067,11 +1118,11 @@ export default function DashboardScreen() {
         }}
       />
 
-      {/* 1-to-1 AI Face Verification Scanner */}
+      {/* 1-to-1 AI Face Verification Scanner (Reads reference face from On-Device Vault) */}
       <FaceScannerModal
         visible={faceModal.visible}
         mode={faceModal.mode}
-        referencePhotoUrl={member?.facePhotoURL}
+        referencePhotoUrl={localFacePhoto || member?.facePhotoURL}
         onCancel={() => setFaceModal((prev) => ({ ...prev, visible: false }))}
         onSuccess={async (capturedDataUri) => {
           const currentAction = faceModal.action;
@@ -1082,10 +1133,11 @@ export default function DashboardScreen() {
           // it NEVER auto-clocks in or overwrites an existing face during clock-in.
           if (currentMode === "enroll" || currentAction === "enrollOnly") {
             try {
+              setLocalFacePhoto(capturedDataUri);
               await enrollFace([1], capturedDataUri);
               toast.success(
-                "Face ID enrolled! You can now tap Clock In to verify against your enrolled face.",
-                { title: "Face ID Enrolled", duration: 4500 },
+                "Face ID saved to device! You can now tap Clock In to verify against your enrolled face.",
+                { title: "Face ID Saved Locally", duration: 4500 },
               );
             } catch (err: any) {
               toast.error(
