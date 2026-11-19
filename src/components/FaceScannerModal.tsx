@@ -14,6 +14,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { Ionicons } from "@expo/vector-icons";
+import { RNMLKitFaceDetector } from "@infinitered/react-native-mlkit-face-detection";
 import {
   verifyFaceEnrollment,
   verifyFaceMatch,
@@ -54,6 +55,7 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
   );
 
   const cameraRef = useRef<CameraView>(null);
+  const detectorRef = useRef<RNMLKitFaceDetector | null>(null);
   const isMountedRef = useRef(true);
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
@@ -124,6 +126,24 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
       clearPendingTimersAndAbort();
     };
   }, [clearPendingTimersAndAbort]);
+
+  // Initialize fast on-device ML Kit face detector for instant 100ms "No face detected" pre-check
+  useEffect(() => {
+    if (!visible) return;
+    if (!detectorRef.current) {
+      try {
+        detectorRef.current = new RNMLKitFaceDetector({
+          performanceMode: "fast",
+          landmarkMode: false,
+          contourMode: false,
+          classificationMode: true,
+          minFaceSize: 0.15,
+        });
+      } catch {
+        detectorRef.current = null;
+      }
+    }
+  }, [visible]);
 
   const resetToLiveCamera = useCallback(() => {
     clearPendingTimersAndAbort();
@@ -275,6 +295,41 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
         return;
       }
 
+      // Instant ~100ms on-device pre-check: immediately catch empty/no-face frames before cloud AI
+      let localFaceConfirmed = false;
+      if (detectorRef.current?.status === "ready" && photo.uri) {
+        try {
+          const localDet = await detectorRef.current.detectFaces(photo.uri);
+          if (
+            !isMountedRef.current ||
+            !visibleRef.current ||
+            scanSessionIdRef.current !== sessionId
+          ) {
+            return;
+          }
+          const faces = localDet?.faces || [];
+          if (faces.length === 0) {
+            showErrorAndAutoReset(
+              "No face detected",
+              "Point the camera directly at your face in good light.",
+              100
+            );
+            return;
+          }
+          if (faces.length > 1) {
+            showErrorAndAutoReset(
+              "Multiple faces in frame",
+              "Only one person should be visible inside the circle.",
+              100
+            );
+            return;
+          }
+          localFaceConfirmed = true;
+        } catch {
+          // Continue to Gemini AI if local detector throws
+        }
+      }
+
       const dataUri = `data:image/jpeg;base64,${photo.base64}`;
 
       if (mode === "enroll") {
@@ -288,6 +343,17 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
         }
 
         if (res.valid) {
+          setCapturedUri(dataUri);
+          setScanState("confirm");
+          setStatusMessage("Confirm Your Photo");
+          setSubMessage("Make sure your face is clear, or retake below.");
+          Vibration.vibrate([0, 50, 40, 50]);
+        } else if (
+          localFaceConfirmed &&
+          res.reason === "Verification service busy."
+        ) {
+          // If Gemini quota/network is temporarily busy during enrollment AND local face detection
+          // already confirmed a single clear face, let user confirm their photo instead of stranding them
           setCapturedUri(dataUri);
           setScanState("confirm");
           setStatusMessage("Confirm Your Photo");

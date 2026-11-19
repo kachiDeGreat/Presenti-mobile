@@ -1,9 +1,12 @@
-const VISION_MODELS = [
-  "gemini-3.8-flash",
+const FAST_LITE_MODELS = [
   "gemini-3.5-flash-lite",
   "gemini-3.1-flash-lite",
+];
+
+const FALLBACK_MODELS = [
   "gemini-2.5-flash-lite",
   "gemini-flash-lite-latest",
+  "gemini-3.8-flash",
   "gemini-3.7-flash",
 ];
 
@@ -47,6 +50,72 @@ async function urlToBase64(urlOrDataUri: string): Promise<string> {
   });
 }
 
+async function requestVisionModel<T>(
+  model: string,
+  apiKey: string,
+  parts: Array<Record<string, unknown>>,
+  timeoutMs: number
+): Promise<T> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
+    apiKey
+  )}`;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts }],
+        generationConfig: {
+          temperature: 0.1,
+          maxOutputTokens: 512,
+          responseMimeType: "application/json",
+        },
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => "");
+      console.warn(`[FaceAI] Model ${model} HTTP ${res.status}:`, errBody.slice(0, 180));
+      throw new Error(`HTTP ${res.status}`);
+    }
+
+    const data = await res.json().catch(() => ({}));
+    const rawText =
+      data?.candidates?.[0]?.content?.parts
+        ?.filter((p: { thought?: boolean; text?: string }) => !p.thought && Boolean(p.text))
+        .map((p: { text?: string }) => p.text || "")
+        .join("")
+        .trim() || "";
+
+    if (!rawText) {
+      throw new Error("Empty response");
+    }
+
+    const cleaned = rawText
+      .replace(/^```json\s*/i, "")
+      .replace(/^```\s*/i, "")
+      .replace(/```$/i, "")
+      .trim();
+
+    const firstBrace = cleaned.indexOf("{");
+    const lastBrace = cleaned.lastIndexOf("}");
+    const jsonSlice =
+      firstBrace !== -1 && lastBrace > firstBrace
+        ? cleaned.slice(firstBrace, lastBrace + 1)
+        : cleaned;
+
+    return JSON.parse(jsonSlice) as T;
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    throw err;
+  }
+}
+
 async function callVisionJSON<T>(parts: Array<Record<string, unknown>>): Promise<T | null> {
   const apiKey = getApiKey();
   if (!apiKey) {
@@ -54,65 +123,21 @@ async function callVisionJSON<T>(parts: Array<Record<string, unknown>>): Promise
     return null;
   }
 
-  for (const model of VISION_MODELS) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
-      apiKey
-    )}`;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 15000);
+  // Wave 1: Race the two fastest flash-lite models in parallel (5s cap)
+  try {
+    return await Promise.any(
+      FAST_LITE_MODELS.map((model) => requestVisionModel<T>(model, apiKey, parts, 5000))
+    );
+  } catch {
+    // Fall through to Wave 2
+  }
 
+  // Wave 2: Sequential fallback across remaining models (5s cap each)
+  for (const model of FALLBACK_MODELS) {
     try {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts }],
-          generationConfig: {
-            temperature: 0.1,
-            maxOutputTokens: 512,
-            responseMimeType: "application/json",
-          },
-        }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeoutId);
-
-      if (!res.ok) {
-        const errBody = await res.text().catch(() => "");
-        console.warn(`[FaceAI] Model ${model} HTTP ${res.status}:`, errBody.slice(0, 200));
-        continue;
-      }
-
-      const data = await res.json().catch(() => ({}));
-      const rawText =
-        data?.candidates?.[0]?.content?.parts
-          ?.filter((p: { thought?: boolean; text?: string }) => !p.thought && Boolean(p.text))
-          .map((p: { text?: string }) => p.text || "")
-          .join("")
-          .trim() || "";
-
-      if (!rawText) {
-        console.warn(`[FaceAI] Model ${model} returned empty text`);
-        continue;
-      }
-
-      const cleaned = rawText
-        .replace(/^```json\s*/i, "")
-        .replace(/^```\s*/i, "")
-        .replace(/```$/i, "")
-        .trim();
-
-      const firstBrace = cleaned.indexOf("{");
-      const lastBrace = cleaned.lastIndexOf("}");
-      const jsonSlice =
-        firstBrace !== -1 && lastBrace > firstBrace
-          ? cleaned.slice(firstBrace, lastBrace + 1)
-          : cleaned;
-
-      return JSON.parse(jsonSlice) as T;
-    } catch (err: any) {
-      clearTimeout(timeoutId);
-      console.warn(`[FaceAI] Model ${model} error:`, err?.message || err);
+      return await requestVisionModel<T>(model, apiKey, parts, 5500);
+    } catch {
+      // Try next model
     }
   }
 
@@ -214,14 +239,15 @@ Image 1 is the ENROLLED ACCOUNT OWNER's reference face photo captured during onb
 Image 2 is the LIVE CAMERA CAPTURE of the person currently attempting to clock in or out.
 
 CRITICAL SECURITY RULES:
-1. Do NOT verify two different people just because they share the same gender, age range, or ethnicity.
-2. Carefully compare unique individual identity markers between Image 1 and Image 2:
+1. First check if Image 2 actually contains a clearly visible human face. If there is NO face in Image 2 or it is too dark/blank/covered, you MUST set "verified": false, "isLivePerson": false, "confidence": 0, and "reason": "No face detected. Position your face clearly inside the circle."
+2. Do NOT verify two different people just because they share the same gender, age range, or ethnicity.
+3. Carefully compare unique individual identity markers between Image 1 and Image 2:
    - Cranial & facial bone structure, face shape, forehead-to-chin ratio, cheekbone width, and jawline contour
    - Eye shape, inter-pupillary distance, and eyebrow shape/arch
    - Nose bridge width, tip shape, nostril contour, and nose-to-lip proportion
    - Mouth/lip structure, ears, facial hair pattern, and distinctive facial features
-3. If Image 1 and Image 2 are TWO DIFFERENT INDIVIDUALS (e.g., a friend, colleague, or another person trying to sign in on this account), you MUST set "verified": false, "confidence" below 40, and "reason": "Face mismatch: Live face does not match the enrolled account owner."
-4. Check Image 2 for spoofing (holding up a phone screen, printed photo, or mask). If spoofed, set "isLivePerson": false and "verified": false.
+4. If Image 1 and Image 2 are TWO DIFFERENT INDIVIDUALS (e.g., a friend, colleague, or another person trying to sign in on this account), you MUST set "verified": false, "confidence" below 40, and "reason": "Face mismatch: Live face does not match the enrolled account owner."
+5. Check Image 2 for spoofing (holding up a phone screen, printed photo, or mask). If spoofed, set "isLivePerson": false and "verified": false.
 
 Return ONLY valid JSON:
 {
