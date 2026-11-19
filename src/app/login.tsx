@@ -467,7 +467,7 @@ export default function LoginScreen() {
         }
       }
     } catch (err: any) {
-      console.error("[Login] Google Sign-In caught error:", err);
+      console.warn("[Login] Google Sign-In notice:", err);
       if (isErrorWithCode(err)) {
         if (err.code === statusCodes.SIGN_IN_CANCELLED || err.code === statusCodes.IN_PROGRESS) {
           return;
@@ -487,11 +487,12 @@ export default function LoginScreen() {
       }
 
       const isDeveloperError =
-        err?.code === "10" ||
-        err?.code === 10 ||
-        err?.code === (statusCodes as any)?.DEVELOPER_ERROR ||
-        String(err?.message || "").includes("DEVELOPER_ERROR") ||
-        String(err?.message || "").includes("code: 10");
+        Boolean(err?.code) &&
+        (err.code === "10" ||
+          err.code === 10 ||
+          err.code === "DEVELOPER_ERROR" ||
+          String(err?.message || "").includes("DEVELOPER_ERROR") ||
+          String(err?.message || "").includes("code: 10"));
 
       if (isDeveloperError) {
         Alert.alert(

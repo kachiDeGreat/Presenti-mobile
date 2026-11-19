@@ -14,7 +14,11 @@ import {
   limit,
 } from 'firebase/firestore';
 import { auth, db, googleProvider } from '../config/firebase';
-import { getDeviceFingerprint } from '../services/deviceService';
+import {
+  getDeviceFingerprint,
+  isSamePhysicalPhone,
+  adoptDeviceFingerprint,
+} from '../services/deviceService';
 import {
   fetchOrganizationByCode,
   fetchFreshOrganizationById,
@@ -472,6 +476,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   boundDev &&
                   boundDev !== 'UNBOUND' &&
                   activeDeviceId &&
+                  boundDev !== activeDeviceId &&
+                  isSamePhysicalPhone(boundDev, activeDeviceId)
+                ) {
+                  await adoptDeviceFingerprint(boundDev);
+                  setDeviceId(boundDev);
+                } else if (
+                  boundDev &&
+                  boundDev !== 'UNBOUND' &&
+                  activeDeviceId &&
                   boundDev !== activeDeviceId
                 ) {
                   if (auth.currentUser) {
@@ -679,7 +692,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
       return await handleUserAuthenticated(authUser);
     } catch (error) {
-      console.error('Firebase Google Credential Sign-In failed:', error);
+      console.warn('Firebase Google Credential Sign-In notice:', error);
       throw error;
     }
   };

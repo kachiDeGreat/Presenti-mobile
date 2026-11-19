@@ -15,6 +15,7 @@ import {
 } from 'firebase/firestore';
 import { db, storage } from '../config/firebase';
 import { ref as storageRef, uploadString, getDownloadURL } from 'firebase/storage';
+import { isSamePhysicalPhone, adoptDeviceFingerprint } from './deviceService';
 import type { Organization, CachedAnchors, ChurchMember, AttendanceRecordInput } from '../types';
 
 const STORAGE_KEY_ANCHORS = '@sanctuary_cached_anchors';
@@ -296,7 +297,8 @@ export async function enforceDeviceWorkerLock(params: {
           if (
             !currentBoundDevice ||
             currentBoundDevice === 'UNBOUND' ||
-            currentBoundDevice !== cleanDeviceId
+            (!isSamePhysicalPhone(currentBoundDevice, cleanDeviceId) &&
+              currentBoundDevice !== cleanDeviceId)
           ) {
             // Admin released/unbound this phone!
             stillActiveInCloud = false;
@@ -373,8 +375,16 @@ export async function enforceDeviceWorkerLock(params: {
             const memData = memSnap.data();
             const boundDev = (memData?.boundDeviceId || '').trim();
 
-            // If worker is already bound to a DIFFERENT phone, block sign-in on this phone
+            // If worker reinstalled the app on the same physical phone model, adopt the existing boundDeviceId
             if (
+              boundDev &&
+              boundDev !== 'UNBOUND' &&
+              cleanDeviceId &&
+              boundDev !== cleanDeviceId &&
+              isSamePhysicalPhone(boundDev, cleanDeviceId)
+            ) {
+              await adoptDeviceFingerprint(boundDev);
+            } else if (
               boundDev &&
               boundDev !== 'UNBOUND' &&
               cleanDeviceId &&
@@ -967,6 +977,14 @@ export async function registerMember(
         if (
           existingBoundDev &&
           existingBoundDev !== 'UNBOUND' &&
+          existingBoundDev !== memberData.boundDeviceId &&
+          isSamePhysicalPhone(existingBoundDev, memberData.boundDeviceId)
+        ) {
+          await adoptDeviceFingerprint(existingBoundDev);
+          memberData.boundDeviceId = existingBoundDev;
+        } else if (
+          existingBoundDev &&
+          existingBoundDev !== 'UNBOUND' &&
           existingBoundDev !== memberData.boundDeviceId
         ) {
           throw new Error(
@@ -1301,8 +1319,17 @@ export async function findExistingMember(orgId: string, email?: string, deviceId
       const member = { id: d.id, ...d.data() } as ChurchMember;
       const boundDev = (member.boundDeviceId || '').trim();
 
-      // Verify device binding
-      if (boundDev && boundDev !== 'UNBOUND' && deviceId && boundDev !== deviceId) {
+      // Verify device binding (re-adopt if same physical phone after APK reinstall)
+      if (
+        boundDev &&
+        boundDev !== 'UNBOUND' &&
+        deviceId &&
+        boundDev !== deviceId &&
+        isSamePhysicalPhone(boundDev, deviceId)
+      ) {
+        await adoptDeviceFingerprint(boundDev);
+        deviceId = boundDev;
+      } else if (boundDev && boundDev !== 'UNBOUND' && deviceId && boundDev !== deviceId) {
         throw new Error(
           `Your worker account (${cleanEmail}) is already bound to another mobile phone under ${orgName}. You can only sign in from your registered phone. Please contact the ${orgName} administrator to release your previous device.`
         );
