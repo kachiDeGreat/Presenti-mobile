@@ -1,6 +1,8 @@
 const VISION_MODELS = [
+  "gemini-2.5-flash",
+  "gemini-flash-latest",
+  "gemini-2.0-flash",
   "gemini-flash-lite-latest",
-  "gemini-3.8-flash",
 ];
 
 function getApiKey(): string {
@@ -62,7 +64,7 @@ async function callVisionJSON<T>(parts: Array<Record<string, unknown>>): Promise
           contents: [{ role: "user", parts }],
           generationConfig: {
             temperature: 0.1,
-            maxOutputTokens: 160,
+            maxOutputTokens: 512,
             responseMimeType: "application/json",
           },
         }),
@@ -187,16 +189,26 @@ export async function verifyFaceMatch(
     };
   }
 
-  const prompt = `You are a strict biometric security verifier.
-Image 1 is the enrolled employee's reference photo.
-Image 2 is the live camera capture at clock-in.
-Compare facial structure (eyes, nose, jawline, proportions) and check Image 2 for spoofing (holding up a phone screen, printed photo, or mask).
+  const prompt = `You are a strict 1-to-1 biometric identity verification system for workforce attendance.
+Image 1 is the ENROLLED ACCOUNT OWNER's reference face photo captured during onboarding.
+Image 2 is the LIVE CAMERA CAPTURE of the person currently attempting to clock in or out.
+
+CRITICAL SECURITY RULES:
+1. Do NOT verify two different people just because they share the same gender, age range, or ethnicity.
+2. Carefully compare unique individual identity markers between Image 1 and Image 2:
+   - Cranial & facial bone structure, face shape, forehead-to-chin ratio, cheekbone width, and jawline contour
+   - Eye shape, inter-pupillary distance, and eyebrow shape/arch
+   - Nose bridge width, tip shape, nostril contour, and nose-to-lip proportion
+   - Mouth/lip structure, ears, facial hair pattern, and distinctive facial features
+3. If Image 1 and Image 2 are TWO DIFFERENT INDIVIDUALS (e.g., a friend, colleague, or another person trying to sign in on this account), you MUST set "verified": false, "confidence" below 40, and "reason": "Face mismatch: Live face does not match the enrolled account owner."
+4. Check Image 2 for spoofing (holding up a phone screen, printed photo, or mask). If spoofed, set "isLivePerson": false and "verified": false.
+
 Return ONLY valid JSON:
 {
-  "verified": boolean, // true ONLY if Image 2 is clearly the SAME person as Image 1 AND is a live human
-  "confidence": number, // integer 0 to 100
-  "isLivePerson": boolean, // false if Image 2 looks like a photo of a screen/paper or no face
-  "reason": string // short clear feedback for the user (e.g. "Identity confirmed" or "Face does not match enrolled profile" or "Step into brighter light")
+  "verified": boolean,
+  "confidence": number,
+  "isLivePerson": boolean,
+  "reason": string
 }`;
 
   const result = await callVisionJSON<FaceMatchResult>([
@@ -215,11 +227,13 @@ Return ONLY valid JSON:
   }
 
   return {
-    verified: Boolean(result.verified && result.isLivePerson && (result.confidence ?? 0) >= 65),
+    verified: Boolean(result.verified && result.isLivePerson && (result.confidence ?? 0) >= 75),
     confidence: Number(result.confidence ?? 0),
     isLivePerson: Boolean(result.isLivePerson),
     reason:
       result.reason ||
-      (result.verified ? "Biometric identity confirmed." : "Face did not match enrolled profile."),
+      (result.verified
+        ? "Biometric identity confirmed."
+        : "Face mismatch: Live face does not match the enrolled account owner."),
   };
 }

@@ -97,7 +97,7 @@ export default function DashboardScreen() {
   const [faceModal, setFaceModal] = useState<{
     visible: boolean;
     mode: "enroll" | "verify";
-    action: "clockIn" | "signOut";
+    action: "clockIn" | "signOut" | "enrollOnly";
   }>({ visible: false, mode: "verify", action: "clockIn" });
   const verifiedPresenceRef = React.useRef<PresenceVerificationResult | null>(null);
 
@@ -395,14 +395,28 @@ export default function DashboardScreen() {
       return;
     }
 
-    // 3. MANDATORY ON-PREMISE LOCATION / WI-FI CHECK BEFORE FACE SCAN
+    // 3. Ensure account has an enrolled face reference from onboarding
+    if (!member?.isFaceEnrolled || !member?.facePhotoURL) {
+      toast.warn(
+        "Your Face ID was reset by an administrator or is missing. Complete Face ID enrollment first, then tap Clock In to verify.",
+        { title: "Face ID Enrollment Required", duration: 5000 },
+      );
+      setFaceModal({
+        visible: true,
+        mode: "enroll",
+        action: "enrollOnly",
+      });
+      return;
+    }
+
+    // 4. MANDATORY ON-PREMISE LOCATION / WI-FI CHECK BEFORE FACE SCAN
     const presence = await verifyOnPremiseBeforeScan();
     if (!presence) return;
 
-    // 4. MANDATORY AI FACE VERIFICATION (OPay-style Circular Scanner)
+    // 5. MANDATORY 1-TO-1 AI FACE VERIFICATION AGAINST ONBOARDING FACE
     setFaceModal({
       visible: true,
-      mode: member?.isFaceEnrolled && member?.facePhotoURL ? "verify" : "enroll",
+      mode: "verify",
       action: "clockIn",
     });
   };
@@ -608,14 +622,27 @@ export default function DashboardScreen() {
       return;
     }
 
+    if (!member?.isFaceEnrolled || !member?.facePhotoURL) {
+      toast.warn(
+        "Your Face ID was reset by an administrator or is missing. Complete Face ID enrollment first, then tap Sign Out to verify.",
+        { title: "Face ID Enrollment Required", duration: 5000 },
+      );
+      setFaceModal({
+        visible: true,
+        mode: "enroll",
+        action: "enrollOnly",
+      });
+      return;
+    }
+
     // Verify on-premise location BEFORE opening Face Scanner
     const presence = await verifyOnPremiseBeforeScan();
     if (!presence) return;
 
-    // MANDATORY AI FACE VERIFICATION (OPay-style Circular Scanner)
+    // MANDATORY 1-TO-1 AI FACE VERIFICATION AGAINST ONBOARDING FACE
     setFaceModal({
       visible: true,
-      mode: member?.isFaceEnrolled && member?.facePhotoURL ? "verify" : "enroll",
+      mode: "verify",
       action: "signOut",
     });
   };
@@ -1040,7 +1067,7 @@ export default function DashboardScreen() {
         }}
       />
 
-      {/* OPay-style AI Face Enrollment & Verification Scanner */}
+      {/* 1-to-1 AI Face Verification Scanner */}
       <FaceScannerModal
         visible={faceModal.visible}
         mode={faceModal.mode}
@@ -1051,29 +1078,26 @@ export default function DashboardScreen() {
           const currentMode = faceModal.mode;
           setFaceModal((prev) => ({ ...prev, visible: false }));
 
-          if (currentMode === "enroll") {
+          // Enrollment only happens if explicitly triggered after an admin reset;
+          // it NEVER auto-clocks in or overwrites an existing face during clock-in.
+          if (currentMode === "enroll" || currentAction === "enrollOnly") {
             try {
               await enrollFace([1], capturedDataUri);
-              toast.success("Face biometric profile enrolled!");
+              toast.success(
+                "Face ID enrolled! You can now tap Clock In to verify against your enrolled face.",
+                { title: "Face ID Enrolled", duration: 4500 },
+              );
             } catch (err: any) {
-              toast.warn("Face captured, continuing verification...");
+              toast.error(
+                err?.message || "Failed to save enrolled Face ID. Please try again.",
+              );
             }
+            return;
           }
 
           if (currentAction === "clockIn") {
             await executeClockInAfterVerification();
-          } else {
-            await executeSignOutAfterVerification();
-          }
-        }}
-        onFallbackBiometric={async () => {
-          const currentAction = faceModal.action;
-          setFaceModal((prev) => ({ ...prev, visible: false }));
-          const fallbackAuth = await verifyDeviceBiometricFallback();
-          if (!fallbackAuth) return;
-          if (currentAction === "clockIn") {
-            await executeClockInAfterVerification(fallbackAuth);
-          } else {
+          } else if (currentAction === "signOut") {
             await executeSignOutAfterVerification();
           }
         }}

@@ -2447,6 +2447,9 @@ const styles = StyleSheet.create({
   },
   bottomTabBar: {
     flexDirection: "row",
+    width: "100%",
+    alignItems: "center",
+    justifyContent: "space-around",
     backgroundColor: C.card,
     borderTopWidth: 1,
     borderTopColor: C.lineCard,

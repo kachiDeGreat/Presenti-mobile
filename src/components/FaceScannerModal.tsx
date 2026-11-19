@@ -149,6 +149,7 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
   const [permission, requestPermission] = useCameraPermissions();
   const [scanState, setScanState] = useState<ScanState>("ready");
   const [capturedUri, setCapturedUri] = useState<string | null>(null);
+  const [pictureSize, setPictureSize] = useState<string | undefined>(undefined);
   const [statusMessage, setStatusMessage] = useState(
     "Position your face inside the circle"
   );
@@ -162,6 +163,37 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
   const isMountedRef = useRef(true);
   const laserAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  const handleCameraReady = useCallback(async () => {
+    try {
+      if (!cameraRef.current) return;
+      const sizes = await cameraRef.current.getAvailablePictureSizesAsync();
+      if (!Array.isArray(sizes) || sizes.length === 0) return;
+
+      // Pick a crisp, Firestore-friendly resolution (target max dimension 640..1280)
+      const parsed = sizes
+        .map((raw) => {
+          const parts = raw.split("x").map((n) => parseInt(n, 10));
+          if (parts.length !== 2 || isNaN(parts[0]) || isNaN(parts[1])) return null;
+          const maxDim = Math.max(parts[0], parts[1]);
+          const minDim = Math.min(parts[0], parts[1]);
+          return { raw, maxDim, minDim };
+        })
+        .filter((x): x is { raw: string; maxDim: number; minDim: number } => Boolean(x));
+
+      const ideal = parsed
+        .filter((s) => s.maxDim >= 640 && s.maxDim <= 1280 && s.minDim >= 480)
+        .sort((a, b) => b.maxDim - a.maxDim)[0];
+
+      const fallbackSmall = parsed.sort((a, b) => a.maxDim - b.maxDim)[0];
+      const chosen = ideal?.raw || fallbackSmall?.raw;
+      if (chosen && isMountedRef.current) {
+        setPictureSize(chosen);
+      }
+    } catch {
+      // Ignore if device camera driver does not report picture sizes
+    }
+  }, []);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -329,11 +361,22 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
     setSubMessage("Checking lighting, framing & anti-spoofing");
 
     try {
-      const photo = await cameraRef.current.takePictureAsync({
+      let photo = await cameraRef.current.takePictureAsync({
         base64: true,
-        quality: 0.45,
+        quality: 0.25,
         shutterSound: false,
       });
+
+      if (photo?.base64 && photo.base64.length > 750000 && cameraRef.current) {
+        const compactPhoto = await cameraRef.current.takePictureAsync({
+          base64: true,
+          quality: 0.12,
+          shutterSound: false,
+        });
+        if (compactPhoto?.base64) {
+          photo = compactPhoto;
+        }
+      }
 
       if (!photo?.base64) {
         setScanState("error");
@@ -517,6 +560,8 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
                       ref={cameraRef}
                       style={styles.camera}
                       facing="front"
+                      pictureSize={pictureSize}
+                      onCameraReady={handleCameraReady}
                     />
                   )}
 

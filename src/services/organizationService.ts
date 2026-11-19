@@ -38,8 +38,14 @@ export async function sanitizeOrUploadFacePhoto(
   }
 
   // 2. Data URI (data:image/...)
+  // Prefer keeping compact inline base64 data URIs (< 950,000 chars) directly on the
+  // member document so 1-to-1 AI verification has instant zero-latency access without
+  // failing on React Native Hermes Blob/Storage issues.
   if (trimmed.startsWith('data:image/')) {
-    // If Firebase Storage is configured, try uploading it for permanent high-res storage
+    if (trimmed.length < 950000) {
+      return trimmed;
+    }
+
     if (storage) {
       try {
         const fileRef = storageRef(storage, `churches/${orgId}/members/${memberId}/face_avatar.jpg`);
@@ -47,21 +53,15 @@ export async function sanitizeOrUploadFacePhoto(
         const downloadUrl = await getDownloadURL(fileRef);
         return downloadUrl;
       } catch (storageErr) {
-        console.warn('Firebase Storage upload failed or not enabled, evaluating data URL fallback:', storageErr);
+        console.warn('Firebase Storage upload failed or not enabled:', storageErr);
       }
     }
 
-    // 3. Fallback: keep inline base64 up to 600,000 chars (~450KB)
-    // Firestore strictly enforces a 1,048,487 byte per-document limit.
-    if (trimmed.length < 600000) {
-      return trimmed;
-    }
-
-    console.warn(`Face photo data URL is too large (${trimmed.length} bytes) and Firebase Storage was unavailable. Discarding raw photo to protect Firestore document size.`);
+    console.warn(`Face photo data URL is too large (${trimmed.length} bytes).`);
     return undefined;
   }
 
-  return trimmed.length < 600000 ? trimmed : undefined;
+  return trimmed.length < 950000 ? trimmed : undefined;
 }
 
 export async function fetchOrganizationByCode(rawCode: string): Promise<Organization | null> {
@@ -605,6 +605,7 @@ export async function clearMemberFaceEnrollment(orgId: string, memberId: string)
       faceEmbedding: [],
       isFaceEnrolled: false,
       faceEnrolledAt: '',
+      facePhotoURL: '',
     });
 
     const cached = await getCachedMember();
@@ -612,6 +613,7 @@ export async function clearMemberFaceEnrollment(orgId: string, memberId: string)
       cached.faceEmbedding = [];
       cached.isFaceEnrolled = false;
       delete cached.faceEnrolledAt;
+      delete cached.facePhotoURL;
       await AsyncStorage.setItem(STORAGE_KEY_MEMBER, JSON.stringify(cached));
     }
   } catch (error) {
@@ -679,6 +681,17 @@ export async function findExistingMember(orgId: string, email?: string, deviceId
       const d = snapEmail.docs[0];
       const member = { id: d.id, ...d.data() } as ChurchMember;
 
+      // Preserve locally enrolled facePhotoURL if Firestore document was missing it
+      if (member.isFaceEnrolled && !member.facePhotoURL) {
+        const cached = await getCachedMember();
+        if (cached && cached.id === member.id && cached.facePhotoURL) {
+          member.facePhotoURL = cached.facePhotoURL;
+          updateDoc(doc(db, 'churches', orgId, 'members', member.id), cleanFirestorePayload({
+            facePhotoURL: cached.facePhotoURL,
+          })).catch(() => {});
+        }
+      }
+
       // Verify device binding
       if (member.boundDeviceId && deviceId && member.boundDeviceId !== deviceId) {
         throw new Error(
@@ -712,6 +725,15 @@ export async function findExistingMember(orgId: string, email?: string, deviceId
       }
 
       const member = { id: d.id, ...bound } as ChurchMember;
+      if (member.isFaceEnrolled && !member.facePhotoURL) {
+        const cached = await getCachedMember();
+        if (cached && cached.id === member.id && cached.facePhotoURL) {
+          member.facePhotoURL = cached.facePhotoURL;
+          updateDoc(doc(db, 'churches', orgId, 'members', member.id), cleanFirestorePayload({
+            facePhotoURL: cached.facePhotoURL,
+          })).catch(() => {});
+        }
+      }
       AsyncStorage.setItem(STORAGE_KEY_MEMBER, JSON.stringify(member)).catch(() => {});
       return member;
     }
@@ -743,7 +765,7 @@ function cleanFirestorePayload<T>(data: T): T {
       if (value !== undefined) {
         if (typeof value === 'object' && value !== null && !(value instanceof Date)) {
           clean[key] = cleanFirestorePayload(value);
-        } else if (typeof value === 'string' && value.length > 500000) {
+        } else if (typeof value === 'string' && value.length > 960000) {
           // Guard: String size exceeds safe limit (1,048,487 bytes limit on Firestore)
           console.warn(`Dropped property "${key}" from Firestore payload because size (${value.length} bytes) exceeds limit.`);
         } else {

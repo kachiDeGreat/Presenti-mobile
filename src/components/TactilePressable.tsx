@@ -2,6 +2,7 @@ import React, { useRef } from "react";
 import {
   Animated,
   Pressable,
+  StyleSheet,
   type PressableProps,
   type StyleProp,
   type ViewStyle,
@@ -52,15 +53,72 @@ export const TactilePressable: React.FC<TactilePressableProps> = ({
     onPressOut?.(e);
   };
 
+  const flat = StyleSheet.flatten(style) || {};
+  const {
+    flex,
+    flexGrow,
+    flexShrink,
+    flexBasis,
+    width,
+    minWidth,
+    maxWidth,
+    alignSelf,
+    position,
+    top,
+    right,
+    bottom,
+    left,
+    zIndex,
+    margin,
+    marginTop,
+    marginBottom,
+    marginLeft,
+    marginRight,
+    marginHorizontal,
+    marginVertical,
+    ...innerStyle
+  } = flat;
+
+  const outerStyle: ViewStyle = {
+    ...(flex !== undefined ? { flex } : {}),
+    ...(flexGrow !== undefined ? { flexGrow } : {}),
+    ...(flexShrink !== undefined ? { flexShrink } : {}),
+    ...(flexBasis !== undefined ? { flexBasis } : {}),
+    ...(width !== undefined ? { width } : {}),
+    ...(minWidth !== undefined ? { minWidth } : {}),
+    ...(maxWidth !== undefined ? { maxWidth } : {}),
+    ...(alignSelf !== undefined ? { alignSelf } : {}),
+    ...(position !== undefined ? { position } : {}),
+    ...(top !== undefined ? { top } : {}),
+    ...(right !== undefined ? { right } : {}),
+    ...(bottom !== undefined ? { bottom } : {}),
+    ...(left !== undefined ? { left } : {}),
+    ...(zIndex !== undefined ? { zIndex } : {}),
+    ...(margin !== undefined ? { margin } : {}),
+    ...(marginTop !== undefined ? { marginTop } : {}),
+    ...(marginBottom !== undefined ? { marginBottom } : {}),
+    ...(marginLeft !== undefined ? { marginLeft } : {}),
+    ...(marginRight !== undefined ? { marginRight } : {}),
+    ...(marginHorizontal !== undefined ? { marginHorizontal } : {}),
+    ...(marginVertical !== undefined ? { marginVertical } : {}),
+  };
+
   return (
     <Pressable
       disabled={disabled}
       onPressIn={handlePressIn}
       onPressOut={handlePressOut}
+      style={outerStyle}
       android_ripple={disabled ? undefined : { color: rippleColor, borderless: false }}
       {...rest}
     >
-      <Animated.View style={[style, { transform: [{ scale }] }]}>
+      <Animated.View
+        style={[
+          innerStyle,
+          flex !== undefined || width !== undefined ? { width: "100%" } : null,
+          { transform: [{ scale }] },
+        ]}
+      >
         {children}
       </Animated.View>
     </Pressable>
