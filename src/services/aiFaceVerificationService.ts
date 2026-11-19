@@ -1,3 +1,5 @@
+const GROQ_VISION_MODEL = "qwen/qwen3.8-27b";
+
 // Single-request sequential fallback: 1 API call per scan (preserves RPM quota for 30+ concurrent workers)
 const VISION_MODELS = [
   "gemini-3.5-flash-lite",
@@ -9,6 +11,10 @@ const VISION_MODELS = [
 
 function getApiKey(): string {
   return (process.env.EXPO_PUBLIC_GEMINI_API_KEY || "").trim();
+}
+
+function getGroqApiKey(): string {
+  return (process.env.EXPO_PUBLIC_GROQ_API_KEY || "").trim();
 }
 
 export interface FaceEnrollmentResult {
@@ -114,6 +120,76 @@ async function requestVisionModel<T>(
   }
 }
 
+async function callGroqVisionJSON<T>(
+  prompt: string,
+  imagesBase64: string[],
+  timeoutMs: number = 8000
+): Promise<T | null> {
+  const groqKey = getGroqApiKey();
+  if (!groqKey) return null;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const content: Array<Record<string, unknown>> = [
+      { type: "text", text: prompt },
+      ...imagesBase64.map((b64) => ({
+        type: "image_url",
+        image_url: { url: `data:image/jpeg;base64,${b64}` },
+      })),
+    ];
+
+    const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${groqKey}`,
+      },
+      body: JSON.stringify({
+        model: GROQ_VISION_MODEL,
+        messages: [{ role: "user", content }],
+        temperature: 0.1,
+        max_tokens: 300,
+        response_format: { type: "json_object" },
+        reasoning_effort: "none",
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => "");
+      console.warn(`[FaceAI] Groq ${GROQ_VISION_MODEL} HTTP ${res.status}:`, errBody.slice(0, 180));
+      return null;
+    }
+
+    const data = await res.json().catch(() => ({}));
+    const rawText = String(data?.choices?.[0]?.message?.content || "").trim();
+    if (!rawText) return null;
+
+    const cleaned = rawText
+      .replace(/<think>[\s\S]*?<\/think>/gi, "")
+      .replace(/^```json\s*/i, "")
+      .replace(/^```\s*/i, "")
+      .replace(/```$/i, "")
+      .trim();
+
+    const firstBrace = cleaned.indexOf("{");
+    const lastBrace = cleaned.lastIndexOf("}");
+    const jsonSlice =
+      firstBrace !== -1 && lastBrace > firstBrace
+        ? cleaned.slice(firstBrace, lastBrace + 1)
+        : cleaned;
+
+    return JSON.parse(jsonSlice) as T;
+  } catch (err: any) {
+    clearTimeout(timeoutId);
+    console.warn(`[FaceAI] Groq ${GROQ_VISION_MODEL} failed:`, err?.message || err);
+    return null;
+  }
+}
+
 async function callVisionJSON<T>(parts: Array<Record<string, unknown>>): Promise<T | null> {
   const apiKey = getApiKey();
   if (!apiKey) {
@@ -163,10 +239,12 @@ Return ONLY valid JSON:
   "guidance": string
 }`;
 
-  const result = await callVisionJSON<FaceEnrollmentResult>([
-    { text: prompt },
-    { inlineData: { mimeType: "image/jpeg", data: cleanB64 } },
-  ]);
+  const result =
+    (await callGroqVisionJSON<FaceEnrollmentResult>(prompt, [cleanB64])) ||
+    (await callVisionJSON<FaceEnrollmentResult>([
+      { text: prompt },
+      { inlineData: { mimeType: "image/jpeg", data: cleanB64 } },
+    ]));
 
   if (!result) {
     return {
@@ -249,11 +327,13 @@ Return ONLY valid JSON:
   "reason": string
 }`;
 
-  const result = await callVisionJSON<FaceMatchResult>([
-    { text: prompt },
-    { inlineData: { mimeType: "image/jpeg", data: cleanRef } },
-    { inlineData: { mimeType: "image/jpeg", data: cleanLive } },
-  ]);
+  const result =
+    (await callGroqVisionJSON<FaceMatchResult>(prompt, [cleanRef, cleanLive])) ||
+    (await callVisionJSON<FaceMatchResult>([
+      { text: prompt },
+      { inlineData: { mimeType: "image/jpeg", data: cleanRef } },
+      { inlineData: { mimeType: "image/jpeg", data: cleanLive } },
+    ]));
 
   if (!result) {
     return {
