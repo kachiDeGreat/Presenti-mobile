@@ -1,14 +1,7 @@
-// Primary fast vision models raced in parallel so the fastest model wins in ~1-3s
-const PRIMARY_VISION_MODELS = [
+const VISION_MODELS = [
   "gemini-flash-lite-latest",
-  "gemini-2.5-flash-lite",
-  "gemini-flash-latest",
-];
-
-// Secondary fallback models raced in parallel if primary wave encounters transient errors
-const BACKUP_VISION_MODELS = [
   "gemini-2.5-flash",
-  "gemini-3.8-flash",
+  "gemini-flash-latest",
   "gemini-2.0-flash",
 ];
 
@@ -52,130 +45,82 @@ async function urlToBase64(urlOrDataUri: string): Promise<string> {
   });
 }
 
-async function requestSingleVisionModel<T>(
-  model: string,
-  apiKey: string,
-  parts: Array<Record<string, unknown>>,
-  signal: AbortSignal
-): Promise<T> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
-    apiKey
-  )}`;
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ role: "user", parts }],
-      generationConfig: {
-        temperature: 0.1,
-        maxOutputTokens: 300,
-        responseMimeType: "application/json",
-      },
-    }),
-    signal,
-  });
-
-  if (!res.ok) {
-    throw new Error(`Model ${model} returned HTTP ${res.status}`);
-  }
-
-  const data = await res.json();
-  const rawText =
-    data?.candidates?.[0]?.content?.parts
-      ?.filter((p: { thought?: boolean; text?: string }) => !p.thought && Boolean(p.text))
-      .map((p: { text?: string }) => p.text || "")
-      .join("")
-      .trim() || "";
-
-  if (!rawText) {
-    throw new Error(`Model ${model} returned empty text`);
-  }
-
-  const cleaned = rawText
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
-    .replace(/```$/i, "")
-    .trim();
-
-  // Extract JSON object even if model wrapped it in prose
-  const firstBrace = cleaned.indexOf("{");
-  const lastBrace = cleaned.lastIndexOf("}");
-  const jsonSlice =
-    firstBrace !== -1 && lastBrace > firstBrace
-      ? cleaned.slice(firstBrace, lastBrace + 1)
-      : cleaned;
-
-  return JSON.parse(jsonSlice) as T;
-}
-
-async function raceModelWave<T>(
-  models: string[],
-  apiKey: string,
-  parts: Array<Record<string, unknown>>,
-  timeoutMs: number,
-  externalSignal?: AbortSignal
-): Promise<T | null> {
-  if (externalSignal?.aborted) return null;
-
-  const waveController = new AbortController();
-  const onExternalAbort = () => waveController.abort();
-  externalSignal?.addEventListener("abort", onExternalAbort);
-  const timeoutId = setTimeout(() => waveController.abort(), timeoutMs);
-
-  try {
-    const winner = await Promise.any(
-      models.map((model) =>
-        requestSingleVisionModel<T>(model, apiKey, parts, waveController.signal)
-      )
-    );
-    clearTimeout(timeoutId);
-    externalSignal?.removeEventListener("abort", onExternalAbort);
-    // Abort remaining slower models in this wave as soon as the fastest model succeeds
-    waveController.abort();
-    return winner;
-  } catch {
-    clearTimeout(timeoutId);
-    externalSignal?.removeEventListener("abort", onExternalAbort);
+async function callVisionJSON<T>(parts: Array<Record<string, unknown>>): Promise<T | null> {
+  const apiKey = getApiKey();
+  if (!apiKey) {
+    console.warn("[FaceAI] EXPO_PUBLIC_GEMINI_API_KEY is empty");
     return null;
   }
-}
 
-async function callVisionJSON<T>(
-  parts: Array<Record<string, unknown>>,
-  externalSignal?: AbortSignal
-): Promise<T | null> {
-  const apiKey = getApiKey();
-  if (!apiKey || externalSignal?.aborted) return null;
+  for (const model of VISION_MODELS) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
+      apiKey
+    )}`;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 9000);
 
-  // Wave 1: Race primary fast models concurrently (~1-2.5s response, cancels slower ones on first win)
-  const primaryResult = await raceModelWave<T>(
-    PRIMARY_VISION_MODELS,
-    apiKey,
-    parts,
-    7000,
-    externalSignal
-  );
-  if (primaryResult) return primaryResult;
-  if (externalSignal?.aborted) return null;
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts }],
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 512,
+            responseMimeType: "application/json",
+          },
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
 
-  // Wave 2: Race backup models concurrently if Wave 1 failed
-  return await raceModelWave<T>(
-    BACKUP_VISION_MODELS,
-    apiKey,
-    parts,
-    8000,
-    externalSignal
-  );
+      if (!res.ok) {
+        const errBody = await res.text().catch(() => "");
+        console.warn(`[FaceAI] Model ${model} HTTP ${res.status}:`, errBody.slice(0, 200));
+        continue;
+      }
+
+      const data = await res.json().catch(() => ({}));
+      const rawText =
+        data?.candidates?.[0]?.content?.parts
+          ?.filter((p: { thought?: boolean; text?: string }) => !p.thought && Boolean(p.text))
+          .map((p: { text?: string }) => p.text || "")
+          .join("")
+          .trim() || "";
+
+      if (!rawText) {
+        console.warn(`[FaceAI] Model ${model} returned empty text`);
+        continue;
+      }
+
+      const cleaned = rawText
+        .replace(/^```json\s*/i, "")
+        .replace(/^```\s*/i, "")
+        .replace(/```$/i, "")
+        .trim();
+
+      const firstBrace = cleaned.indexOf("{");
+      const lastBrace = cleaned.lastIndexOf("}");
+      const jsonSlice =
+        firstBrace !== -1 && lastBrace > firstBrace
+          ? cleaned.slice(firstBrace, lastBrace + 1)
+          : cleaned;
+
+      return JSON.parse(jsonSlice) as T;
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      console.warn(`[FaceAI] Model ${model} error:`, err?.message || err);
+    }
+  }
+
+  return null;
 }
 
 /**
  * Validates that a captured enrollment selfie clearly shows one live human face.
  */
-export async function verifyFaceEnrollment(
-  liveBase64: string,
-  externalSignal?: AbortSignal
-): Promise<FaceEnrollmentResult> {
+export async function verifyFaceEnrollment(liveBase64: string): Promise<FaceEnrollmentResult> {
   const cleanB64 = stripDataUriPrefix(liveBase64);
   if (!cleanB64) {
     return {
@@ -199,13 +144,10 @@ Return ONLY valid JSON:
   "guidance": string
 }`;
 
-  const result = await callVisionJSON<FaceEnrollmentResult>(
-    [
-      { text: prompt },
-      { inlineData: { mimeType: "image/jpeg", data: cleanB64 } },
-    ],
-    externalSignal
-  );
+  const result = await callVisionJSON<FaceEnrollmentResult>([
+    { text: prompt },
+    { inlineData: { mimeType: "image/jpeg", data: cleanB64 } },
+  ]);
 
   if (!result) {
     return {
@@ -232,8 +174,7 @@ Return ONLY valid JSON:
  */
 export async function verifyFaceMatch(
   liveBase64: string,
-  referencePhotoUrlOrBase64: string,
-  externalSignal?: AbortSignal
+  referencePhotoUrlOrBase64: string
 ): Promise<FaceMatchResult> {
   const cleanLive = stripDataUriPrefix(liveBase64);
   if (!cleanLive) {
@@ -288,14 +229,11 @@ Return ONLY valid JSON:
   "reason": string
 }`;
 
-  const result = await callVisionJSON<FaceMatchResult>(
-    [
-      { text: prompt },
-      { inlineData: { mimeType: "image/jpeg", data: cleanRef } },
-      { inlineData: { mimeType: "image/jpeg", data: cleanLive } },
-    ],
-    externalSignal
-  );
+  const result = await callVisionJSON<FaceMatchResult>([
+    { text: prompt },
+    { inlineData: { mimeType: "image/jpeg", data: cleanRef } },
+    { inlineData: { mimeType: "image/jpeg", data: cleanLive } },
+  ]);
 
   if (!result) {
     return {

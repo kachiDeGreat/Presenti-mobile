@@ -278,12 +278,11 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
       const dataUri = `data:image/jpeg;base64,${photo.base64}`;
 
       if (mode === "enroll") {
-        const res = await verifyFaceEnrollment(photo.base64, controller.signal);
+        const res = await verifyFaceEnrollment(photo.base64);
         if (
           !isMountedRef.current ||
           !visibleRef.current ||
-          scanSessionIdRef.current !== sessionId ||
-          controller.signal.aborted
+          scanSessionIdRef.current !== sessionId
         ) {
           return;
         }
@@ -304,14 +303,12 @@ export const FaceScannerModal: React.FC<FaceScannerModalProps> = ({
       } else {
         const res = await verifyFaceMatch(
           photo.base64,
-          referencePhotoUrl || "",
-          controller.signal
+          referencePhotoUrl || ""
         );
         if (
           !isMountedRef.current ||
           !visibleRef.current ||
-          scanSessionIdRef.current !== sessionId ||
-          controller.signal.aborted
+          scanSessionIdRef.current !== sessionId
         ) {
           return;
         }
