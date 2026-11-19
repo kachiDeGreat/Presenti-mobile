@@ -1,73 +1,50 @@
 # Presenti — Mobile Workforce & Presence Verification App
 
-[![Expo](https://img.shields.io/badge/Expo-SDK%2052-000020?logo=expo&logoColor=white)](https://expo.dev/)
-[![React Native](https://img.shields.io/badge/React%20Native-0.76-61DAFB?logo=react&logoColor=black)](https://reactnative.dev/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Expo](https://img.shields.io/badge/Expo-SDK%2057-000020?logo=expo&logoColor=white)](https://expo.dev/)
+[![React Native](https://img.shields.io/badge/React%20Native-0.86-61DAFB?logo=react&logoColor=black)](https://reactnative.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-6.0-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Firebase](https://img.shields.io/badge/Firebase-Firestore%20%26%20Auth%20v13-FFCA28?logo=firebase&logoColor=black)](https://firebase.google.com/)
 [![Google Sign-In](https://img.shields.io/badge/Auth-Google%20Native%20SSO-4285F4?logo=google&logoColor=white)](https://developers.google.com/identity)
 
-**Presenti Mobile** is the client application for the Presenti workforce attendance and presence verification platform. Designed for modern workforces, institutions, and organizations, it guarantees verified physical presence using hardware radio scanning, satellite GPS geofencing, on-device facial recognition AI, native biometrics, and single-device cryptographic locks—eliminating proxy attendance, location spoofing, and buddy punching.
+**Presenti Mobile** is the workforce and field-admin client for the Presenti attendance and physical presence verification platform. It combines **pre-scan Wi-Fi BSSID & anti-spoof GPS verification**, **real-time ML Kit + AI facial biometrics**, **native hardware device biometrics**, and **Presenti AI** workforce intelligence inside a **Bolt-inspired ArtCraft UI** tuned for 60fps fluidity on both flagship and budget smartphones.
 
 ---
 
-## Core Capabilities & Features
+## Core Capabilities & Recent Updates
 
-### 1. Hands-Free On-Device Face Recognition AI (Apple Face ID & Banking App Style)
-- **128-Dimensional Landmark Embedding:** Detects 3D facial landmarks and contours using Google ML Kit and extracts a normalized, rotation-invariant 128-dimensional facial biometric embedding vector.
-- **Ultra-Fast On-Device Matching:** Computes vector Cosine Similarity on device in under 350ms, comparing the live scan directly against the worker's enrolled facial vector.
-- **3D Liveness & Anti-Spoofing Engine:** Compares frame variance over time to detect natural physiological micro-movements (breathing, micro-saccades). Strictly detects and rejects printed 2D paper photographs, tablet/laptop screen replays, and photo proxies.
-- **Smooth Apple Face ID-Inspired Modal:** Clean circular oval reticle with real-time positioning feedback ("Hold steady", "Move closer", "Face centered") for a frictionless, banking-grade experience.
-- **Firestore Payload Safety:** Automatically compresses captured face photos and uploads them to Firebase Storage (or retains micro-thumbnails <70KB), strictly preventing Firestore's 1,048,487-byte document limit from ever being exceeded.
+### 1. OPay-Style AI Face Enrollment & Live Verification (`FaceScannerModal.tsx`)
+- **Mandatory Onboarding Face Registration (`onboarding.tsx`):** Every new worker must capture and validate their official biometric reference photo during account creation (`CAPTURE & ENROLL FACE`), with a **Preview & Confirm** step (**USE THIS PHOTO** / **RETAKE PHOTO**) before completing setup.
+- **Persistent Onboarding Drafts:** Paired organization code, form fields, and captured face photo are saved per user in `AsyncStorage` (`@presenti_onboarding_draft_<uid>`), so minimizing or closing the app resumes right where the user left off.
+- **Instant Live Framing Feedback (On-Device ML Kit):** Runs `RNMLKitFaceDetector` continuously (~850ms) in the background—no waiting to tap Scan—delivering immediate guidance (*"No face detected"*, *"Multiple faces in frame"*, *"Move closer"*, *"Move slightly back"*, *"Face not well fitted"*, *"Look straight ahead"*, *"Keep your eyes open"*), turning the ring green when aligned.
+- **AI Lighting, Anti-Spoofing & 1-to-1 Matching (`aiFaceVerificationService.ts`):** Validates lighting quality, blocks screen/paper photo spoofs, and compares live clock-in selfies against the worker's enrolled reference photo (`facePhotoURL`).
+- **Firestore Payload Safety:** Automatically compresses face photos and uploads to Firebase Storage (or stores compact inline data URIs under 600KB safely within Firestore's 1MB document limit).
 
-### 2. Zero-Proxy Mandatory Native Biometrics
-- **Hardware Isolation:** Scans run through native OS security boundaries (`AndroidX BiometricPrompt` & iOS `LocalAuthentication`) inside the Apple Secure Enclave / Android StrongBox.
-- **Strict Enforcement (`disableDeviceFallback: true`):** Devices with fingerprint or Face ID hardware strictly require biometric scans, preventing workers from lending their unlocked phone and PIN to coworkers.
-- **Graceful Fallback & Settings Deep Link:** Budget devices without biometric sensors automatically fall back to lockscreen credentials. When biometrics are not yet enrolled, an interactive dialog provides a one-tap **"Go to Settings"** button that deep-links directly into device Security & Biometrics Settings.
+### 2. Ask Presenti AI & Cross-Device Chat Sync (`AskPresentiChatModal.tsx`)
+- **Conversational Workforce Intelligence (`geminiService.ts`):** Floating chat assistant inside the Admin Hub answering live queries on registered headcount, late arrivals, department turnout, missing staff, and general leadership questions with clean markdown formatting (`**bold**`, `*bold*`, headings, dividers, and bullets).
+- **1-Click Executive Briefing:** Generates WhatsApp/Email-ready daily summaries with one-tap **COPY**.
+- **0ms Local Telemetry Fallback:** Instant offline/slow-network answers for greetings, identity, registered worker counts, late arrivals, department turnout, and unpunched staff.
+- **Cross-Device Sync (`aiChatHistoryService.ts`):** Syncs conversations in real time via Firestore (`churches/{orgId}/ai_chats/{userId}`) with the Admin Web Portal, including instant local clear + background cloud deletion.
 
-### 3. Mobile Leadership Command Center (`AdminHub.tsx`)
-Administrators can toggle between Worker Mode (instant clock-in) and the **Admin Hub**:
-- **Tab 1: Live Attendance Feed:**
-  - Real-time stream of all worker clock-ins for today.
-  - Live KPI cards: **Total Present**, **On-Time Arrivals**, **Late Arrivals**, and **Punctuality Rate**.
-  - Worker search bar and department filtering tabs.
-  - Feed clear action.
-- **Tab 2: Presence Anchors & Direct On-Site Calibration:**
-  - On-site sensor calibration performed directly on the phone without needing a computer.
-  - Toggle between **Satellite Geofence (`GEOFENCE_ONLY`)** and **Hybrid Wi-Fi (`HYBRID`)**.
-  - Physical Wi-Fi spectrum scanner automatically detects nearby access points and BSSID MAC addresses for office router binding.
-  - Multi-tier satellite GPS acquisition with Android network provider prompt and indoor fallback.
-  - Radius perimeter selector (10m, 20m, 30m, 50m, 100m).
-  - Tapping **Save & Anchor** immediately writes configuration to Cloud Firestore with instant auto-sync back to the Admin Web Portal.
+### 3. Pre-Scan Physical Presence & Anti-Spoof GPS (`locationService.ts`, `presenceVerificationService.ts`)
+- **Location Verified *Before* Face Scan (`index.tsx`):** Both **Clock In** and **Clock Out** verify physical presence (Wi-Fi BSSID / GPS Geofence) *before* opening the Face Scanner, blocking out-of-perimeter attempts immediately.
+- **Strict Fresh Hardware GPS (`strictFresh: true`):** Attendance punches never fall back to `getLastKnownPositionAsync()`, reject stale OS-cached fixes (>90s) by forcing a live `BestForNavigation` / `watchPositionAsync` reading, and block Android Mock/Fake GPS apps (`mocked === true`).
+- **Dual Verification Modes:**
+  - **Satellite GPS Geofence (`GEOFENCE_ONLY`):** Router-free perimeter checks (10m–100m radius).
+  - **Hybrid Office Router (`HYBRID`):** Ambient hardware Wi-Fi MAC (`BSSID`) scan with automatic GPS perimeter failover.
 
-### 4. Dual Physical Presence Engine
-The mobile application dynamically evaluates the organization's calibrated architecture:
-- **Mode 1: Router-Free Satellite GPS Geofence (Default & Recommended):**
-  - High-precision GPS perimeter checks (10m to 100m radius).
-  - Sub-second verification with zero hardware overhead—ideal for modern offices, field operations, and pop-up venues.
-- **Mode 2: Hybrid Physical Office Router (Dual-Tier):**
-  - **Tier 1 — Hardware Wi-Fi Anchor (BSSID):** Scans the device's physical Wi-Fi radio for the organization's calibrated router MAC address (`targetBssid`).
-  - **20-Second Hardware Scan Timeout:** If physical Wi-Fi scanning times out, the app automatically fails over to Tier 2 geofencing.
-  - **Tier 2 — GPS Perimeter Geofencing:** Calculates distance from calibrated coordinates using high-accuracy native GPS (`expo-location`). Clock-in is approved only if within the calibrated perimeter.
+### 4. Bolt-Inspired ArtCraft UI & Budget-Phone Performance (`premium.ts`, `TactilePressable.tsx`)
+- **ArtCraft Design System (`#f2f1ee` paper canvas, `#ffffff` floating cards, `#142748` navy ink, `#2d81ff` electric blue accent):** Consistent `18px` rounded cards, soft elevation, `56px` rounded primary CTAs, pill status badges, and vivid coloured high-contrast toasts (`ToastContext.tsx`).
+- **60fps Fluidity Optimizations:**
+  - Isolated 1-second `LiveClockDisplay` (`React.memo`) so `DashboardScreen` never re-renders every second.
+  - Native-driver `TactilePressable` spring animations + Android ripple feedback running on the UI thread.
+  - `GestureHandlerRootView`, native `slide_from_right` stack transitions, and Android `LayoutAnimation` in `_layout.tsx` and `AdminHub.tsx`.
 
-### 5. Smart Policy Enforcement, Late Tagging & Biometric Sign-Out
-- **Dynamic Day-Specific vs. Unified Schedules:**
-  - Evaluates today's operating rules dynamically using `evaluateAttendanceWindow`.
-  - When the organization uses **Different Times per Day (`PER_DAY`)**, the app automatically resolves today's specific day-of-week settings (`arrivalCutoff`, `lateTolerance`, `allowLateSignIn`, `enableSignOut`, and `signOutTime`).
-  - Seamlessly falls back to unified default policy settings for backwards compatibility.
-- **Window Open & Close Enforcement:** Displays real-time countdown to arrival window opening and closing.
-- **Late Sign-In Tagging (`allowLateSignIn`):**
-  - When late tolerance is enabled, arriving after the cutoff activates the amber **"Tap to Clock In (Late)"** action button.
-  - Submitting stamps the record with an immutable **`LATE`** status tag displayed directly on the attendance card and synchronized to the admin dashboard.
-  - If late tolerance is disabled, attendance strictly locks down once the window passes.
-- **Biometric Departure Sign-Out (`enableSignOut`):**
-  - Sign-out unlocks from the configured departure time (`signOutTime`, e.g., 05:00 PM) and remains available indefinitely until the next service day.
-  - Protected with native biometrics to prevent proxy clock-outs.
-- **Automatic Queue Flushing:**
-  - Automatically caches punches locally in `AsyncStorage` and flushes all pending records to Cloud Firestore on app mount, foreground resume (`AppState === 'active'`), and manual pull-to-refresh.
+### 5. Mobile Leadership Command Center (`AdminHub.tsx`)
+3-tab swipeable hub (`Live Feed`, `Anchors`, `Workforce`) with pull-to-refresh, colour-accented KPI cards, **Test AI Face Scanner** launcher for field admins, worker face/device reset controls, and direct on-site Wi-Fi + GPS calibration.
 
-### 6. Sub-Second Timestamp Trapping & Hardware Device Binding
-- **Zero-Latency Trapping:** Traps the exact sub-second timestamp the millisecond the worker taps **"Tap to Clock In"**, shielding employees from slow cellular networks.
-- **Hardware Device Lock:** Workers' accounts are permanently bound to their smartphone's unique hardware identifier, preventing multiple workers from clocking in from a single phone.
+### 6. Native Biometric Fallback, Policy Engine & Offline Queue
+- Hardware-isolated fallback via `expo-local-authentication` (`AndroidX BiometricPrompt` & iOS `LocalAuthentication`) with deep-linking to device Security Settings.
+- Dynamic `UNIFIED` and `PER_DAY` shift schedules (`evaluateAttendanceWindow`), late tagging (`LATE`), biometric sign-out, sub-second timestamp trapping, and `AsyncStorage` offline queue flushing.
 
 ---
 
@@ -77,42 +54,24 @@ The mobile application dynamically evaluates the organization's calibrated archi
 sequenceDiagram
     actor Worker
     participant Mobile as Presenti Mobile
-    participant NativeSec as Android / iOS Biometrics
-    participant FaceAI as On-Device Face AI
-    participant Radios as Wi-Fi & GPS Radios
+    participant Radios as Wi-Fi & Strict Fresh GPS
+    participant FaceAI as ML Kit + Presenti Vision AI
     participant Cloud as Cloud Firestore
 
-    Worker->>Mobile: Tap "Tap to Clock In"
-    Mobile->>Mobile: 1. Trap arrival timestamp immediately
-    Mobile->>NativeSec: 2. Request native biometric verification (Fingerprint / Face ID)
-    alt Biometrics Failed or Cancelled
-        NativeSec-->>Mobile: Authentication Denied
-        Mobile-->>Worker: Block Clock-In ("Identity Verification Required")
-    else Biometrics Approved
-        NativeSec-->>Mobile: Identity Verified (Hardware Confirmed)
-        Mobile->>FaceAI: 3. Verify facial embedding & 3D liveness
-        alt Face Mismatch or Liveness Failed
+    Worker->>Mobile: Tap "CLOCK IN FOR SHIFT"
+    Mobile->>Mobile: 1. Check shift window policy
+    Mobile->>Radios: 2. Verify Wi-Fi BSSID / Fresh Hardware GPS (no stale cache or mock GPS)
+    alt Outside Premises
+        Radios-->>Mobile: Rejected ("Outside Geofence")
+        Mobile-->>Worker: Block immediately (Face Scanner stays closed)
+    else On-Premise Confirmed
+        Mobile->>FaceAI: 3. Open Circular Face Scanner (Live ML Kit framing + AI liveness & match)
+        alt Face Mismatch or Spoof Detected
             FaceAI-->>Mobile: Verification Failed
-            Mobile-->>Worker: Block Clock-In ("Living face match required")
+            Mobile-->>Worker: Block Clock-In
         else Face Verified
-            alt Organization Mode: GEOFENCE_ONLY (Default)
-                Mobile->>Radios: Query high-accuracy GPS coordinates
-                Mobile->>Mobile: Evaluate distance vs. Geofence perimeter
-            else Organization Mode: HYBRID
-                Mobile->>Radios: Scan physical Wi-Fi BSSID (20s timeout)
-                alt Wi-Fi BSSID Matches Anchor
-                    Mobile->>Cloud: Record Attendance (Method: WIFI_BSSID, Biometric: Verified)
-                else Wi-Fi Unavailable / Timeout
-                    Mobile->>Radios: Query high-accuracy GPS coordinates
-                    Mobile->>Mobile: Evaluate distance vs. Geofence perimeter
-                end
-            end
-            alt Inside Premises Perimeter
-                Mobile->>Cloud: Record Attendance (Method: GEO_FALLBACK, Biometric: Verified)
-                Cloud-->>Mobile: Sync Confirmed
-            else Outside Premises Perimeter
-                Mobile-->>Worker: Block Clock-In ("Not On-Premise")
-            end
+            Mobile->>Mobile: Trap arrival timestamp & cache locally
+            Mobile->>Cloud: Sync attendance record
         end
     end
 ```
@@ -123,16 +82,15 @@ sequenceDiagram
 
 | Component | Technology |
 |---|---|
-| **Framework** | React Native (Expo SDK 52) |
-| **Routing** | Expo Router (File-based navigation) |
-| **Language** | TypeScript 5.6 |
-| **Biometric Security** | `expo-local-authentication` (Android BiometricPrompt & iOS LocalAuthentication) |
-| **Face Recognition AI** | Google ML Kit Landmarks + On-Device Vector Cosine Similarity & 3D Liveness |
-| **Authentication** | Google Sign-In Native SDK (`@react-native-google-signin/google-signin`) + Firebase Auth |
-| **Database** | Firebase Firestore (Real-time snapshots & offline cache) + Firebase Storage |
-| **Wi-Fi Hardware Scanner** | `react-native-wifi-reborn` / Native Network APIs |
-| **Location & Geofencing** | `expo-location` (High accuracy native GPS with indoor fallback) |
-| **Geocoding & Search** | Multi-tier engine: Google Maps API + Android Google Play Geocoder + Photon (Nigeria BBox) + Nominatim |
+| **Framework** | React Native `0.86` (Expo SDK `57`, Expo Router) |
+| **Language** | TypeScript `6.0` |
+| **Design Tokens & Motion** | Custom ArtCraft/Bolt tokens (`src/constants/premium.ts`), `TactilePressable`, `react-native-gesture-handler`, `LayoutAnimation` |
+| **On-Device & Cloud Face AI** | `@infinitered/react-native-mlkit-face-detection` + Gemini Vision (`gemini-flash-lite-latest` / `gemini-3.8-flash`) |
+| **Workforce AI Assistant** | Gemini API (`AskPresentiChatModal`) + Firestore cross-device chat sync |
+| **Biometric Fallback** | `expo-local-authentication` (Android BiometricPrompt & iOS LocalAuthentication) |
+| **Authentication** | Google Sign-In Native SDK (`@react-native-google-signin/google-signin`), Email/Password & OTP + Firebase Auth |
+| **Database & Storage** | Firebase Firestore v13 + Firebase Storage |
+| **Wi-Fi & Location** | `react-native-wifi-reborn` + `expo-location` (strict fresh GNSS & anti-mock) |
 | **Camera** | `expo-camera` (`CameraView`) |
 | **Local Storage** | `@react-native-async-storage/async-storage` |
 
@@ -143,24 +101,19 @@ sequenceDiagram
 ### Prerequisites
 - Node.js 18.x or 20.x
 - Expo CLI (`npx expo`)
-- EAS CLI (`npm install -g eas-cli`)
-- Android Studio / Android Device (for native development build)
+- EAS CLI (`npx eas-cli@latest`)
+- Android Device (for native development or preview APK)
 
 ### Installation
 
-1. Clone the repository:
+1. Clone and install dependencies:
    ```bash
    git clone https://github.com/kachiDeGreat/Presenti-mobile.git
    cd Presenti-mobile
-   ```
-
-2. Install dependencies:
-   ```bash
    npm install
    ```
 
-3. Configure Environment Variables:
-   Create a `.env` file in the root directory:
+2. Configure `.env` in `MOBILE-APP/`:
    ```env
    EXPO_PUBLIC_FIREBASE_API_KEY=your_firebase_api_key
    EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
@@ -169,33 +122,28 @@ sequenceDiagram
    EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
    EXPO_PUBLIC_FIREBASE_APP_ID=your_app_id
    EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID=your_google_web_client_id.apps.googleusercontent.com
+   EXPO_PUBLIC_GEMINI_API_KEY=your_gemini_api_key
    ```
 
-4. Ensure `google-services.json` is present in the project root for Android builds.
+3. Ensure `google-services.json` is present in `MOBILE-APP/` for Android builds.
 
 ### Building & Running
 
-#### Development Build
 ```bash
-# Build custom Development Client APK
-npx eas-cli build -p android --profile development
+# TypeScript check
+npx tsc --noEmit
 
-# Start Metro dev server
-npx expo start --dev-client
+# Start Metro dev server (for Development Client)
+npm start
+
+# Build Development Client APK
+npm run build:dev -- --no-wait
+
+# Build Standalone Preview APK
+npm run build:preview -- --no-wait
 ```
 
-#### Standalone Preview APK
-```bash
-npx eas-cli build -p android --profile preview
-```
-
----
-
-## Git Branches
-
-- `master`: Production development branch.
-- `role-upgrade`: Active feature integration branch.
-- `stable`: Verified, stable release checkpoint.
+> **Note:** Uninstall any older Presenti APK before switching between Development and Preview builds on Android.
 
 ---
 
