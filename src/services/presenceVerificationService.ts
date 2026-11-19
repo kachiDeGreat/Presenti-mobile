@@ -143,8 +143,8 @@ export async function verifyPresenceAnchors(
   }
 
   try {
-    // Acquire current GPS fix using robust tiered acquisition (instant cached + live + indoor fallback)
-    const location = await acquireDeviceCoordinates();
+    // Acquire a strict fresh live GPS fix (blocks stale OS caches & mock GPS apps)
+    const location = await acquireDeviceCoordinates({ strictFresh: true });
 
     const userLat = location.latitude;
     const userLng = location.longitude;
