@@ -154,6 +154,28 @@ function buildLocalFallbackReply(question: string, ctx: MobileAIContext): string
       missing.slice(0, 15).map((m) => `• ${m.fullName} (${m.department || "General"})`).join("\n");
   }
 
+  if (/\b(registered|worker|workers|staff|member|members|employee|employees|person|persons|people|workforce|headcount|enrolled)\b/i.test(q)) {
+    const count = ctx.totalWorkforceCount ?? ctx.members.length;
+    if (count === 0) {
+      return `**${org}** currently has **0 registered workers**. Workers can join using your organization code.`;
+    }
+    const enrolledCount = ctx.members.filter((m) => m.isFaceEnrolled).length;
+    const summary = `**${org}** has **${count} registered worker${count === 1 ? "" : "s"}** (${enrolledCount} face-enrolled, ${ctx.totalCheckedIn} checked in today).`;
+    if (/\b(who|list|show|names?)\b/i.test(q) && ctx.members.length > 0) {
+      return summary + "\n" + ctx.members.slice(0, 15).map((m) => `• ${m.fullName} (${m.department || "General"})`).join("\n");
+    }
+    return summary;
+  }
+
+  if (/\b(how many|checked in|check-in|present|on time|punctual|today|attendance|status|stats)\b/i.test(q)) {
+    const count = ctx.totalWorkforceCount ?? ctx.members.length;
+    if (ctx.totalCheckedIn === 0) {
+      return `**0 check-ins** recorded today for **${org}** out of **${count} registered staff**.`;
+    }
+    const rate = Math.round((ctx.onTimeCount / ctx.totalCheckedIn) * 100);
+    return `**${org}** today:\n• Checked In: **${ctx.totalCheckedIn}** of **${count}** (${rate}% on time)\n• On Time: **${ctx.onTimeCount}** | Late: **${ctx.lateCount}**`;
+  }
+
   return `I can help with ${org}'s attendance, punctuality, department turnout, or general leadership questions. Could you rephrase that or tap one of the quick chips above?`;
 }
 
@@ -189,7 +211,7 @@ async function callGeminiMobile(
         };
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 7000);
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
 
     try {
       const res = await fetch(url, {
