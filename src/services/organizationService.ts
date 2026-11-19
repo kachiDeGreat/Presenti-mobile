@@ -308,6 +308,15 @@ export async function enforceDeviceWorkerLock(params: {
 
       if (!stillActiveInCloud) {
         await clearDeviceWorkerLock(cleanDeviceId);
+        await clearLocalFaceVault(lock.email, lock.memberId);
+        await AsyncStorage.multiRemove([
+          STORAGE_KEY_ORG,
+          STORAGE_KEY_ANCHORS,
+          STORAGE_KEY_MEMBER,
+        ]).catch(() => {});
+        if (resolvedEmail) {
+          await deleteDoc(doc(db, 'account_roles', resolvedEmail)).catch(() => {});
+        }
       } else {
         // Refresh local lock metadata
         await AsyncStorage.setItem(
@@ -350,8 +359,15 @@ export async function enforceDeviceWorkerLock(params: {
           ]);
 
           if (!orgSnap.exists() || !memSnap.exists()) {
-            // Stale account_roles entry — worker was deleted by Admin; clean it up!
+            // Stale account_roles entry — worker or database was deleted; purge all stale caches!
             await deleteDoc(doc(db, 'account_roles', cleanEmail)).catch(() => {});
+            await clearDeviceWorkerLock(cleanDeviceId);
+            await clearLocalFaceVault(cleanEmail, roleData.memberId);
+            await AsyncStorage.multiRemove([
+              STORAGE_KEY_ORG,
+              STORAGE_KEY_ANCHORS,
+              STORAGE_KEY_MEMBER,
+            ]).catch(() => {});
           } else {
             const orgName = orgSnap.data()?.churchName || 'your organization';
             const memData = memSnap.data();
@@ -601,49 +617,96 @@ export async function getCachedMember(): Promise<ChurchMember | null> {
   }
 }
 
-// Security Check: Verify whether an email or UID is registered as an organization administrator on the web portal
+/**
+ * Registers or promotes an email/UID to Field Administrator on mobile,
+ * provided the email does not belong to an active worker in a live Firestore organization.
+ * Automatically purges any stale worker/device cache left over from a cleared database.
+ */
+export async function promoteEmailToAdminIfNotActiveWorker(params: {
+  email: string;
+  uid: string;
+  displayName?: string;
+  deviceId?: string;
+}): Promise<void> {
+  const cleanEmail = (params.email || '').trim().toLowerCase();
+  const uid = (params.uid || '').trim();
+  if (!cleanEmail) return;
+
+  // 1. Check if this email is currently an ACTIVE worker in a live Firestore organization
+  try {
+    const roleSnap = await getDoc(doc(db, 'account_roles', cleanEmail));
+    if (roleSnap.exists()) {
+      const roleData = roleSnap.data();
+      if (roleData.role === 'WORKER' && roleData.churchId && roleData.memberId) {
+        const [orgSnap, memSnap] = await Promise.all([
+          getDoc(doc(db, 'churches', roleData.churchId)),
+          getDoc(doc(db, 'churches', roleData.churchId, 'members', roleData.memberId)),
+        ]);
+        if (orgSnap.exists() && memSnap.exists()) {
+          const orgName = orgSnap.data()?.churchName || 'an active organization';
+          throw new Error(
+            `This email (${cleanEmail}) is currently registered as a workforce member under ${orgName}. Delete that worker profile first to use this email as an administrator.`
+          );
+        }
+      }
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('currently registered as a workforce member')) {
+      throw err;
+    }
+  }
+
+  // 2. Purge any stale worker records in Firestore & local AsyncStorage
+  if (uid) {
+    await deleteDoc(doc(db, 'workers', uid)).catch(() => {});
+  }
+  await clearDeviceWorkerLock(params.deviceId);
+  await clearLocalFaceVault(cleanEmail);
+  await AsyncStorage.multiRemove([
+    STORAGE_KEY_ORG,
+    STORAGE_KEY_ANCHORS,
+    STORAGE_KEY_MEMBER,
+  ]).catch(() => {});
+
+  // 3. Persist ADMIN role in Firestore (admins/{uid} + account_roles/{cleanEmail})
+  const writes: Array<Promise<any>> = [
+    setDoc(
+      doc(db, 'account_roles', cleanEmail),
+      {
+        email: cleanEmail,
+        role: 'ADMIN',
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    ),
+  ];
+  if (uid) {
+    writes.push(
+      setDoc(
+        doc(db, 'admins', uid),
+        {
+          uid,
+          email: cleanEmail,
+          displayName: params.displayName || cleanEmail.split('@')[0],
+          role: 'ADMIN',
+          updatedAt: new Date().toISOString(),
+        },
+        { merge: true }
+      )
+    );
+  }
+  await Promise.all(writes).catch(() => {});
+}
+
+// Security Check: Verify whether an email or UID is registered as an organization administrator
 export async function checkIfUserIsAdmin(email?: string, uid?: string): Promise<boolean> {
   const cleanEmail = (email || '').trim().toLowerCase();
   const rawEmail = (email || '').trim();
   if (!cleanEmail && !uid) return false;
 
-  // 0. Instant local check: If cached organization or user on device already confirms admin role
-  try {
-    const [cachedOrgRaw, cachedUserRaw] = await Promise.all([
-      AsyncStorage.getItem(STORAGE_KEY_ORG),
-      AsyncStorage.getItem('@sanctuary_user'),
-    ]);
-
-    if (cachedUserRaw) {
-      try {
-        const u = JSON.parse(cachedUserRaw);
-        if (
-          u.isAdmin === true &&
-          ((cleanEmail && u.email?.toLowerCase() === cleanEmail) || (uid && u.uid === uid))
-        ) {
-          return true;
-        }
-      } catch {}
-    }
-
-    if (cachedOrgRaw) {
-      try {
-        const o = JSON.parse(cachedOrgRaw);
-        if (
-          (cleanEmail && o.adminEmail && o.adminEmail.toLowerCase() === cleanEmail) ||
-          (rawEmail && o.adminEmail && o.adminEmail === rawEmail) ||
-          (uid && Array.isArray(o.adminUids) && o.adminUids.includes(uid)) ||
-          (uid && o.id === uid)
-        ) {
-          return true;
-        }
-      } catch {}
-    }
-  } catch {}
-
-  // Function to execute Firestore queries to determine admin status
+  // Query live Firestore as the primary source of truth so cleared database docs never linger
   const executeQuery = async (): Promise<boolean> => {
-    // 1. Check account_roles registry
+    // 1. Check account_roles registry (and auto-clean if it points to a deleted worker/org)
     if (cleanEmail) {
       try {
         const roleRef = doc(db, 'account_roles', cleanEmail);
@@ -651,11 +714,75 @@ export async function checkIfUserIsAdmin(email?: string, uid?: string): Promise<
         if (roleSnap.exists()) {
           const data = roleSnap.data();
           if (data.role === 'ADMIN') return true;
+          if (data.role === 'WORKER') {
+            if (data.churchId && data.memberId) {
+              const [orgSnap, memSnap] = await Promise.all([
+                getDoc(doc(db, 'churches', data.churchId)),
+                getDoc(doc(db, 'churches', data.churchId, 'members', data.memberId)),
+              ]);
+              if (!orgSnap.exists() || !memSnap.exists()) {
+                // Database or worker was deleted! Purge stale account_roles and local worker cache
+                await deleteDoc(roleRef).catch(() => {});
+                await clearDeviceWorkerLock();
+                await AsyncStorage.multiRemove([
+                  STORAGE_KEY_ORG,
+                  STORAGE_KEY_ANCHORS,
+                  STORAGE_KEY_MEMBER,
+                ]).catch(() => {});
+              }
+            } else {
+              await deleteDoc(roleRef).catch(() => {});
+            }
+          }
         }
       } catch {}
     }
 
-    // 2. Query churches collection by adminEmail (both lowercase and raw casing)
+    // 2. Check admins collection by uid or email
+    if (uid) {
+      try {
+        const adminUidSnap = await getDoc(doc(db, 'admins', uid));
+        if (adminUidSnap.exists()) {
+          if (cleanEmail) {
+            await setDoc(
+              doc(db, 'account_roles', cleanEmail),
+              {
+                email: cleanEmail,
+                role: 'ADMIN',
+                updatedAt: new Date().toISOString(),
+              },
+              { merge: true }
+            ).catch(() => {});
+          }
+          return true;
+        }
+      } catch {}
+    }
+
+    if (cleanEmail) {
+      try {
+        const qAdminEmail = query(
+          collection(db, 'admins'),
+          where('email', '==', cleanEmail),
+          limit(1)
+        );
+        const snapAdminEmail = await getDocs(qAdminEmail);
+        if (!snapAdminEmail.empty) {
+          await setDoc(
+            doc(db, 'account_roles', cleanEmail),
+            {
+              email: cleanEmail,
+              role: 'ADMIN',
+              updatedAt: new Date().toISOString(),
+            },
+            { merge: true }
+          ).catch(() => {});
+          return true;
+        }
+      } catch {}
+    }
+
+    // 3. Query churches collection by adminEmail (both lowercase and raw casing)
     if (cleanEmail) {
       try {
         const qEmail = query(
@@ -708,7 +835,7 @@ export async function checkIfUserIsAdmin(email?: string, uid?: string): Promise<
       }
     }
 
-    // 3. Query churches collection by adminUids
+    // 4. Query churches collection by adminUids or churches/{uid}
     if (uid) {
       try {
         const qUids = query(
@@ -735,7 +862,6 @@ export async function checkIfUserIsAdmin(email?: string, uid?: string): Promise<
           return true;
         }
 
-        // 4. Direct document check churches/{uid}
         const directSnap = await getDoc(doc(db, 'churches', uid));
         if (directSnap.exists()) {
           if (cleanEmail) {
@@ -1445,17 +1571,44 @@ export async function getAdminOrganization(
   const cleanEmail = (email || '').trim().toLowerCase();
   if (!cleanEmail && !uid) return null;
 
-  // 0. Local cache check
+  // 0. If an organization is cached locally, verify it STILL exists in Firestore before returning it
   try {
     const cachedOrg = await getCachedOrganization();
     if (cachedOrg && cachedOrg.id) {
-      if (
+      const freshSnap = await getDoc(doc(db, 'churches', cachedOrg.id));
+      if (!freshSnap.exists()) {
+        // Organization was deleted from Firestore -> purge local cache immediately!
+        await AsyncStorage.multiRemove([STORAGE_KEY_ORG, STORAGE_KEY_ANCHORS]).catch(() => {});
+      } else if (
         (cleanEmail && cachedOrg.adminEmail && cachedOrg.adminEmail.toLowerCase() === cleanEmail) ||
         (uid && Array.isArray(cachedOrg.adminUids) && cachedOrg.adminUids.includes(uid)) ||
-        (uid && cachedOrg.id === uid) ||
-        !cachedOrg.adminEmail // Stored organization on this admin device
+        (uid && cachedOrg.id === uid)
       ) {
-        return cachedOrg;
+        const data = freshSnap.data();
+        const freshOrg: Organization = {
+          id: freshSnap.id,
+          churchName: data.churchName || cachedOrg.churchName || 'Organization',
+          branchName: data.branchName || cachedOrg.branchName || 'Main Campus',
+          churchCode: data.churchCode || cachedOrg.churchCode || '',
+          adminEmail: data.adminEmail || cleanEmail,
+          departments:
+            Array.isArray(data.departments) && data.departments.length > 0
+              ? data.departments
+              : ['General Workforce'],
+          beaconConfig: {
+            ssidHint: data.beaconConfig?.ssidHint || '',
+            targetBssid: data.beaconConfig?.targetBssid || '',
+            verificationMode: data.beaconConfig?.verificationMode || 'HYBRID',
+          },
+          geoFallback: {
+            latitude: Number(data.geoFallback?.latitude ?? 0),
+            longitude: Number(data.geoFallback?.longitude ?? 0),
+            radiusMeters: Number(data.geoFallback?.radiusMeters ?? 10),
+          },
+          policySettings: data.policySettings,
+        };
+        await cacheOrganizationAnchors(freshOrg);
+        return freshOrg;
       }
     }
   } catch {}

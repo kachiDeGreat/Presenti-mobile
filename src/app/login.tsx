@@ -224,7 +224,7 @@ export default function LoginScreen() {
 
     setIsSubmitting(true);
     try {
-      const otpRes = await sendMobileOtp(cleanEmail, "SIGNUP");
+      const otpRes = await sendMobileOtp(cleanEmail, "SIGNUP", selectedRole);
       setOtpPurpose("SIGNUP");
       setOtpDigits(["", "", "", "", "", ""]);
       setResendCountdown(45);
@@ -424,9 +424,12 @@ export default function LoginScreen() {
   const handleStartGoogleSignIn = async () => {
     if (isAnyLoading) return;
     setIsGoogleLoading(true);
+    const wantsAdminRole = mode === "CREATE_ACCOUNT" && selectedRole === "ADMIN";
     try {
       if (Platform.OS === "web") {
-        const res = await signInWithGoogle();
+        const res = await signInWithGoogle(
+          wantsAdminRole ? { isAdmin: true } : undefined
+        );
         navigateAfterAuth(res);
       } else {
         try {
@@ -448,6 +451,7 @@ export default function LoginScreen() {
             email: userObj?.email,
             displayName: userObj?.name || undefined,
             photoURL: userObj?.photo || undefined,
+            ...(wantsAdminRole ? { isAdmin: true } : {}),
           };
           const res = await signInWithGoogleCredential(idToken, profileHint);
           navigateAfterAuth(res);

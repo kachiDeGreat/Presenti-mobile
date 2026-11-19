@@ -33,6 +33,7 @@ import {
   saveFaceToLocalVault,
   enforceDeviceWorkerLock,
   saveDeviceWorkerLock,
+  promoteEmailToAdminIfNotActiveWorker,
 } from '../services/organizationService';
 import {
   sendMobileSignupOtp,
@@ -65,7 +66,11 @@ interface AuthContextType {
     displayName: string,
     role: 'ADMIN' | 'WORKER'
   ) => Promise<AuthResult>;
-  sendMobileOtp: (email: string, purpose: 'SIGNUP' | 'RESET_PASSWORD') => Promise<SendMobileOtpResult>;
+  sendMobileOtp: (
+    email: string,
+    purpose: 'SIGNUP' | 'RESET_PASSWORD',
+    intendedRole?: 'ADMIN' | 'WORKER'
+  ) => Promise<SendMobileOtpResult>;
   verifyMobileOtpCode: (email: string, code: string, purpose: 'SIGNUP' | 'RESET_PASSWORD') => Promise<boolean>;
   resetPasswordWithOtp: (email: string, code: string, newPassword: string) => Promise<void>;
   signInWithGoogle: (customUser?: Partial<MobileUser>) => Promise<AuthResult>;
@@ -548,14 +553,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const signInWithGoogle = async (customUser?: Partial<MobileUser>): Promise<AuthResult> => {
     try {
-      if (Platform.OS === 'web' && !customUser) {
+      const requestedAdmin = customUser?.isAdmin === true;
+      if (Platform.OS === 'web' && !customUser?.uid) {
         const cred = await FirebaseAuth.signInWithPopup(auth, googleProvider);
         const isNewUser = FirebaseAuth.getAdditionalUserInfo(cred)?.isNewUser;
         const effectiveEmail = cred.user.email || 'user@gmail.com';
         const effectiveName = cred.user.displayName || cred.user.email?.split('@')[0] || 'Workforce Member';
 
+        if (requestedAdmin) {
+          await promoteEmailToAdminIfNotActiveWorker({
+            email: effectiveEmail,
+            uid: cred.user.uid,
+            displayName: effectiveName,
+            deviceId,
+          });
+        }
+
+        const isAdminUser =
+          requestedAdmin || (await checkIfUserIsAdmin(effectiveEmail, cred.user.uid));
+
         if (isNewUser && effectiveEmail) {
-          const isAdminUser = await checkIfUserIsAdmin(effectiveEmail, cred.user.uid);
           const role: 'ADMIN' | 'WORKER' = isAdminUser ? 'ADMIN' : 'WORKER';
           if (db) {
             await setDoc(
@@ -581,6 +598,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           email: effectiveEmail,
           displayName: effectiveName,
           photoURL: cred.user.photoURL || undefined,
+          isAdmin: isAdminUser,
         };
         return await handleUserAuthenticated(authUser);
       }
@@ -590,6 +608,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         email: customUser?.email || 'staff.member@gmail.com',
         displayName: customUser?.displayName || 'Workforce Member',
         photoURL: customUser?.photoURL,
+        isAdmin: customUser?.isAdmin,
       };
 
       return await handleUserAuthenticated(authUser);
@@ -614,9 +633,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         effectiveEmail.split('@')[0] ||
         'Workforce Member';
       const effectivePhoto = cred.user.photoURL || profileHint?.photoURL || undefined;
+      const requestedAdmin = profileHint?.isAdmin === true;
+
+      if (requestedAdmin && effectiveEmail) {
+        await promoteEmailToAdminIfNotActiveWorker({
+          email: effectiveEmail,
+          uid: cred.user.uid,
+          displayName: effectiveName,
+          deviceId,
+        });
+      }
+
+      const isAdminUser =
+        requestedAdmin || (await checkIfUserIsAdmin(effectiveEmail, cred.user.uid));
 
       if (isNewUser && effectiveEmail) {
-        const isAdminUser = await checkIfUserIsAdmin(effectiveEmail, cred.user.uid);
         const role: 'ADMIN' | 'WORKER' = isAdminUser ? 'ADMIN' : 'WORKER';
         if (db) {
           await setDoc(
@@ -642,6 +673,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         email: effectiveEmail,
         displayName: effectiveName,
         photoURL: effectivePhoto,
+        isAdmin: isAdminUser,
       };
       return await handleUserAuthenticated(authUser);
     } catch (error) {
@@ -693,17 +725,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Persist role metadata in Firestore
       if (db) {
         if (role === 'ADMIN') {
-          await setDoc(
-            doc(db, 'admins', cred.user.uid),
-            {
-              uid: cred.user.uid,
-              email: cleanEmail,
-              displayName: displayName.trim(),
-              role: 'ADMIN',
-              createdAt: Date.now(),
-            },
-            { merge: true }
-          );
+          await promoteEmailToAdminIfNotActiveWorker({
+            email: cleanEmail,
+            uid: cred.user.uid,
+            displayName: displayName.trim(),
+            deviceId,
+          });
         } else {
           await setDoc(
             doc(db, 'workers', cred.user.uid),
@@ -741,11 +768,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Send 6-digit OTP code to email
   const sendMobileOtp = async (
     email: string,
-    purpose: 'SIGNUP' | 'RESET_PASSWORD'
+    purpose: 'SIGNUP' | 'RESET_PASSWORD',
+    intendedRole?: 'ADMIN' | 'WORKER'
   ): Promise<SendMobileOtpResult> => {
     const cleanEmail = email.trim().toLowerCase();
     if (purpose === 'SIGNUP') {
-      const isAdminEmail = await checkIfUserIsAdmin(cleanEmail);
+      const isAdminEmail =
+        intendedRole === 'ADMIN' || (await checkIfUserIsAdmin(cleanEmail));
       if (!isAdminEmail) {
         const activeDeviceId = deviceId || (await getDeviceFingerprint());
         await enforceDeviceWorkerLock({
