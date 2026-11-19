@@ -55,6 +55,8 @@ export default function LoginScreen() {
   const [mode, setMode] = useState<AuthMode>("SIGN_IN");
   const [selectedRole, setSelectedRole] = useState<AccountRole>("WORKER");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false);
+  const isAnyLoading = isSubmitting || isGoogleLoading;
 
   // Form Fields
   const [email, setEmail] = useState("");
@@ -420,7 +422,8 @@ export default function LoginScreen() {
   // ACTION: Native Google Sign-In
   // ----------------------------------------------------
   const handleStartGoogleSignIn = async () => {
-    setIsSubmitting(true);
+    if (isAnyLoading) return;
+    setIsGoogleLoading(true);
     try {
       if (Platform.OS === "web") {
         const res = await signInWithGoogle();
@@ -493,7 +496,7 @@ export default function LoginScreen() {
         toast.error(err?.message || "Failed to complete Google authentication.");
       }
     } finally {
-      setIsSubmitting(false);
+      setIsGoogleLoading(false);
     }
   };
 
@@ -649,9 +652,9 @@ export default function LoginScreen() {
 
               {/* Sign In Primary Action */}
               <TouchableOpacity
-                style={[styles.primaryButton, isSubmitting && styles.disabledButton]}
+                style={[styles.primaryButton, isAnyLoading && styles.disabledButton]}
                 onPress={handleSignIn}
-                disabled={isSubmitting}
+                disabled={isAnyLoading}
                 activeOpacity={0.85}
               >
                 {isSubmitting ? (
@@ -673,13 +676,22 @@ export default function LoginScreen() {
 
               {/* Google Sign In Alternative */}
               <TouchableOpacity
-                style={[styles.googleButton, isSubmitting && styles.disabledButton]}
+                style={[styles.googleButton, isAnyLoading && styles.disabledButton]}
                 onPress={handleStartGoogleSignIn}
-                disabled={isSubmitting}
+                disabled={isAnyLoading}
                 activeOpacity={0.85}
               >
-                <Ionicons name="logo-google" size={18} color="#142748" />
-                <Text style={styles.googleButtonText}>CONTINUE WITH GOOGLE</Text>
+                {isGoogleLoading ? (
+                  <View style={styles.buttonLoaderRow}>
+                    <ActivityIndicator color={C.ink} size="small" />
+                    <Text style={styles.googleButtonText}>CONNECTING GOOGLE...</Text>
+                  </View>
+                ) : (
+                  <>
+                    <Ionicons name="logo-google" size={18} color={C.ink} />
+                    <Text style={styles.googleButtonText}>CONTINUE WITH GOOGLE</Text>
+                  </>
+                )}
               </TouchableOpacity>
             </View>
           )}
@@ -847,9 +859,9 @@ export default function LoginScreen() {
 
               {/* Submit Code Request */}
               <TouchableOpacity
-                style={[styles.primaryButton, isSubmitting && styles.disabledButton]}
+                style={[styles.primaryButton, isAnyLoading && styles.disabledButton]}
                 onPress={handleRequestSignUpOtp}
-                disabled={isSubmitting}
+                disabled={isAnyLoading}
                 activeOpacity={0.85}
               >
                 {isSubmitting ? (
@@ -871,13 +883,22 @@ export default function LoginScreen() {
 
               {/* Google Sign In Alternative */}
               <TouchableOpacity
-                style={[styles.googleButton, isSubmitting && styles.disabledButton]}
+                style={[styles.googleButton, isAnyLoading && styles.disabledButton]}
                 onPress={handleStartGoogleSignIn}
-                disabled={isSubmitting}
+                disabled={isAnyLoading}
                 activeOpacity={0.85}
               >
-                <Ionicons name="logo-google" size={18} color="#142748" />
-                <Text style={styles.googleButtonText}>CONTINUE WITH GOOGLE</Text>
+                {isGoogleLoading ? (
+                  <View style={styles.buttonLoaderRow}>
+                    <ActivityIndicator color={C.ink} size="small" />
+                    <Text style={styles.googleButtonText}>CONNECTING GOOGLE...</Text>
+                  </View>
+                ) : (
+                  <>
+                    <Ionicons name="logo-google" size={18} color={C.ink} />
+                    <Text style={styles.googleButtonText}>CONTINUE WITH GOOGLE</Text>
+                  </>
+                )}
               </TouchableOpacity>
             </View>
           )}
