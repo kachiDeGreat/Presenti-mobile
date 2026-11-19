@@ -302,15 +302,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const cleanEmail = (authUser.email || '').trim().toLowerCase();
       const uid = authUser.uid;
 
-      // 0. Check role: If user is an Administrator, grant access to the Mobile Admin Command Center
-      const isAdmin = authUser.isAdmin === true || (await checkIfUserIsAdmin(cleanEmail, uid));
+      // 0. Check Admin status + resolve deviceId in parallel (1 round-trip instead of sequential)
+      const [isAdmin, activeDeviceId] = await Promise.all([
+        authUser.isAdmin === true
+          ? Promise.resolve(true)
+          : checkIfUserIsAdmin(cleanEmail, uid),
+        deviceId ? Promise.resolve(deviceId) : getDeviceFingerprint(),
+      ]);
+
+      if (activeDeviceId && !deviceId) {
+        setDeviceId(activeDeviceId);
+      }
+
       if (isAdmin) {
         const adminUser: MobileUser = { ...authUser, isAdmin: true };
         const adminOrg = await getAdminOrganization(cleanEmail, uid);
 
-        await AsyncStorage.setItem(STORAGE_KEY_USER, JSON.stringify(adminUser));
+        AsyncStorage.setItem(STORAGE_KEY_USER, JSON.stringify(adminUser)).catch(() => {});
         if (adminOrg) {
-          await cacheOrganizationAnchors(adminOrg);
+          cacheOrganizationAnchors(adminOrg).catch(() => {});
           setOrganization(adminOrg);
         }
         setMember(null);
@@ -326,20 +336,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { user: adminUser, organization: adminOrg, member: null };
       }
 
-      // 1. Resolve active device ID
-      const activeDeviceId = deviceId || (await getDeviceFingerprint());
-      if (activeDeviceId && !deviceId) {
-        setDeviceId(activeDeviceId);
-      }
+      // 1. Run 1-Worker-1-Phone lock + local cache reads + account_roles lookup in parallel!
+      let activeOrg = organization;
+      let existingMember: ChurchMember | null = null;
+      let roleChurchId: string | null = null;
 
-      // 2. STRICT 1-WORKER-1-PHONE CHECK:
-      // Before allowing any worker account to sign in or onboard on this phone,
-      // verify that this physical phone is not already bound to another worker!
       try {
-        await enforceDeviceWorkerLock({
-          deviceId: activeDeviceId,
-          candidateEmail: cleanEmail,
-        });
+        const [, cachedOrg, cachedMem, roleSnap] = await Promise.all([
+          enforceDeviceWorkerLock({
+            deviceId: activeDeviceId,
+            candidateEmail: cleanEmail,
+          }),
+          activeOrg ? Promise.resolve(activeOrg) : getCachedOrganization(),
+          getCachedMember(),
+          cleanEmail && db
+            ? getDoc(doc(db, 'account_roles', cleanEmail)).catch(() => null)
+            : Promise.resolve(null),
+        ]);
+
+        activeOrg = cachedOrg;
+        existingMember = cachedMem;
+        if (roleSnap?.exists() && roleSnap.data()?.role === 'WORKER') {
+          roleChurchId = roleSnap.data()?.churchId || null;
+        }
       } catch (lockErr) {
         if (auth.currentUser) {
           await FirebaseAuth.signOut(auth).catch(() => {});
@@ -349,7 +368,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         throw lockErr;
       }
 
-      // 3. Persist to known accounts list on this device (commit setUser together with org/member at the end)
+      // 2. Persist to known accounts list on this device (commit setUser together with org/member at the end)
       AsyncStorage.setItem(STORAGE_KEY_USER, JSON.stringify(authUser)).catch(() => {});
       setKnownAccounts((prev) => {
         const filtered = prev.filter((a) => a.email.toLowerCase() !== authUser.email.toLowerCase());
@@ -357,10 +376,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         AsyncStorage.setItem(STORAGE_KEY_KNOWN_ACCOUNTS, JSON.stringify(updated)).catch(() => {});
         return updated;
       });
-
-      // 5. Resolve active organization (from state or device local cache)
-      let activeOrg = organization || (await getCachedOrganization());
-      let existingMember: ChurchMember | null = await getCachedMember();
 
       // If cached member does not match the newly logged in user, clear stale member
       if (
@@ -372,82 +387,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         existingMember = null;
       }
 
-      // 6. If organization is cached on this device, verify that it still exists in Firestore
-      if (activeOrg) {
-        const freshOrg = await fetchFreshOrganizationById(activeOrg.id).catch(() => null);
-        if (!freshOrg) {
-          // Organization was deleted in Firestore!
-          activeOrg = null;
-          existingMember = null;
-          setOrganization(null);
-          setCachedAnchors(null);
-          await AsyncStorage.multiRemove([STORAGE_KEY_ORG, STORAGE_KEY_ANCHORS, STORAGE_KEY_MEMBER]);
-        } else {
-          activeOrg = freshOrg;
-          try {
-            const found = await findExistingMember(activeOrg.id, authUser.email, activeDeviceId);
-            if (found) {
-              existingMember = found;
-              setOrganization(activeOrg);
-            } else {
-              existingMember = null;
-              activeOrg = null;
-              setOrganization(null);
-              setCachedAnchors(null);
-              await AsyncStorage.multiRemove([STORAGE_KEY_ORG, STORAGE_KEY_ANCHORS, STORAGE_KEY_MEMBER]);
-            }
-          } catch (error) {
-            if (
-              error instanceof Error &&
-              (error.message.includes('already bound') ||
-                error.message.includes('still registered') ||
-                error.message.includes('Only one worker'))
-            ) {
-              if (auth.currentUser) {
-                await FirebaseAuth.signOut(auth).catch(() => {});
-              }
-              await AsyncStorage.removeItem(STORAGE_KEY_USER).catch(() => {});
-              setUser(null);
-              throw error;
-            }
-            console.warn('findExistingMember check error:', error);
-          }
-        }
-      }
-
-      // 6b. Fast O(1) lookup via account_roles/{cleanEmail} when switching back from Admin to Worker
-      if (!activeOrg && cleanEmail && db) {
+      // 3. Resolve organization & member in parallel when orgId is known from cache or account_roles
+      const targetOrgId = activeOrg?.id || roleChurchId;
+      if (targetOrgId) {
         try {
-          const roleSnap = await getDoc(doc(db, 'account_roles', cleanEmail));
-          if (roleSnap.exists()) {
-            const roleData = roleSnap.data();
-            if (roleData.role === 'WORKER' && roleData.churchId) {
-              const freshOrg = await fetchFreshOrganizationById(roleData.churchId);
-              if (freshOrg) {
-                const found = await findExistingMember(freshOrg.id, cleanEmail, activeDeviceId);
-                if (found) {
-                  activeOrg = freshOrg;
-                  existingMember = found;
-                  setOrganization(activeOrg);
-                  await cacheOrganizationAnchors(activeOrg);
-                }
-              }
-            }
+          const [freshOrg, found] = await Promise.all([
+            fetchFreshOrganizationById(targetOrgId).catch(() => null),
+            findExistingMember(targetOrgId, authUser.email, activeDeviceId),
+          ]);
+
+          if (!freshOrg || !found) {
+            existingMember = null;
+            activeOrg = null;
+            setOrganization(null);
+            setCachedAnchors(null);
+            AsyncStorage.multiRemove([STORAGE_KEY_ORG, STORAGE_KEY_ANCHORS, STORAGE_KEY_MEMBER]).catch(() => {});
+          } else {
+            activeOrg = freshOrg;
+            existingMember = found;
+            setOrganization(activeOrg);
           }
-        } catch (roleErr) {
+        } catch (error) {
           if (
-            roleErr instanceof Error &&
-            (roleErr.message.includes('already bound') ||
-              roleErr.message.includes('still registered') ||
-              roleErr.message.includes('Only one worker'))
+            error instanceof Error &&
+            (error.message.includes('already bound') ||
+              error.message.includes('still registered') ||
+              error.message.includes('Only one worker'))
           ) {
             if (auth.currentUser) {
               await FirebaseAuth.signOut(auth).catch(() => {});
             }
             await AsyncStorage.removeItem(STORAGE_KEY_USER).catch(() => {});
             setUser(null);
-            throw roleErr;
+            throw error;
           }
+          console.warn('findExistingMember check error:', error);
         }
       }
 
