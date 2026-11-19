@@ -6,13 +6,13 @@
 [![Firebase](https://img.shields.io/badge/Firebase-Firestore%20%26%20Auth%20v13-FFCA28?logo=firebase&logoColor=black)](https://firebase.google.com/)
 [![Google Sign-In](https://img.shields.io/badge/Auth-Google%20Native%20SSO-4285F4?logo=google&logoColor=white)](https://developers.google.com/identity)
 
-**Presenti Mobile** is the workforce and field-admin client for the Presenti attendance and physical presence verification platform. It combines **pre-scan Wi-Fi BSSID & anti-spoof GPS verification**, **real-time ML Kit + AI facial biometrics**, **native hardware device biometrics**, and **Presenti AI** workforce intelligence inside a **Bolt-inspired ArtCraft UI** tuned for 60fps fluidity on both flagship and budget smartphones.
+**Presenti Mobile** is the workforce and field-admin client for the Presenti attendance and physical presence verification platform. It combines **pre-scan Wi-Fi BSSID & anti-spoof GPS verification**, **real-time ML Kit + AI facial biometrics**, **native hardware device biometrics**, and **Presenti AI** workforce intelligence inside a **high-contrast ArtCraft UI** tuned for 60fps fluidity on both flagship and budget smartphones.
 
 ---
 
 ## Core Capabilities & Recent Updates
 
-### 1. OPay-Style AI Face Enrollment & Live Verification (`FaceScannerModal.tsx`)
+### 1. AI Face Scan & Live Verification (`FaceScannerModal.tsx`)
 - **Mandatory Onboarding Face Registration (`onboarding.tsx`):** Every new worker must capture and validate their official biometric reference photo during account creation (`CAPTURE & ENROLL FACE`), with a **Preview & Confirm** step (**USE THIS PHOTO** / **RETAKE PHOTO**) before completing setup.
 - **Persistent Onboarding Drafts:** Paired organization code, form fields, and captured face photo are saved per user in `AsyncStorage` (`@presenti_onboarding_draft_<uid>`), so minimizing or closing the app resumes right where the user left off.
 - **Instant Live Framing Feedback (On-Device ML Kit):** Runs `RNMLKitFaceDetector` continuously (~850ms) in the background—no waiting to tap Scan—delivering immediate guidance (*"No face detected"*, *"Multiple faces in frame"*, *"Move closer"*, *"Move slightly back"*, *"Face not well fitted"*, *"Look straight ahead"*, *"Keep your eyes open"*), turning the ring green when aligned.
@@ -32,7 +32,7 @@
   - **Satellite GPS Geofence (`GEOFENCE_ONLY`):** Router-free perimeter checks (10m–100m radius).
   - **Hybrid Office Router (`HYBRID`):** Ambient hardware Wi-Fi MAC (`BSSID`) scan with automatic GPS perimeter failover.
 
-### 4. Bolt-Inspired ArtCraft UI & Budget-Phone Performance (`premium.ts`, `TactilePressable.tsx`)
+### 4. ArtCraft UI & Budget-Phone Performance (`premium.ts`, `TactilePressable.tsx`)
 - **ArtCraft Design System (`#f2f1ee` paper canvas, `#ffffff` floating cards, `#142748` navy ink, `#2d81ff` electric blue accent):** Consistent `18px` rounded cards, soft elevation, `56px` rounded primary CTAs, pill status badges, and vivid coloured high-contrast toasts (`ToastContext.tsx`).
 - **60fps Fluidity Optimizations:**
   - Isolated 1-second `LiveClockDisplay` (`React.memo`) so `DashboardScreen` never re-renders every second.
@@ -84,7 +84,7 @@ sequenceDiagram
 |---|---|
 | **Framework** | React Native `0.86` (Expo SDK `57`, Expo Router) |
 | **Language** | TypeScript `6.0` |
-| **Design Tokens & Motion** | Custom ArtCraft/Bolt tokens (`src/constants/premium.ts`), `TactilePressable`, `react-native-gesture-handler`, `LayoutAnimation` |
+| **Design Tokens & Motion** | ArtCraft design tokens (`src/constants/premium.ts`), `TactilePressable`, `react-native-gesture-handler`, `LayoutAnimation` |
 | **On-Device & Cloud Face AI** | `@infinitered/react-native-mlkit-face-detection` + Gemini Vision (`gemini-flash-lite-latest` / `gemini-3.8-flash`) |
 | **Workforce AI Assistant** | Gemini API (`AskPresentiChatModal`) + Firestore cross-device chat sync |
 | **Biometric Fallback** | `expo-local-authentication` (Android BiometricPrompt & iOS LocalAuthentication) |
