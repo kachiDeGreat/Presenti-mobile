@@ -16,7 +16,10 @@ import {
   Pressable,
   Dimensions,
   LayoutAnimation,
+  Animated,
+  PanResponder,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
@@ -60,6 +63,9 @@ import { AdminManageTab } from "./AdminManageTab";
 import { C, MONO, R, S, T, shadow, ui } from "../constants/premium";
 import type { MobileAIContext } from "../services/geminiService";
 import type { ChurchMember } from "../types";
+
+const ADMIN_FACE_TEST_KEY = "@presenti_admin_face_test_v1";
+const ADMIN_FACE_TEST_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 const RADIUS_OPTIONS = [
   { value: 10, label: "10m", desc: "Executive Room" },
@@ -782,6 +788,150 @@ export const AdminHub: React.FC = () => {
   const [showAdminProfileModal, setShowAdminProfileModal] = useState(false);
   const [showAskPresenti, setShowAskPresenti] = useState(false);
   const [showAdminFaceTestModal, setShowAdminFaceTestModal] = useState(false);
+  const [adminTestFaceUri, setAdminTestFaceUri] = useState<string | null>(null);
+  const [adminTestExpiresAt, setAdminTestExpiresAt] = useState<number | null>(null);
+  const [adminFaceTestMode, setAdminFaceTestMode] = useState<"enroll" | "verify">("enroll");
+  const [adminTestRemainingSec, setAdminTestRemainingSec] = useState(0);
+
+  // Anchors tab accordions + dedicated full-screen map modal
+  const [showMapAdjustModal, setShowMapAdjustModal] = useState(false);
+  const [anchorOpenSections, setAnchorOpenSections] = useState<Record<string, boolean>>({
+    architecture: true,
+    gps: false,
+    radius: false,
+    wifi: false,
+    map: true,
+  });
+
+  const toggleAnchorSection = (key: string) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setAnchorOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  // Draggable AskPresenti FAB position
+  const fabPan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+  const fabOffsetRef = useRef({ x: 0, y: 0 });
+  const fabPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_, gesture) =>
+        Math.abs(gesture.dx) > 6 || Math.abs(gesture.dy) > 6,
+      onPanResponderGrant: () => {
+        fabPan.setOffset(fabOffsetRef.current);
+        fabPan.setValue({ x: 0, y: 0 });
+      },
+      onPanResponderMove: (_, gesture) => {
+        const winW = Dimensions.get("window").width;
+        const winH = Dimensions.get("window").height;
+        const minX = -(winW - 88);
+        const maxX = 12;
+        const minY = -(winH - 200);
+        const maxY = 24;
+        const clampedDx = Math.max(
+          minX - fabOffsetRef.current.x,
+          Math.min(maxX - fabOffsetRef.current.x, gesture.dx)
+        );
+        const clampedDy = Math.max(
+          minY - fabOffsetRef.current.y,
+          Math.min(maxY - fabOffsetRef.current.y, gesture.dy)
+        );
+        fabPan.setValue({ x: clampedDx, y: clampedDy });
+      },
+      onPanResponderRelease: (_, gesture) => {
+        fabPan.flattenOffset();
+        const winW = Dimensions.get("window").width;
+        const winH = Dimensions.get("window").height;
+        const nextX = Math.max(
+          -(winW - 88),
+          Math.min(12, fabOffsetRef.current.x + gesture.dx)
+        );
+        const nextY = Math.max(
+          -(winH - 200),
+          Math.min(24, fabOffsetRef.current.y + gesture.dy)
+        );
+        fabOffsetRef.current = { x: nextX, y: nextY };
+        fabPan.setValue({ x: nextX, y: nextY });
+
+        if (Math.abs(gesture.dx) <= 6 && Math.abs(gesture.dy) <= 6) {
+          setShowAskPresenti(true);
+        }
+      },
+    })
+  ).current;
+
+  // Load any active 5-minute Admin Face Test face from local storage
+  useEffect(() => {
+    AsyncStorage.getItem(ADMIN_FACE_TEST_KEY)
+      .then((raw) => {
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (parsed?.imageBase64 && parsed?.expiresAt && parsed.expiresAt > Date.now()) {
+          setAdminTestFaceUri(parsed.imageBase64);
+          setAdminTestExpiresAt(parsed.expiresAt);
+          setAdminTestRemainingSec(Math.ceil((parsed.expiresAt - Date.now()) / 1000));
+        } else {
+          AsyncStorage.removeItem(ADMIN_FACE_TEST_KEY).catch(() => {});
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Auto-expire & delete Admin Face Test face from local storage after 5 minutes
+  useEffect(() => {
+    if (!adminTestExpiresAt) {
+      setAdminTestRemainingSec(0);
+      return;
+    }
+    const tick = () => {
+      const diff = adminTestExpiresAt - Date.now();
+      if (diff <= 0) {
+        AsyncStorage.removeItem(ADMIN_FACE_TEST_KEY).catch(() => {});
+        setAdminTestFaceUri(null);
+        setAdminTestExpiresAt(null);
+        setAdminTestRemainingSec(0);
+        setShowAdminFaceTestModal((open) => {
+          if (open) {
+            toast.info("5-minute test session expired. Local test face deleted.");
+          }
+          return false;
+        });
+      } else {
+        setAdminTestRemainingSec(Math.ceil(diff / 1000));
+      }
+    };
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [adminTestExpiresAt, toast]);
+
+  const handleOpenAdminFaceTest = useCallback(async () => {
+    try {
+      const raw = await AsyncStorage.getItem(ADMIN_FACE_TEST_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.imageBase64 && parsed?.expiresAt && parsed.expiresAt > Date.now()) {
+          setAdminTestFaceUri(parsed.imageBase64);
+          setAdminTestExpiresAt(parsed.expiresAt);
+          setAdminFaceTestMode("verify");
+          setShowAdminFaceTestModal(true);
+          return;
+        }
+      }
+      await AsyncStorage.removeItem(ADMIN_FACE_TEST_KEY);
+    } catch {}
+    setAdminTestFaceUri(null);
+    setAdminTestExpiresAt(null);
+    setAdminFaceTestMode("enroll");
+    setShowAdminFaceTestModal(true);
+  }, []);
+
+  const handleResetAdminFaceTest = useCallback(async () => {
+    await AsyncStorage.removeItem(ADMIN_FACE_TEST_KEY).catch(() => {});
+    setAdminTestFaceUri(null);
+    setAdminTestExpiresAt(null);
+    setAdminTestRemainingSec(0);
+    toast.info("Admin test face cleared from local storage.");
+  }, [toast]);
 
   const mobileAIContext: MobileAIContext = useMemo(
     () => ({
@@ -1311,256 +1461,373 @@ export const AdminHub: React.FC = () => {
               ) : null}
             </View>
 
-            {/* Architecture Mode Selector */}
+            {/* Architecture Mode Selector (Accordion) */}
             <View style={styles.card}>
-              <Text style={styles.cardSectionTitle}>VERIFICATION ARCHITECTURE</Text>
-              <Text style={styles.cardSectionSub}>
-                Select the physical security method required for worker clock-ins.
-              </Text>
-
-              <View style={styles.modeCardsRow}>
-                <TouchableOpacity
-                  style={[
-                    styles.modeChoiceCard,
-                    calMode === "GEOFENCE_ONLY" && styles.modeChoiceCardActive,
-                  ]}
-                  onPress={() => setCalMode("GEOFENCE_ONLY")}
-                  activeOpacity={0.8}
-                >
-                  <View style={styles.modeChoiceHeader}>
-                    <Ionicons
-                      name="navigate"
-                      size={20}
-                      color={calMode === "GEOFENCE_ONLY" ? "#142748" : "#64748b"}
-                    />
-                    {calMode === "GEOFENCE_ONLY" && (
-                      <Ionicons name="checkmark-circle" size={18} color="#2d81ff" />
-                    )}
-                  </View>
-                  <Text style={styles.modeChoiceTitle}>Satellite Geofence</Text>
-                  <Text style={styles.modeChoiceSub}>
-                    Recommended • Router-free high-precision GPS satellite perimeter.
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[
-                    styles.modeChoiceCard,
-                    calMode === "HYBRID" && styles.modeChoiceCardActive,
-                  ]}
-                  onPress={() => setCalMode("HYBRID")}
-                  activeOpacity={0.8}
-                >
-                  <View style={styles.modeChoiceHeader}>
-                    <Ionicons
-                      name="wifi"
-                      size={20}
-                      color={calMode === "HYBRID" ? "#142748" : "#64748b"}
-                    />
-                    {calMode === "HYBRID" && (
-                      <Ionicons name="checkmark-circle" size={18} color="#2d81ff" />
-                    )}
-                  </View>
-                  <Text style={styles.modeChoiceTitle}>Router + Geofence</Text>
-                  <Text style={styles.modeChoiceSub}>
-                    Dual-Tier • Matches office router BSSID MAC with GPS perimeter.
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
-            {/* GPS Pinpoint Section */}
-            <View style={styles.card}>
-              <Text style={styles.cardSectionTitle}>1. GPS PERIMETER COORDINATES</Text>
-              <Text style={styles.cardSectionSub}>
-                Capture high-accuracy latitude & longitude from device hardware sensors.
-              </Text>
-
-              <View style={styles.coordsBox}>
-                <View style={styles.coordCol}>
-                  <Text style={styles.coordLabel}>LATITUDE</Text>
-                  <Text style={styles.coordVal}>
-                    {latitude ? latitude.toFixed(6) : "0.000000"}
-                  </Text>
-                </View>
-                <View style={styles.coordDivider} />
-                <View style={styles.coordCol}>
-                  <Text style={styles.coordLabel}>LONGITUDE</Text>
-                  <Text style={styles.coordVal}>
-                    {longitude ? longitude.toFixed(6) : "0.000000"}
-                  </Text>
-                </View>
-                {gpsAccuracy !== null && (
-                  <>
-                    <View style={styles.coordDivider} />
-                    <View style={styles.coordCol}>
-                      <Text style={styles.coordLabel}>ACCURACY</Text>
-                      <Text style={[styles.coordVal, { color: "#10b981" }]}>
-                        ±{gpsAccuracy}m
-                      </Text>
-                    </View>
-                  </>
-                )}
-              </View>
-
               <TouchableOpacity
-                style={[styles.primaryActionBtn, isLocatingGps && styles.btnDisabled]}
-                onPress={handlePinpointGps}
-                disabled={isLocatingGps}
-                activeOpacity={0.85}
+                style={styles.accordionHeader}
+                onPress={() => toggleAnchorSection("architecture")}
+                activeOpacity={0.75}
               >
-                {isLocatingGps ? (
-                  <ActivityIndicator size="small" color="#f2f1ee" />
-                ) : (
-                  <Ionicons name="locate" size={18} color="#f2f1ee" />
-                )}
-                <Text style={styles.primaryActionBtnText}>
-                  {isLocatingGps ? "ACQUIRING GPS FIX..." : "PINPOINT CURRENT GPS"}
-                </Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.cardSectionTitle}>VERIFICATION ARCHITECTURE</Text>
+                  <Text style={styles.accordionSummaryText}>
+                    {calMode === "GEOFENCE_ONLY" ? "Satellite Geofence" : "Hybrid Router + Geofence"}
+                  </Text>
+                </View>
+                <Ionicons
+                  name={anchorOpenSections.architecture ? "chevron-up" : "chevron-down"}
+                  size={18}
+                  color="#64748b"
+                />
               </TouchableOpacity>
-            </View>
 
-            {/* Perimeter Radius Selector */}
-            <View style={styles.card}>
-              <Text style={styles.cardSectionTitle}>2. PERIMETER RADIUS</Text>
-              <Text style={styles.cardSectionSub}>
-                Allowable distance workers can be from centerpoint ({radiusMeters}m selected).
-              </Text>
+              {anchorOpenSections.architecture && (
+                <View style={styles.accordionBody}>
+                  <Text style={styles.cardSectionSub}>
+                    Select the physical security method required for worker clock-ins.
+                  </Text>
 
-              <View style={styles.radiusGrid}>
-                {RADIUS_OPTIONS.map((opt) => {
-                  const isSel = radiusMeters === opt.value;
-                  return (
+                  <View style={styles.modeCardsRow}>
                     <TouchableOpacity
-                      key={opt.value}
-                      style={[styles.radiusItem, isSel && styles.radiusItemActive]}
-                      onPress={() => setRadiusMeters(opt.value)}
+                      style={[
+                        styles.modeChoiceCard,
+                        calMode === "GEOFENCE_ONLY" && styles.modeChoiceCardActive,
+                      ]}
+                      onPress={() => setCalMode("GEOFENCE_ONLY")}
                       activeOpacity={0.8}
                     >
-                      <Text style={[styles.radiusLabel, isSel && styles.radiusLabelActive]}>
-                        {opt.label}
-                      </Text>
-                      <Text
-                        style={[styles.radiusDesc, isSel && styles.radiusDescActive]}
-                        numberOfLines={1}
-                      >
-                        {opt.desc}
+                      <View style={styles.modeChoiceHeader}>
+                        <Ionicons
+                          name="navigate"
+                          size={20}
+                          color={calMode === "GEOFENCE_ONLY" ? "#142748" : "#64748b"}
+                        />
+                        {calMode === "GEOFENCE_ONLY" && (
+                          <Ionicons name="checkmark-circle" size={18} color="#2d81ff" />
+                        )}
+                      </View>
+                      <Text style={styles.modeChoiceTitle}>Satellite Geofence</Text>
+                      <Text style={styles.modeChoiceSub}>
+                        Recommended • Router-free high-precision GPS satellite perimeter.
                       </Text>
                     </TouchableOpacity>
-                  );
-                })}
-              </View>
+
+                    <TouchableOpacity
+                      style={[
+                        styles.modeChoiceCard,
+                        calMode === "HYBRID" && styles.modeChoiceCardActive,
+                      ]}
+                      onPress={() => setCalMode("HYBRID")}
+                      activeOpacity={0.8}
+                    >
+                      <View style={styles.modeChoiceHeader}>
+                        <Ionicons
+                          name="wifi"
+                          size={20}
+                          color={calMode === "HYBRID" ? "#142748" : "#64748b"}
+                        />
+                        {calMode === "HYBRID" && (
+                          <Ionicons name="checkmark-circle" size={18} color="#2d81ff" />
+                        )}
+                      </View>
+                      <Text style={styles.modeChoiceTitle}>Router + Geofence</Text>
+                      <Text style={styles.modeChoiceSub}>
+                        Dual-Tier • Matches office router BSSID MAC with GPS perimeter.
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
             </View>
 
-            {/* Office Router Configuration (If Hybrid Mode) */}
-            {calMode === "HYBRID" && (
-              <View style={styles.card}>
-                <View style={styles.cardHeaderRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.cardSectionTitle}>3. OFFICE WI-FI ROUTER ANCHOR</Text>
-                    <Text style={styles.cardSectionSub}>
-                      Pair with your premises Wi-Fi router's unique hardware BSSID.
-                    </Text>
-                  </View>
-                  <TouchableOpacity
-                    style={[styles.secondaryScanBtn, isScanningWifi && styles.btnDisabled]}
-                    onPress={handleScanWifi}
-                    disabled={isScanningWifi}
-                    activeOpacity={0.8}
-                  >
-                    {isScanningWifi ? (
-                      <ActivityIndicator size="small" color="#142748" />
-                    ) : (
-                      <Ionicons name="refresh" size={14} color="#142748" />
+            {/* GPS Pinpoint Section (Accordion) */}
+            <View style={styles.card}>
+              <TouchableOpacity
+                style={styles.accordionHeader}
+                onPress={() => toggleAnchorSection("gps")}
+                activeOpacity={0.75}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.cardSectionTitle}>1. GPS PERIMETER COORDINATES</Text>
+                  <Text style={styles.accordionSummaryText}>
+                    {latitude && longitude
+                      ? `${latitude.toFixed(5)}, ${longitude.toFixed(5)}${gpsAccuracy !== null ? ` (±${gpsAccuracy}m)` : ""}`
+                      : "Not calibrated yet"}
+                  </Text>
+                </View>
+                <Ionicons
+                  name={anchorOpenSections.gps ? "chevron-up" : "chevron-down"}
+                  size={18}
+                  color="#64748b"
+                />
+              </TouchableOpacity>
+
+              {anchorOpenSections.gps && (
+                <View style={styles.accordionBody}>
+                  <Text style={styles.cardSectionSub}>
+                    Capture high-accuracy latitude & longitude from device hardware sensors.
+                  </Text>
+
+                  <View style={styles.coordsBox}>
+                    <View style={styles.coordCol}>
+                      <Text style={styles.coordLabel}>LATITUDE</Text>
+                      <Text style={styles.coordVal}>
+                        {latitude ? latitude.toFixed(6) : "0.000000"}
+                      </Text>
+                    </View>
+                    <View style={styles.coordDivider} />
+                    <View style={styles.coordCol}>
+                      <Text style={styles.coordLabel}>LONGITUDE</Text>
+                      <Text style={styles.coordVal}>
+                        {longitude ? longitude.toFixed(6) : "0.000000"}
+                      </Text>
+                    </View>
+                    {gpsAccuracy !== null && (
+                      <>
+                        <View style={styles.coordDivider} />
+                        <View style={styles.coordCol}>
+                          <Text style={styles.coordLabel}>ACCURACY</Text>
+                          <Text style={[styles.coordVal, { color: "#10b981" }]}>
+                            ±{gpsAccuracy}m
+                          </Text>
+                        </View>
+                      </>
                     )}
-                    <Text style={styles.secondaryScanBtnText}>
-                      {isScanningWifi ? "Scanning..." : "Scan Nearby"}
+                  </View>
+
+                  <TouchableOpacity
+                    style={[styles.primaryActionBtn, isLocatingGps && styles.btnDisabled]}
+                    onPress={handlePinpointGps}
+                    disabled={isLocatingGps}
+                    activeOpacity={0.85}
+                  >
+                    {isLocatingGps ? (
+                      <ActivityIndicator size="small" color="#f2f1ee" />
+                    ) : (
+                      <Ionicons name="locate" size={18} color="#f2f1ee" />
+                    )}
+                    <Text style={styles.primaryActionBtnText}>
+                      {isLocatingGps ? "ACQUIRING GPS FIX..." : "PINPOINT CURRENT GPS"}
                     </Text>
                   </TouchableOpacity>
                 </View>
+              )}
+            </View>
 
-                {availableNetworks.length > 0 && (
-                  <View style={styles.networkListContainer}>
-                    <Text style={styles.networkListHeader}>
-                      DETECTED BROADCAST POINTS ({availableNetworks.length}):
-                    </Text>
-                    <ScrollView style={styles.networkScroll} nestedScrollEnabled>
-                      {availableNetworks.slice(0, 6).map((net, idx) => {
-                        const isMatch =
-                          targetBssid &&
-                          targetBssid.toLowerCase() === net.bssid.toLowerCase();
-                        return (
-                          <TouchableOpacity
-                            key={`${net.bssid}-${idx}`}
-                            style={[styles.networkRow, isMatch && styles.networkRowSelected]}
-                            onPress={() => handleSelectNetwork(net)}
-                            activeOpacity={0.7}
+            {/* Perimeter Radius Selector (Accordion) */}
+            <View style={styles.card}>
+              <TouchableOpacity
+                style={styles.accordionHeader}
+                onPress={() => toggleAnchorSection("radius")}
+                activeOpacity={0.75}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.cardSectionTitle}>2. PERIMETER RADIUS</Text>
+                  <Text style={styles.accordionSummaryText}>{radiusMeters}m boundary radius</Text>
+                </View>
+                <Ionicons
+                  name={anchorOpenSections.radius ? "chevron-up" : "chevron-down"}
+                  size={18}
+                  color="#64748b"
+                />
+              </TouchableOpacity>
+
+              {anchorOpenSections.radius && (
+                <View style={styles.accordionBody}>
+                  <Text style={styles.cardSectionSub}>
+                    Allowable distance workers can be from centerpoint ({radiusMeters}m selected).
+                  </Text>
+
+                  <View style={styles.radiusGrid}>
+                    {RADIUS_OPTIONS.map((opt) => {
+                      const isSel = radiusMeters === opt.value;
+                      return (
+                        <TouchableOpacity
+                          key={opt.value}
+                          style={[styles.radiusItem, isSel && styles.radiusItemActive]}
+                          onPress={() => setRadiusMeters(opt.value)}
+                          activeOpacity={0.8}
+                        >
+                          <Text style={[styles.radiusLabel, isSel && styles.radiusLabelActive]}>
+                            {opt.label}
+                          </Text>
+                          <Text
+                            style={[styles.radiusDesc, isSel && styles.radiusDescActive]}
+                            numberOfLines={1}
                           >
-                            <Ionicons
-                              name="wifi"
-                              size={16}
-                              color={isMatch ? "#2d81ff" : "#64748b"}
-                            />
-                            <View style={{ flex: 1 }}>
-                              <Text
-                                style={[styles.networkSsid, isMatch && styles.networkSsidActive]}
-                                numberOfLines={1}
+                            {opt.desc}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                </View>
+              )}
+            </View>
+
+            {/* Office Router Configuration (If Hybrid Mode, Accordion) */}
+            {calMode === "HYBRID" && (
+              <View style={styles.card}>
+                <TouchableOpacity
+                  style={styles.accordionHeader}
+                  onPress={() => toggleAnchorSection("wifi")}
+                  activeOpacity={0.75}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.cardSectionTitle}>3. OFFICE WI-FI ROUTER ANCHOR</Text>
+                    <Text style={styles.accordionSummaryText}>
+                      {targetBssid ? `${ssidHint || "Router"} (${targetBssid})` : "No router paired yet"}
+                    </Text>
+                  </View>
+                  <Ionicons
+                    name={anchorOpenSections.wifi ? "chevron-up" : "chevron-down"}
+                    size={18}
+                    color="#64748b"
+                  />
+                </TouchableOpacity>
+
+                {anchorOpenSections.wifi && (
+                  <View style={styles.accordionBody}>
+                    <View style={styles.cardHeaderRow}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.cardSectionSub}>
+                          Pair with your premises Wi-Fi router's unique hardware BSSID.
+                        </Text>
+                      </View>
+                      <TouchableOpacity
+                        style={[styles.secondaryScanBtn, isScanningWifi && styles.btnDisabled]}
+                        onPress={handleScanWifi}
+                        disabled={isScanningWifi}
+                        activeOpacity={0.8}
+                      >
+                        {isScanningWifi ? (
+                          <ActivityIndicator size="small" color="#142748" />
+                        ) : (
+                          <Ionicons name="refresh" size={14} color="#142748" />
+                        )}
+                        <Text style={styles.secondaryScanBtnText}>
+                          {isScanningWifi ? "Scanning..." : "Scan Nearby"}
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    {availableNetworks.length > 0 && (
+                      <View style={styles.networkListContainer}>
+                        <Text style={styles.networkListHeader}>
+                          DETECTED BROADCAST POINTS ({availableNetworks.length}):
+                        </Text>
+                        <ScrollView style={styles.networkScroll} nestedScrollEnabled>
+                          {availableNetworks.slice(0, 6).map((net, idx) => {
+                            const isMatch =
+                              targetBssid &&
+                              targetBssid.toLowerCase() === net.bssid.toLowerCase();
+                            return (
+                              <TouchableOpacity
+                                key={`${net.bssid}-${idx}`}
+                                style={[styles.networkRow, isMatch && styles.networkRowSelected]}
+                                onPress={() => handleSelectNetwork(net)}
+                                activeOpacity={0.7}
                               >
-                                {net.ssid || "Hidden Network"}
-                              </Text>
-                              <Text style={styles.networkBssid}>{net.bssid}</Text>
-                            </View>
-                            {isMatch && (
-                              <Ionicons name="checkmark-circle" size={18} color="#2d81ff" />
-                            )}
-                          </TouchableOpacity>
-                        );
-                      })}
-                    </ScrollView>
+                                <Ionicons
+                                  name="wifi"
+                                  size={16}
+                                  color={isMatch ? "#2d81ff" : "#64748b"}
+                                />
+                                <View style={{ flex: 1 }}>
+                                  <Text
+                                    style={[styles.networkSsid, isMatch && styles.networkSsidActive]}
+                                    numberOfLines={1}
+                                  >
+                                    {net.ssid || "Hidden Network"}
+                                  </Text>
+                                  <Text style={styles.networkBssid}>{net.bssid}</Text>
+                                </View>
+                                {isMatch && (
+                                  <Ionicons name="checkmark-circle" size={18} color="#2d81ff" />
+                                )}
+                              </TouchableOpacity>
+                            );
+                          })}
+                        </ScrollView>
+                      </View>
+                    )}
+
+                    <View style={styles.inputGroup}>
+                      <Text style={styles.inputLabel}>ROUTER SSID (NAME)</Text>
+                      <TextInput
+                        style={styles.textInput}
+                        placeholder="e.g. Office_WiFi"
+                        placeholderTextColor="#94a3b8"
+                        value={ssidHint}
+                        onChangeText={setSsidHint}
+                      />
+                    </View>
+
+                    <View style={styles.inputGroup}>
+                      <Text style={styles.inputLabel}>ROUTER BSSID (MAC ADDRESS)</Text>
+                      <TextInput
+                        style={[styles.textInput, styles.monoInput]}
+                        placeholder="e.g. 34:2c:c4:91:a8:20"
+                        placeholderTextColor="#94a3b8"
+                        value={targetBssid}
+                        onChangeText={setTargetBssid}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                      />
+                    </View>
                   </View>
                 )}
-
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>ROUTER SSID (NAME)</Text>
-                  <TextInput
-                    style={styles.textInput}
-                    placeholder="e.g. Office_WiFi"
-                    placeholderTextColor="#94a3b8"
-                    value={ssidHint}
-                    onChangeText={setSsidHint}
-                  />
-                </View>
-
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>ROUTER BSSID (MAC ADDRESS)</Text>
-                  <TextInput
-                    style={[styles.textInput, styles.monoInput]}
-                    placeholder="e.g. 34:2c:c4:91:a8:20"
-                    placeholderTextColor="#94a3b8"
-                    value={targetBssid}
-                    onChangeText={setTargetBssid}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                  />
-                </View>
               </View>
             )}
 
-            {/* Interactive Leaflet Map Preview */}
+            {/* Premises Geofence Radar (Accordion + Dedicated Modal Adjuster) */}
             <View style={styles.card}>
-              <Text style={styles.cardSectionTitle}>PREMISES GEOFENCE RADAR</Text>
-              <Text style={styles.cardSectionSub}>
-                Workers must be inside this circular boundary ({radiusMeters}m) to punch in.
-              </Text>
-              <View style={styles.mapFrame}>
-                <PresenceMapMobile
-                  latitude={latitude}
-                  longitude={longitude}
-                  radiusMeters={radiusMeters}
-                  onCoordinatesChange={() => {}}
-                  height={220}
+              <TouchableOpacity
+                style={styles.accordionHeader}
+                onPress={() => toggleAnchorSection("map")}
+                activeOpacity={0.75}
+              >
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.cardSectionTitle}>PREMISES GEOFENCE RADAR</Text>
+                  <Text style={styles.accordionSummaryText}>
+                    Tap to preview • Open modal to zoom & move pin
+                  </Text>
+                </View>
+                <Ionicons
+                  name={anchorOpenSections.map ? "chevron-up" : "chevron-down"}
+                  size={18}
+                  color="#64748b"
                 />
-              </View>
+              </TouchableOpacity>
+
+              {anchorOpenSections.map && (
+                <View style={styles.accordionBody}>
+                  <Text style={styles.cardSectionSub}>
+                    Workers must be inside this circular boundary ({radiusMeters}m) to punch in.
+                  </Text>
+                  <View style={styles.mapFrame}>
+                    <View pointerEvents="none">
+                      <PresenceMapMobile
+                        latitude={latitude}
+                        longitude={longitude}
+                        radiusMeters={radiusMeters}
+                        onCoordinatesChange={() => {}}
+                        height={190}
+                      />
+                    </View>
+                    <TouchableOpacity
+                      style={styles.mapAdjustOverlayBtn}
+                      onPress={() => setShowMapAdjustModal(true)}
+                      activeOpacity={0.85}
+                    >
+                      <Ionicons name="expand-outline" size={16} color="#ffffff" />
+                      <Text style={styles.mapAdjustOverlayBtnText}>
+                        Adjust Map & Drag Pin
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
             </View>
 
             {/* Save Anchors Primary Action */}
@@ -1627,27 +1894,52 @@ export const AdminHub: React.FC = () => {
               </View>
             </View>
 
-            {/* Quick Face Scanner Launcher for Field Testing */}
-            <TouchableOpacity
-              style={styles.workforceFaceBanner}
-              onPress={() => setShowAdminFaceTestModal(true)}
-              activeOpacity={0.85}
-            >
-              <View style={styles.workforceFaceBannerLeft}>
+            {/* Quick Face Scanner Launcher for Field Testing (5-Min Enroll -> Verify Sandbox) */}
+            <View style={styles.workforceFaceBanner}>
+              <TouchableOpacity
+                style={styles.workforceFaceBannerLeft}
+                onPress={handleOpenAdminFaceTest}
+                activeOpacity={0.85}
+              >
                 <View style={styles.workforceFaceIconBox}>
                   <Ionicons name="scan-circle" size={22} color="#2d81ff" />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.workforceFaceTitle}>Test AI Face Scanner</Text>
                   <Text style={styles.workforceFaceSub}>
-                    Run live facial verification & anti-spoofing camera
+                    {adminTestFaceUri && adminTestRemainingSec > 0
+                      ? `Test face active (${Math.floor(adminTestRemainingSec / 60)}:${String(adminTestRemainingSec % 60).padStart(2, "0")} left) • Tap to verify`
+                      : "Register a temporary 5-min face, then verify authenticity"}
                   </Text>
                 </View>
-              </View>
-              <View style={styles.workforceFaceBadge}>
-                <Text style={styles.workforceFaceBadgeText}>TEST SCAN</Text>
-              </View>
-            </TouchableOpacity>
+              </TouchableOpacity>
+              {adminTestFaceUri && adminTestRemainingSec > 0 ? (
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                  <TouchableOpacity
+                    style={styles.workforceFaceBadge}
+                    onPress={handleOpenAdminFaceTest}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.workforceFaceBadgeText}>VERIFY</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.workforceFaceBadge, { backgroundColor: "#e2e8f0" }]}
+                    onPress={handleResetAdminFaceTest}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="trash-outline" size={14} color="#475569" />
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  style={styles.workforceFaceBadge}
+                  onPress={handleOpenAdminFaceTest}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.workforceFaceBadgeText}>TEST SCAN</Text>
+                </TouchableOpacity>
+              )}
+            </View>
 
             {/* Workforce Search & Filter Bar */}
             <View style={styles.searchRow}>
@@ -1967,18 +2259,19 @@ export const AdminHub: React.FC = () => {
         })}
       </View>
 
-      {/* Floating Ask Presenti AI Chat Bubble */}
-      <TactilePressable
-        style={styles.askPresentiFab}
-        scaleTo={0.9}
-        rippleColor="rgba(255,255,255,0.2)"
-        onPress={() => setShowAskPresenti(true)}
+      {/* Draggable Floating Ask Presenti AI Chat Bubble */}
+      <Animated.View
+        style={[
+          styles.askPresentiFab,
+          { transform: fabPan.getTranslateTransform() },
+        ]}
+        {...fabPanResponder.panHandlers}
       >
         <Ionicons name="chatbubble-ellipses" size={20} color="#ffffff" />
         <View style={styles.askPresentiSparkBadge}>
           <Ionicons name="sparkles" size={10} color="#142748" />
         </View>
-      </TactilePressable>
+      </Animated.View>
 
       <AskPresentiChatModal
         visible={showAskPresenti}
@@ -1988,16 +2281,136 @@ export const AdminHub: React.FC = () => {
         userId={(user?.email || user?.uid || "default").trim().toLowerCase()}
       />
 
-      {/* OPay-Style AI Face Biometric Scanner Modal for Testing */}
+      {/* OPay-Style AI Face Biometric Scanner Modal (2-Step 5-Min Admin Test Sandbox) */}
       <FaceScannerModal
         visible={showAdminFaceTestModal}
-        mode="enroll"
+        mode={adminFaceTestMode}
+        referencePhotoUrl={adminFaceTestMode === "verify" ? adminTestFaceUri || undefined : undefined}
         onCancel={() => setShowAdminFaceTestModal(false)}
-        onSuccess={() => {
-          setShowAdminFaceTestModal(false);
-          toast.success("AI Face Verification Passed! Biometrics confirmed.");
+        onSuccess={async (capturedDataUri) => {
+          if (adminFaceTestMode === "enroll") {
+            const expiresAt = Date.now() + ADMIN_FACE_TEST_TTL_MS;
+            await AsyncStorage.setItem(
+              ADMIN_FACE_TEST_KEY,
+              JSON.stringify({ imageBase64: capturedDataUri, expiresAt })
+            ).catch(() => {});
+            setAdminTestFaceUri(capturedDataUri);
+            setAdminTestExpiresAt(expiresAt);
+            setShowAdminFaceTestModal(false);
+            toast.success(
+              "Test face saved locally for 5 minutes! Now tap to verify against it.",
+              { title: "Step 1 Complete", duration: 4000 }
+            );
+            setTimeout(() => {
+              setAdminFaceTestMode("verify");
+              setShowAdminFaceTestModal(true);
+            }, 300);
+          } else {
+            setShowAdminFaceTestModal(false);
+            toast.success(
+              "AI Face Verification Passed! Authentic match confirmed against your 5-min test face."
+            );
+          }
         }}
       />
+
+      {/* Dedicated Full-Screen Map Adjustment Modal (Prevents Horizontal Tab Swiping) */}
+      <Modal
+        visible={showMapAdjustModal}
+        animationType="slide"
+        onRequestClose={() => setShowMapAdjustModal(false)}
+      >
+        <SafeAreaView style={styles.mapModalSafe}>
+          <View style={styles.mapModalHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.modalTitle}>Adjust Geofence Map & Pin</Text>
+              <Text style={styles.modalSubtitle}>
+                {latitude && longitude
+                  ? `${latitude.toFixed(6)}, ${longitude.toFixed(6)} • ${radiusMeters}m`
+                  : "Zoom, pan, or tap to set premises centerpoint"}
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => setShowMapAdjustModal(false)}
+              style={styles.modalCloseButton}
+            >
+              <Ionicons name="close" size={20} color="#142748" />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.mapModalBody}>
+            <PresenceMapMobile
+              latitude={latitude}
+              longitude={longitude}
+              radiusMeters={radiusMeters}
+              onCoordinatesChange={(lat, lng) => {
+                setLatitude(lat);
+                setLongitude(lng);
+              }}
+              height={Math.round(Dimensions.get("window").height * 0.58)}
+            />
+          </View>
+
+          <View style={styles.mapModalFooter}>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{ gap: 8, paddingBottom: 10 }}
+            >
+              {RADIUS_OPTIONS.map((opt) => {
+                const isSel = radiusMeters === opt.value;
+                return (
+                  <TouchableOpacity
+                    key={opt.value}
+                    style={[
+                      styles.radiusPillBtn,
+                      isSel && styles.radiusPillBtnActive,
+                    ]}
+                    onPress={() => setRadiusMeters(opt.value)}
+                    activeOpacity={0.8}
+                  >
+                    <Text
+                      style={[
+                        styles.radiusPillText,
+                        isSel && styles.radiusPillTextActive,
+                      ]}
+                    >
+                      {opt.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+
+            <View style={{ flexDirection: "row", gap: 10 }}>
+              <TouchableOpacity
+                style={[styles.secondaryScanBtn, { flex: 1, justifyContent: "center", paddingVertical: 12 }]}
+                onPress={handlePinpointGps}
+                disabled={isLocatingGps}
+                activeOpacity={0.85}
+              >
+                {isLocatingGps ? (
+                  <ActivityIndicator size="small" color="#142748" />
+                ) : (
+                  <Ionicons name="locate" size={16} color="#142748" />
+                )}
+                <Text style={styles.secondaryScanBtnText}>
+                  {isLocatingGps ? "Locating..." : "Pinpoint My GPS"}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.primaryActionBtn, { flex: 1, marginTop: 0 }]}
+                onPress={() => setShowMapAdjustModal(false)}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="checkmark-circle-outline" size={18} color="#f2f1ee" />
+                <Text style={styles.primaryActionBtnText}>DONE</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
 
       {/* ---------------------------------------------------------------- */}
       {/* MODAL 1: ATTENDANCE RECORD DETAIL POPUP                           */}
@@ -2356,7 +2769,7 @@ export const AdminHub: React.FC = () => {
                 style={styles.adminFaceTestBtn}
                 onPress={() => {
                   setShowAdminProfileModal(false);
-                  setShowAdminFaceTestModal(true);
+                  handleOpenAdminFaceTest();
                 }}
                 activeOpacity={0.85}
               >
@@ -2366,7 +2779,9 @@ export const AdminHub: React.FC = () => {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.adminFaceTestBtnTitle}>Test AI Face Scanner</Text>
                   <Text style={styles.adminFaceTestBtnSub}>
-                    Preview OPay-style circular biometric portal
+                    {adminTestFaceUri && adminTestRemainingSec > 0
+                      ? `5-min test active (${Math.floor(adminTestRemainingSec / 60)}:${String(adminTestRemainingSec % 60).padStart(2, "0")} left) • Tap to verify`
+                      : "Enroll temporary 5-min face & verify authenticity"}
                   </Text>
                 </View>
                 <Ionicons name="chevron-forward" size={16} color="#64748b" />
@@ -3340,5 +3755,88 @@ const styles = StyleSheet.create({
   workforceFaceBadgeText: {
     ...T.labelSm,
     color: C.white,
+  },
+  accordionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  accordionSummaryText: {
+    ...T.caption,
+    fontSize: 12,
+    color: "#64748b",
+    marginTop: 2,
+  },
+  accordionBody: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: C.lineCard,
+  },
+  mapAdjustOverlayBtn: {
+    position: "absolute",
+    bottom: 10,
+    right: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "rgba(20, 39, 72, 0.92)",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: R.pill,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.25)",
+  },
+  mapAdjustOverlayBtnText: {
+    color: "#ffffff",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  mapModalSafe: {
+    flex: 1,
+    backgroundColor: C.canvas,
+  },
+  mapModalHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: S.screenX,
+    paddingVertical: 14,
+    backgroundColor: C.card,
+    borderBottomWidth: 1,
+    borderBottomColor: C.lineCard,
+  },
+  mapModalBody: {
+    flex: 1,
+    padding: S.screenX,
+    justifyContent: "center",
+  },
+  mapModalFooter: {
+    paddingHorizontal: S.screenX,
+    paddingTop: 10,
+    paddingBottom: Platform.OS === "ios" ? 20 : 14,
+    backgroundColor: C.card,
+    borderTopWidth: 1,
+    borderTopColor: C.lineCard,
+  },
+  radiusPillBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: R.pill,
+    backgroundColor: "#f1f5f9",
+    borderWidth: 1,
+    borderColor: "#cbd5e1",
+  },
+  radiusPillBtnActive: {
+    backgroundColor: C.ink,
+    borderColor: C.ink,
+  },
+  radiusPillText: {
+    fontSize: 12,
+    fontWeight: "700",
+    color: "#475569",
+  },
+  radiusPillTextActive: {
+    color: "#ffffff",
   },
 });

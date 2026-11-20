@@ -108,17 +108,22 @@ export default function AdminOnboardingScreen() {
 
   const draftKey = user?.uid ? `@presenti_admin_onboarding_${user.uid}` : null;
   const draftLoadedRef = useRef(false);
+  const hasNavigatedRef = useRef(false);
 
   useEffect(() => {
+    if (hasNavigatedRef.current) return;
     if (!user) {
+      hasNavigatedRef.current = true;
       router.replace("/login");
       return;
     }
     if (!isAdmin && !user.isAdmin) {
+      hasNavigatedRef.current = true;
       router.replace("/onboarding");
       return;
     }
     if (organization) {
+      hasNavigatedRef.current = true;
       router.replace("/");
     }
   }, [user, isAdmin, organization]);
@@ -373,7 +378,10 @@ export default function AdminOnboardingScreen() {
         title: "Workspace Ready",
         duration: 4000,
       });
-      router.replace("/");
+      if (!hasNavigatedRef.current) {
+        hasNavigatedRef.current = true;
+        router.replace("/");
+      }
     } catch (err: any) {
       toast.error(err?.message || "Failed to create organization workspace.");
     } finally {

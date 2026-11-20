@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -154,9 +154,13 @@ export default function OnboardingScreen() {
     capturedFaceUri,
   ]);
 
+  const hasNavigatedRef = useRef(false);
+
   // Administrators are strictly blocked from workforce onboarding on mobile
   useEffect(() => {
+    if (hasNavigatedRef.current) return;
     if (isAdmin || user?.isAdmin) {
+      hasNavigatedRef.current = true;
       toast.error(
         "Administrator accounts cannot be registered as workforce members on mobile."
       );
@@ -168,7 +172,8 @@ export default function OnboardingScreen() {
     if (user?.email) {
       const cleanEmail = user.email.trim().toLowerCase();
       checkIfUserIsAdmin(cleanEmail, user.uid).then((isAdm) => {
-        if (isAdm) {
+        if (isAdm && !hasNavigatedRef.current) {
+          hasNavigatedRef.current = true;
           toast.error(
             "Administrator accounts cannot be registered as workforce members on mobile."
           );
@@ -181,14 +186,18 @@ export default function OnboardingScreen() {
 
   // If user is already registered with an active organization, forward to dashboard
   useEffect(() => {
+    if (hasNavigatedRef.current) return;
     if (user && organization && member) {
+      hasNavigatedRef.current = true;
       router.replace("/");
     }
   }, [user, organization, member]);
 
   // If not authenticated with Google, send back to login
   useEffect(() => {
+    if (hasNavigatedRef.current) return;
     if (!user) {
+      hasNavigatedRef.current = true;
       router.replace("/login");
     }
   }, [user]);
@@ -297,7 +306,10 @@ export default function OnboardingScreen() {
       toast.success(
         "Welcome to " + (verifiedOrg?.churchName || "the organization") + "!",
       );
-      router.replace("/");
+      if (!hasNavigatedRef.current) {
+        hasNavigatedRef.current = true;
+        router.replace("/");
+      }
     } catch (err: any) {
       toast.error(err?.message || "Failed to complete enrollment.");
     } finally {
