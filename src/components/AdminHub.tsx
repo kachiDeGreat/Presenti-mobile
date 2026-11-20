@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef, startTransition } from "react";
 import {
   View,
   Text,
@@ -60,6 +60,7 @@ import { FaceScannerModal } from "./FaceScannerModal";
 import { TactilePressable } from "./TactilePressable";
 import { AdminAuditsTab } from "./AdminAuditsTab";
 import { AdminManageTab } from "./AdminManageTab";
+import { AccordionCard } from "./AccordionCard";
 import { C, MONO, R, S, T, shadow, ui } from "../constants/premium";
 import type { MobileAIContext } from "../services/geminiService";
 import type { ChurchMember } from "../types";
@@ -128,17 +129,23 @@ export const AdminHub: React.FC = () => {
   }, [organization?.id, user, refreshOrganization]);
 
   const handleTabPress = (tabKey: AdminTabKey, index: number) => {
-    setActiveTab(tabKey);
     activeTabRef.current = tabKey;
+    // Start native scroll immediately before React re-renders so there is no tap-to-swipe lag
     (horizontalPagerRef.current as any)?.scrollTo({ x: index * screenWidth, animated: true });
+    startTransition(() => {
+      setActiveTab(tabKey);
+    });
   };
 
   const handlePageChange = (e: any) => {
     const offsetX = e.nativeEvent.contentOffset.x;
     const newIndex = Math.round(offsetX / screenWidth);
     const target = TABS[newIndex]?.key;
-    if (target && target !== activeTab) {
-      setActiveTab(target);
+    if (target && target !== activeTabRef.current) {
+      activeTabRef.current = target;
+      startTransition(() => {
+        setActiveTab(target);
+      });
     }
   };
 
@@ -804,7 +811,6 @@ export const AdminHub: React.FC = () => {
   });
 
   const toggleAnchorSection = (key: string) => {
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     setAnchorOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
@@ -1462,373 +1468,298 @@ export const AdminHub: React.FC = () => {
             </View>
 
             {/* Architecture Mode Selector (Accordion) */}
-            <View style={styles.card}>
-              <TouchableOpacity
-                style={styles.accordionHeader}
-                onPress={() => toggleAnchorSection("architecture")}
-                activeOpacity={0.75}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.cardSectionTitle}>VERIFICATION ARCHITECTURE</Text>
-                  <Text style={styles.accordionSummaryText}>
-                    {calMode === "GEOFENCE_ONLY" ? "Satellite Geofence" : "Hybrid Router + Geofence"}
-                  </Text>
-                </View>
-                <Ionicons
-                  name={anchorOpenSections.architecture ? "chevron-up" : "chevron-down"}
-                  size={18}
-                  color="#64748b"
-                />
-              </TouchableOpacity>
+            <AccordionCard
+              title="VERIFICATION ARCHITECTURE"
+              summary={
+                calMode === "GEOFENCE_ONLY" ? "Satellite Geofence" : "Hybrid Router + Geofence"
+              }
+              expanded={Boolean(anchorOpenSections.architecture)}
+              onToggle={() => toggleAnchorSection("architecture")}
+            >
+              <Text style={styles.cardSectionSub}>
+                Select the physical security method required for worker clock-ins.
+              </Text>
 
-              {anchorOpenSections.architecture && (
-                <View style={styles.accordionBody}>
-                  <Text style={styles.cardSectionSub}>
-                    Select the physical security method required for worker clock-ins.
-                  </Text>
-
-                  <View style={styles.modeCardsRow}>
-                    <TouchableOpacity
-                      style={[
-                        styles.modeChoiceCard,
-                        calMode === "GEOFENCE_ONLY" && styles.modeChoiceCardActive,
-                      ]}
-                      onPress={() => setCalMode("GEOFENCE_ONLY")}
-                      activeOpacity={0.8}
-                    >
-                      <View style={styles.modeChoiceHeader}>
-                        <Ionicons
-                          name="navigate"
-                          size={20}
-                          color={calMode === "GEOFENCE_ONLY" ? "#142748" : "#64748b"}
-                        />
-                        {calMode === "GEOFENCE_ONLY" && (
-                          <Ionicons name="checkmark-circle" size={18} color="#2d81ff" />
-                        )}
-                      </View>
-                      <Text style={styles.modeChoiceTitle}>Satellite Geofence</Text>
-                      <Text style={styles.modeChoiceSub}>
-                        Recommended • Router-free high-precision GPS satellite perimeter.
-                      </Text>
-                    </TouchableOpacity>
-
-                    <TouchableOpacity
-                      style={[
-                        styles.modeChoiceCard,
-                        calMode === "HYBRID" && styles.modeChoiceCardActive,
-                      ]}
-                      onPress={() => setCalMode("HYBRID")}
-                      activeOpacity={0.8}
-                    >
-                      <View style={styles.modeChoiceHeader}>
-                        <Ionicons
-                          name="wifi"
-                          size={20}
-                          color={calMode === "HYBRID" ? "#142748" : "#64748b"}
-                        />
-                        {calMode === "HYBRID" && (
-                          <Ionicons name="checkmark-circle" size={18} color="#2d81ff" />
-                        )}
-                      </View>
-                      <Text style={styles.modeChoiceTitle}>Router + Geofence</Text>
-                      <Text style={styles.modeChoiceSub}>
-                        Dual-Tier • Matches office router BSSID MAC with GPS perimeter.
-                      </Text>
-                    </TouchableOpacity>
+              <View style={styles.modeCardsRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.modeChoiceCard,
+                    calMode === "GEOFENCE_ONLY" && styles.modeChoiceCardActive,
+                  ]}
+                  onPress={() => setCalMode("GEOFENCE_ONLY")}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.modeChoiceHeader}>
+                    <Ionicons
+                      name="navigate"
+                      size={20}
+                      color={calMode === "GEOFENCE_ONLY" ? "#142748" : "#64748b"}
+                    />
+                    {calMode === "GEOFENCE_ONLY" && (
+                      <Ionicons name="checkmark-circle" size={18} color="#2d81ff" />
+                    )}
                   </View>
-                </View>
-              )}
-            </View>
+                  <Text style={styles.modeChoiceTitle}>Satellite Geofence</Text>
+                  <Text style={styles.modeChoiceSub}>
+                    Recommended • Router-free high-precision GPS satellite perimeter.
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.modeChoiceCard,
+                    calMode === "HYBRID" && styles.modeChoiceCardActive,
+                  ]}
+                  onPress={() => setCalMode("HYBRID")}
+                  activeOpacity={0.8}
+                >
+                  <View style={styles.modeChoiceHeader}>
+                    <Ionicons
+                      name="wifi"
+                      size={20}
+                      color={calMode === "HYBRID" ? "#142748" : "#64748b"}
+                    />
+                    {calMode === "HYBRID" && (
+                      <Ionicons name="checkmark-circle" size={18} color="#2d81ff" />
+                    )}
+                  </View>
+                  <Text style={styles.modeChoiceTitle}>Router + Geofence</Text>
+                  <Text style={styles.modeChoiceSub}>
+                    Dual-Tier • Matches office router BSSID MAC with GPS perimeter.
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </AccordionCard>
 
             {/* GPS Pinpoint Section (Accordion) */}
-            <View style={styles.card}>
-              <TouchableOpacity
-                style={styles.accordionHeader}
-                onPress={() => toggleAnchorSection("gps")}
-                activeOpacity={0.75}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.cardSectionTitle}>1. GPS PERIMETER COORDINATES</Text>
-                  <Text style={styles.accordionSummaryText}>
-                    {latitude && longitude
-                      ? `${latitude.toFixed(5)}, ${longitude.toFixed(5)}${gpsAccuracy !== null ? ` (±${gpsAccuracy}m)` : ""}`
-                      : "Not calibrated yet"}
+            <AccordionCard
+              title="1. GPS PERIMETER COORDINATES"
+              summary={
+                latitude && longitude
+                  ? `${latitude.toFixed(5)}, ${longitude.toFixed(5)}${gpsAccuracy !== null ? ` (±${gpsAccuracy}m)` : ""}`
+                  : "Not calibrated yet"
+              }
+              expanded={Boolean(anchorOpenSections.gps)}
+              onToggle={() => toggleAnchorSection("gps")}
+            >
+              <Text style={styles.cardSectionSub}>
+                Capture high-accuracy latitude & longitude from device hardware sensors.
+              </Text>
+
+              <View style={styles.coordsBox}>
+                <View style={styles.coordCol}>
+                  <Text style={styles.coordLabel}>LATITUDE</Text>
+                  <Text style={styles.coordVal}>
+                    {latitude ? latitude.toFixed(6) : "0.000000"}
                   </Text>
                 </View>
-                <Ionicons
-                  name={anchorOpenSections.gps ? "chevron-up" : "chevron-down"}
-                  size={18}
-                  color="#64748b"
-                />
-              </TouchableOpacity>
-
-              {anchorOpenSections.gps && (
-                <View style={styles.accordionBody}>
-                  <Text style={styles.cardSectionSub}>
-                    Capture high-accuracy latitude & longitude from device hardware sensors.
+                <View style={styles.coordDivider} />
+                <View style={styles.coordCol}>
+                  <Text style={styles.coordLabel}>LONGITUDE</Text>
+                  <Text style={styles.coordVal}>
+                    {longitude ? longitude.toFixed(6) : "0.000000"}
                   </Text>
-
-                  <View style={styles.coordsBox}>
-                    <View style={styles.coordCol}>
-                      <Text style={styles.coordLabel}>LATITUDE</Text>
-                      <Text style={styles.coordVal}>
-                        {latitude ? latitude.toFixed(6) : "0.000000"}
-                      </Text>
-                    </View>
+                </View>
+                {gpsAccuracy !== null && (
+                  <>
                     <View style={styles.coordDivider} />
                     <View style={styles.coordCol}>
-                      <Text style={styles.coordLabel}>LONGITUDE</Text>
-                      <Text style={styles.coordVal}>
-                        {longitude ? longitude.toFixed(6) : "0.000000"}
+                      <Text style={styles.coordLabel}>ACCURACY</Text>
+                      <Text style={[styles.coordVal, { color: "#10b981" }]}>
+                        ±{gpsAccuracy}m
                       </Text>
                     </View>
-                    {gpsAccuracy !== null && (
-                      <>
-                        <View style={styles.coordDivider} />
-                        <View style={styles.coordCol}>
-                          <Text style={styles.coordLabel}>ACCURACY</Text>
-                          <Text style={[styles.coordVal, { color: "#10b981" }]}>
-                            ±{gpsAccuracy}m
-                          </Text>
-                        </View>
-                      </>
-                    )}
-                  </View>
+                  </>
+                )}
+              </View>
 
-                  <TouchableOpacity
-                    style={[styles.primaryActionBtn, isLocatingGps && styles.btnDisabled]}
-                    onPress={handlePinpointGps}
-                    disabled={isLocatingGps}
-                    activeOpacity={0.85}
-                  >
-                    {isLocatingGps ? (
-                      <ActivityIndicator size="small" color="#f2f1ee" />
-                    ) : (
-                      <Ionicons name="locate" size={18} color="#f2f1ee" />
-                    )}
-                    <Text style={styles.primaryActionBtnText}>
-                      {isLocatingGps ? "ACQUIRING GPS FIX..." : "PINPOINT CURRENT GPS"}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-            </View>
+              <TouchableOpacity
+                style={[styles.primaryActionBtn, isLocatingGps && styles.btnDisabled]}
+                onPress={handlePinpointGps}
+                disabled={isLocatingGps}
+                activeOpacity={0.85}
+              >
+                {isLocatingGps ? (
+                  <ActivityIndicator size="small" color="#f2f1ee" />
+                ) : (
+                  <Ionicons name="locate" size={18} color="#f2f1ee" />
+                )}
+                <Text style={styles.primaryActionBtnText}>
+                  {isLocatingGps ? "ACQUIRING GPS FIX..." : "PINPOINT CURRENT GPS"}
+                </Text>
+              </TouchableOpacity>
+            </AccordionCard>
 
             {/* Perimeter Radius Selector (Accordion) */}
-            <View style={styles.card}>
-              <TouchableOpacity
-                style={styles.accordionHeader}
-                onPress={() => toggleAnchorSection("radius")}
-                activeOpacity={0.75}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.cardSectionTitle}>2. PERIMETER RADIUS</Text>
-                  <Text style={styles.accordionSummaryText}>{radiusMeters}m boundary radius</Text>
-                </View>
-                <Ionicons
-                  name={anchorOpenSections.radius ? "chevron-up" : "chevron-down"}
-                  size={18}
-                  color="#64748b"
-                />
-              </TouchableOpacity>
+            <AccordionCard
+              title="2. PERIMETER RADIUS"
+              summary={`${radiusMeters}m boundary radius`}
+              expanded={Boolean(anchorOpenSections.radius)}
+              onToggle={() => toggleAnchorSection("radius")}
+            >
+              <Text style={styles.cardSectionSub}>
+                Allowable distance workers can be from centerpoint ({radiusMeters}m selected).
+              </Text>
 
-              {anchorOpenSections.radius && (
-                <View style={styles.accordionBody}>
-                  <Text style={styles.cardSectionSub}>
-                    Allowable distance workers can be from centerpoint ({radiusMeters}m selected).
-                  </Text>
-
-                  <View style={styles.radiusGrid}>
-                    {RADIUS_OPTIONS.map((opt) => {
-                      const isSel = radiusMeters === opt.value;
-                      return (
-                        <TouchableOpacity
-                          key={opt.value}
-                          style={[styles.radiusItem, isSel && styles.radiusItemActive]}
-                          onPress={() => setRadiusMeters(opt.value)}
-                          activeOpacity={0.8}
-                        >
-                          <Text style={[styles.radiusLabel, isSel && styles.radiusLabelActive]}>
-                            {opt.label}
-                          </Text>
-                          <Text
-                            style={[styles.radiusDesc, isSel && styles.radiusDescActive]}
-                            numberOfLines={1}
-                          >
-                            {opt.desc}
-                          </Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                </View>
-              )}
-            </View>
+              <View style={styles.radiusGrid}>
+                {RADIUS_OPTIONS.map((opt) => {
+                  const isSel = radiusMeters === opt.value;
+                  return (
+                    <TouchableOpacity
+                      key={opt.value}
+                      style={[styles.radiusItem, isSel && styles.radiusItemActive]}
+                      onPress={() => setRadiusMeters(opt.value)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.radiusLabel, isSel && styles.radiusLabelActive]}>
+                        {opt.label}
+                      </Text>
+                      <Text
+                        style={[styles.radiusDesc, isSel && styles.radiusDescActive]}
+                        numberOfLines={1}
+                      >
+                        {opt.desc}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </AccordionCard>
 
             {/* Office Router Configuration (If Hybrid Mode, Accordion) */}
             {calMode === "HYBRID" && (
-              <View style={styles.card}>
-                <TouchableOpacity
-                  style={styles.accordionHeader}
-                  onPress={() => toggleAnchorSection("wifi")}
-                  activeOpacity={0.75}
-                >
+              <AccordionCard
+                title="3. OFFICE WI-FI ROUTER ANCHOR"
+                summary={
+                  targetBssid
+                    ? `${ssidHint || "Router"} (${targetBssid})`
+                    : "No router paired yet"
+                }
+                expanded={Boolean(anchorOpenSections.wifi)}
+                onToggle={() => toggleAnchorSection("wifi")}
+              >
+                <View style={styles.cardHeaderRow}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.cardSectionTitle}>3. OFFICE WI-FI ROUTER ANCHOR</Text>
-                    <Text style={styles.accordionSummaryText}>
-                      {targetBssid ? `${ssidHint || "Router"} (${targetBssid})` : "No router paired yet"}
+                    <Text style={styles.cardSectionSub}>
+                      Pair with your premises Wi-Fi router's unique hardware BSSID.
                     </Text>
                   </View>
-                  <Ionicons
-                    name={anchorOpenSections.wifi ? "chevron-up" : "chevron-down"}
-                    size={18}
-                    color="#64748b"
-                  />
-                </TouchableOpacity>
-
-                {anchorOpenSections.wifi && (
-                  <View style={styles.accordionBody}>
-                    <View style={styles.cardHeaderRow}>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.cardSectionSub}>
-                          Pair with your premises Wi-Fi router's unique hardware BSSID.
-                        </Text>
-                      </View>
-                      <TouchableOpacity
-                        style={[styles.secondaryScanBtn, isScanningWifi && styles.btnDisabled]}
-                        onPress={handleScanWifi}
-                        disabled={isScanningWifi}
-                        activeOpacity={0.8}
-                      >
-                        {isScanningWifi ? (
-                          <ActivityIndicator size="small" color="#142748" />
-                        ) : (
-                          <Ionicons name="refresh" size={14} color="#142748" />
-                        )}
-                        <Text style={styles.secondaryScanBtnText}>
-                          {isScanningWifi ? "Scanning..." : "Scan Nearby"}
-                        </Text>
-                      </TouchableOpacity>
-                    </View>
-
-                    {availableNetworks.length > 0 && (
-                      <View style={styles.networkListContainer}>
-                        <Text style={styles.networkListHeader}>
-                          DETECTED BROADCAST POINTS ({availableNetworks.length}):
-                        </Text>
-                        <ScrollView style={styles.networkScroll} nestedScrollEnabled>
-                          {availableNetworks.slice(0, 6).map((net, idx) => {
-                            const isMatch =
-                              targetBssid &&
-                              targetBssid.toLowerCase() === net.bssid.toLowerCase();
-                            return (
-                              <TouchableOpacity
-                                key={`${net.bssid}-${idx}`}
-                                style={[styles.networkRow, isMatch && styles.networkRowSelected]}
-                                onPress={() => handleSelectNetwork(net)}
-                                activeOpacity={0.7}
-                              >
-                                <Ionicons
-                                  name="wifi"
-                                  size={16}
-                                  color={isMatch ? "#2d81ff" : "#64748b"}
-                                />
-                                <View style={{ flex: 1 }}>
-                                  <Text
-                                    style={[styles.networkSsid, isMatch && styles.networkSsidActive]}
-                                    numberOfLines={1}
-                                  >
-                                    {net.ssid || "Hidden Network"}
-                                  </Text>
-                                  <Text style={styles.networkBssid}>{net.bssid}</Text>
-                                </View>
-                                {isMatch && (
-                                  <Ionicons name="checkmark-circle" size={18} color="#2d81ff" />
-                                )}
-                              </TouchableOpacity>
-                            );
-                          })}
-                        </ScrollView>
-                      </View>
+                  <TouchableOpacity
+                    style={[styles.secondaryScanBtn, isScanningWifi && styles.btnDisabled]}
+                    onPress={handleScanWifi}
+                    disabled={isScanningWifi}
+                    activeOpacity={0.8}
+                  >
+                    {isScanningWifi ? (
+                      <ActivityIndicator size="small" color="#142748" />
+                    ) : (
+                      <Ionicons name="refresh" size={14} color="#142748" />
                     )}
+                    <Text style={styles.secondaryScanBtnText}>
+                      {isScanningWifi ? "Scanning..." : "Scan Nearby"}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
 
-                    <View style={styles.inputGroup}>
-                      <Text style={styles.inputLabel}>ROUTER SSID (NAME)</Text>
-                      <TextInput
-                        style={styles.textInput}
-                        placeholder="e.g. Office_WiFi"
-                        placeholderTextColor="#94a3b8"
-                        value={ssidHint}
-                        onChangeText={setSsidHint}
-                      />
-                    </View>
-
-                    <View style={styles.inputGroup}>
-                      <Text style={styles.inputLabel}>ROUTER BSSID (MAC ADDRESS)</Text>
-                      <TextInput
-                        style={[styles.textInput, styles.monoInput]}
-                        placeholder="e.g. 34:2c:c4:91:a8:20"
-                        placeholderTextColor="#94a3b8"
-                        value={targetBssid}
-                        onChangeText={setTargetBssid}
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                      />
-                    </View>
+                {availableNetworks.length > 0 && (
+                  <View style={styles.networkListContainer}>
+                    <Text style={styles.networkListHeader}>
+                      DETECTED BROADCAST POINTS ({availableNetworks.length}):
+                    </Text>
+                    <ScrollView style={styles.networkScroll} nestedScrollEnabled>
+                      {availableNetworks.slice(0, 6).map((net, idx) => {
+                        const isMatch =
+                          targetBssid &&
+                          targetBssid.toLowerCase() === net.bssid.toLowerCase();
+                        return (
+                          <TouchableOpacity
+                            key={`${net.bssid}-${idx}`}
+                            style={[styles.networkRow, isMatch && styles.networkRowSelected]}
+                            onPress={() => handleSelectNetwork(net)}
+                            activeOpacity={0.7}
+                          >
+                            <Ionicons
+                              name="wifi"
+                              size={16}
+                              color={isMatch ? "#2d81ff" : "#64748b"}
+                            />
+                            <View style={{ flex: 1 }}>
+                              <Text
+                                style={[styles.networkSsid, isMatch && styles.networkSsidActive]}
+                                numberOfLines={1}
+                              >
+                                {net.ssid || "Hidden Network"}
+                              </Text>
+                              <Text style={styles.networkBssid}>{net.bssid}</Text>
+                            </View>
+                            {isMatch && (
+                              <Ionicons name="checkmark-circle" size={18} color="#2d81ff" />
+                            )}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </ScrollView>
                   </View>
                 )}
-              </View>
+
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>ROUTER SSID (NAME)</Text>
+                  <TextInput
+                    style={styles.textInput}
+                    placeholder="e.g. Office_WiFi"
+                    placeholderTextColor="#94a3b8"
+                    value={ssidHint}
+                    onChangeText={setSsidHint}
+                  />
+                </View>
+
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>ROUTER BSSID (MAC ADDRESS)</Text>
+                  <TextInput
+                    style={[styles.textInput, styles.monoInput]}
+                    placeholder="e.g. 34:2c:c4:91:a8:20"
+                    placeholderTextColor="#94a3b8"
+                    value={targetBssid}
+                    onChangeText={setTargetBssid}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                </View>
+              </AccordionCard>
             )}
 
             {/* Premises Geofence Radar (Accordion + Dedicated Modal Adjuster) */}
-            <View style={styles.card}>
-              <TouchableOpacity
-                style={styles.accordionHeader}
-                onPress={() => toggleAnchorSection("map")}
-                activeOpacity={0.75}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.cardSectionTitle}>PREMISES GEOFENCE RADAR</Text>
-                  <Text style={styles.accordionSummaryText}>
-                    Tap to preview • Open modal to zoom & move pin
-                  </Text>
+            <AccordionCard
+              title="PREMISES GEOFENCE RADAR"
+              summary="Tap to preview • Open modal to zoom & move pin"
+              expanded={Boolean(anchorOpenSections.map)}
+              onToggle={() => toggleAnchorSection("map")}
+            >
+              <Text style={styles.cardSectionSub}>
+                Workers must be inside this circular boundary ({radiusMeters}m) to punch in.
+              </Text>
+              <View style={styles.mapFrame}>
+                <View pointerEvents="none">
+                  <PresenceMapMobile
+                    latitude={latitude}
+                    longitude={longitude}
+                    radiusMeters={radiusMeters}
+                    onCoordinatesChange={() => {}}
+                    height={190}
+                  />
                 </View>
-                <Ionicons
-                  name={anchorOpenSections.map ? "chevron-up" : "chevron-down"}
-                  size={18}
-                  color="#64748b"
-                />
-              </TouchableOpacity>
-
-              {anchorOpenSections.map && (
-                <View style={styles.accordionBody}>
-                  <Text style={styles.cardSectionSub}>
-                    Workers must be inside this circular boundary ({radiusMeters}m) to punch in.
+                <TouchableOpacity
+                  style={styles.mapAdjustOverlayBtn}
+                  onPress={() => setShowMapAdjustModal(true)}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="expand-outline" size={16} color="#ffffff" />
+                  <Text style={styles.mapAdjustOverlayBtnText}>
+                    Adjust Map & Drag Pin
                   </Text>
-                  <View style={styles.mapFrame}>
-                    <View pointerEvents="none">
-                      <PresenceMapMobile
-                        latitude={latitude}
-                        longitude={longitude}
-                        radiusMeters={radiusMeters}
-                        onCoordinatesChange={() => {}}
-                        height={190}
-                      />
-                    </View>
-                    <TouchableOpacity
-                      style={styles.mapAdjustOverlayBtn}
-                      onPress={() => setShowMapAdjustModal(true)}
-                      activeOpacity={0.85}
-                    >
-                      <Ionicons name="expand-outline" size={16} color="#ffffff" />
-                      <Text style={styles.mapAdjustOverlayBtnText}>
-                        Adjust Map & Drag Pin
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              )}
-            </View>
+                </TouchableOpacity>
+              </View>
+            </AccordionCard>
 
             {/* Save Anchors Primary Action */}
             <TouchableOpacity

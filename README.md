@@ -39,8 +39,16 @@
   - Native-driver `TactilePressable` spring animations + Android ripple feedback running on the UI thread.
   - `GestureHandlerRootView`, native `slide_from_right` stack transitions, and Android `LayoutAnimation` in `_layout.tsx` and `AdminHub.tsx`.
 
-### 5. Mobile Leadership Command Center (`AdminHub.tsx`)
-3-tab swipeable hub (`Live Feed`, `Anchors`, `Workforce`) with pull-to-refresh, colour-accented KPI cards, **Test AI Face Scanner** launcher for field admins, worker face/device reset controls, and direct on-site Wi-Fi + GPS calibration.
+### 5. Mobile Leadership Command Center & Full Web Parity (`AdminHub.tsx`, `admin-onboarding.tsx`)
+- **Full Mobile Admin Onboarding (`admin-onboarding.tsx`):** Field administrators can create and configure their entire organization directly on mobile (organization identity, verification architecture, GPS/Wi-Fi calibration, departments, and unified/per-day shift schedules) with automatic draft persistence.
+- **5-Tab Swipeable Admin Hub (`Feed`, `Anchors`, `Staff`, `Audits`, `Manage`):**
+  - **Feed:** Real-time attendance stream, KPI cards, department filters, and punch audit modals.
+  - **Anchors:** Smooth animated `AccordionCard` sections for Verification Architecture, GPS Coordinates, Perimeter Radius, Office Wi-Fi BSSID, and a dedicated **Full-Screen Map Adjustment Modal** (`PresenceMapMobile`) that prevents horizontal tab-swipe conflicts while zooming or dragging pins.
+  - **Staff:** Member directory, face/device binding resets, status toggles, and a **2-Step 5-Minute Admin Test AI Face Scanner** (enroll temporary test face → verify authenticity with automatic local-storage expiry after 5 minutes).
+  - **Audits (`AdminAuditsTab.tsx`):** Historical attendance logs, daily compliance summaries, and CSV/report export.
+  - **Manage (`AdminManageTab.tsx`):** Organization details, department management, and unified/per-day shift policy configuration.
+- **Draggable AskPresenti AI Bubble:** Floating chat trigger can be freely dragged anywhere on screen via `PanResponder` so it never obstructs bottom tabs.
+- **1-Worker-1-Phone Hardware Binding (`deviceService.ts`):** Deterministic hardware fingerprint binding blocks proxy clock-ins across devices.
 
 ### 6. Native Biometric Fallback, Policy Engine & Offline Queue
 - Hardware-isolated fallback via `expo-local-authentication` (`AndroidX BiometricPrompt` & iOS `LocalAuthentication`) with deep-linking to device Security Settings.
@@ -85,7 +93,7 @@ sequenceDiagram
 | **Framework** | React Native `0.86` (Expo SDK `57`, Expo Router) |
 | **Language** | TypeScript `6.0` |
 | **Design Tokens & Motion** | ArtCraft design tokens (`src/constants/premium.ts`), `TactilePressable`, `react-native-gesture-handler`, `LayoutAnimation` |
-| **On-Device & Cloud Face AI** | `@infinitered/react-native-mlkit-face-detection` + Gemini Vision (`gemini-flash-lite-latest` / `gemini-3.8-flash`) |
+| **On-Device & Cloud Face AI** | `@infinitered/react-native-mlkit-face-detection` + Groq Vision (`qwen/qwen3.8-27b`) with Gemini Vision fallback (`gemini-3.5-flash-lite` → `gemini-3.8-flash`) |
 | **Workforce AI Assistant** | Gemini API (`AskPresentiChatModal`) + Firestore cross-device chat sync |
 | **Biometric Fallback** | `expo-local-authentication` (Android BiometricPrompt & iOS LocalAuthentication) |
 | **Authentication** | Google Sign-In Native SDK (`@react-native-google-signin/google-signin`), Email/Password & OTP + Firebase Auth |
@@ -123,9 +131,27 @@ sequenceDiagram
    EXPO_PUBLIC_FIREBASE_APP_ID=your_app_id
    EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID=your_google_web_client_id.apps.googleusercontent.com
    EXPO_PUBLIC_GEMINI_API_KEY=your_gemini_api_key
+   EXPO_PUBLIC_GROQ_API_KEY=your_groq_api_key
    ```
 
 3. Ensure `google-services.json` is present in `MOBILE-APP/` for Android builds.
+
+---
+
+## Project Architecture (`MOBILE-APP/src/`)
+
+```text
+MOBILE-APP/src/
+├── app/            # Expo Router screens (index, login, onboarding, admin-onboarding, calibrate)
+├── components/     # Reusable UI & modals (AdminHub, AccordionCard, FaceScannerModal, AskPresentiChatModal, PresenceMapMobile)
+├── config/         # Firebase client initialization (firebase.ts)
+├── constants/      # ArtCraft design tokens, typography, and shadows (premium.ts)
+├── context/        # React Context providers (AuthContext, ToastContext)
+├── hooks/          # Custom React hooks
+├── services/       # Cloud, AI, GPS, Wi-Fi, and device-binding services
+├── types/          # Shared TypeScript interfaces
+└── utils/          # Policy evaluation & helper utilities
+```
 
 ### Building & Running
 
@@ -151,6 +177,14 @@ npm run build:preview -- --no-wait
 
 - **Admin Web Portal (React / Vite):** [kachiDeGreat/Presenti-web-admin](https://github.com/kachiDeGreat/Presenti-web-admin)
 - **Live Admin Web Portal:** [https://presenti-admin-web.vercel.app](https://presenti-admin-web.vercel.app)
+
+---
+
+## AI Disclosure
+
+- **Biometric Face Liveness & 1-to-1 Matching:** Uses on-device Google ML Kit (`RNMLKitFaceDetector`) for real-time framing, **Groq Vision (`qwen/qwen3.8-27b`)** as the primary cloud verifier, and **Google Gemini Vision (`gemini-3.5-flash-lite` / `gemini-3.8-flash`)** as an automatic fallback when Groq is rate-limited or unavailable.
+- **AskPresenti Workforce Assistant:** Uses **Google Gemini** (`geminiService.ts`) combined with live Firestore organization telemetry and a local offline fallback for instant operational answers.
+- **Development Assistance:** AI coding assistance was used during this sprint for refactoring, UI/UX implementation, performance tuning, and documentation.
 
 ---
 
