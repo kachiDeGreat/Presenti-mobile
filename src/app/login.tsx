@@ -87,7 +87,7 @@ export default function LoginScreen() {
     if (isAnyLoading || isVerifyingOtp || hasNavigatedRef.current) return;
     if (user && (isAdmin || user.isAdmin)) {
       hasNavigatedRef.current = true;
-      router.replace("/");
+      router.replace(organization ? "/" : ("/admin-onboarding" as any));
       return;
     }
     if (user && organization && member) {
@@ -150,10 +150,15 @@ export default function LoginScreen() {
     hasNavigatedRef.current = true;
 
     if (result.user?.isAdmin || isAdmin) {
-      toast.success(
-        `Welcome to Presenti Admin, ${result.user.displayName || "Admin"}!`
-      );
-      router.replace("/");
+      if (result.organization) {
+        toast.success(
+          `Welcome to Presenti Admin, ${result.user.displayName || "Admin"}!`
+        );
+        router.replace("/");
+      } else {
+        toast.success("Admin account verified! Let's set up your organization.");
+        router.replace("/admin-onboarding" as any);
+      }
       return;
     }
     if (result.organization && result.member) {

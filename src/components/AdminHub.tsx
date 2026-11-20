@@ -55,6 +55,8 @@ import { acquireDeviceCoordinates } from "../services/locationService";
 import { AskPresentiChatModal } from "./AskPresentiChatModal";
 import { FaceScannerModal } from "./FaceScannerModal";
 import { TactilePressable } from "./TactilePressable";
+import { AdminAuditsTab } from "./AdminAuditsTab";
+import { AdminManageTab } from "./AdminManageTab";
 import { C, MONO, R, S, T, shadow, ui } from "../constants/premium";
 import type { MobileAIContext } from "../services/geminiService";
 import type { ChurchMember } from "../types";
@@ -83,19 +85,23 @@ interface LiveAttendanceRecord {
   deviceId?: string;
 }
 
+type AdminTabKey = "feed" | "anchors" | "workforce" | "audits" | "manage";
+
 const TABS = [
-  { key: "feed" as const, label: "Live Feed", icon: "pulse-outline" as const, activeIcon: "pulse" as const },
+  { key: "feed" as const, label: "Feed", icon: "pulse-outline" as const, activeIcon: "pulse" as const },
   { key: "anchors" as const, label: "Anchors", icon: "location-outline" as const, activeIcon: "location" as const },
-  { key: "workforce" as const, label: "Workforce", icon: "people-outline" as const, activeIcon: "people" as const },
+  { key: "workforce" as const, label: "Staff", icon: "people-outline" as const, activeIcon: "people" as const },
+  { key: "audits" as const, label: "Audits", icon: "document-text-outline" as const, activeIcon: "document-text" as const },
+  { key: "manage" as const, label: "Manage", icon: "settings-outline" as const, activeIcon: "settings" as const },
 ];
 
 export const AdminHub: React.FC = () => {
   const { user, organization, refreshOrganization, signOut } = useAuth();
   const toast = useToast();
 
-  // Navigation: 3 Core Tabs on Mobile with WhatsApp-style Swiping
-  const [activeTab, setActiveTab] = useState<"feed" | "anchors" | "workforce">("feed");
-  const activeTabRef = useRef<"feed" | "anchors" | "workforce">("feed");
+  // Navigation: 5 Web-Parity Tabs on Mobile with Swipeable Pager
+  const [activeTab, setActiveTab] = useState<AdminTabKey>("feed");
+  const activeTabRef = useRef<AdminTabKey>("feed");
   activeTabRef.current = activeTab;
 
   const [refreshing, setRefreshing] = useState(false);
@@ -115,7 +121,7 @@ export const AdminHub: React.FC = () => {
     }
   }, [organization?.id, user, refreshOrganization]);
 
-  const handleTabPress = (tabKey: "feed" | "anchors" | "workforce", index: number) => {
+  const handleTabPress = (tabKey: AdminTabKey, index: number) => {
     setActiveTab(tabKey);
     activeTabRef.current = tabKey;
     (horizontalPagerRef.current as any)?.scrollTo({ x: index * screenWidth, animated: true });
@@ -124,9 +130,10 @@ export const AdminHub: React.FC = () => {
   const handlePageChange = (e: any) => {
     const offsetX = e.nativeEvent.contentOffset.x;
     const newIndex = Math.round(offsetX / screenWidth);
-    if (newIndex === 0 && activeTab !== "feed") setActiveTab("feed");
-    else if (newIndex === 1 && activeTab !== "anchors") setActiveTab("anchors");
-    else if (newIndex === 2 && activeTab !== "workforce") setActiveTab("workforce");
+    const target = TABS[newIndex]?.key;
+    if (target && target !== activeTab) {
+      setActiveTab(target);
+    }
   };
 
   // ----------------------------------------------------------------------
@@ -1844,6 +1851,57 @@ export const AdminHub: React.FC = () => {
               </View>
             </ScrollView>
           </View>
+
+          {/* ============================================================== */}
+          {/* TAB 4: ORGANIZATION AUDITS & REPORTS (PAGE 3)                  */}
+          {/* ============================================================== */}
+          <View style={{ width: screenWidth, flex: 1 }}>
+            <ScrollView
+              style={styles.scrollArea}
+              contentContainerStyle={styles.scrollContent}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              alwaysBounceVertical
+              overScrollMode="always"
+              nestedScrollEnabled
+              refreshControl={
+                <RefreshControl
+                  refreshing={refreshing}
+                  onRefresh={handlePullRefresh}
+                  tintColor="#2d81ff"
+                  colors={["#2d81ff", "#142748"]}
+                  progressBackgroundColor="#ffffff"
+                />
+              }
+            >
+              <View style={styles.tabContent}>
+                <AdminAuditsTab
+                  organization={organization}
+                  attendance={attendance}
+                  members={members}
+                />
+              </View>
+            </ScrollView>
+          </View>
+
+          {/* ============================================================== */}
+          {/* TAB 5: ORGANIZATION MANAGEMENT (PAGE 4)                        */}
+          {/* ============================================================== */}
+          <View style={{ width: screenWidth, flex: 1 }}>
+            <ScrollView
+              style={styles.scrollArea}
+              contentContainerStyle={styles.scrollContent}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              alwaysBounceVertical
+              overScrollMode="always"
+              nestedScrollEnabled
+            >
+              <View style={styles.tabContent}>
+                <AdminManageTab />
+              </View>
+            </ScrollView>
+          </View>
         </ScrollView>
       </View>
 
@@ -2471,7 +2529,7 @@ const styles = StyleSheet.create({
     borderRadius: R.pill,
   },
   bottomTabLabel: {
-    fontSize: 11.5,
+    fontSize: 10.5,
     fontWeight: "600",
     color: C.muted,
     letterSpacing: -0.1,

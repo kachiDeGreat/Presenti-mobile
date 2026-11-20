@@ -1708,17 +1708,16 @@ export async function getAdminOrganization(
     try {
       const allChurchesSnap = await getDocs(query(collection(db, 'churches'), limit(25)));
       if (!allChurchesSnap.empty) {
-        const foundDoc =
-          allChurchesSnap.docs.find((d) => {
-            const data = d.data();
-            const docEmail = (data.adminEmail || '').trim().toLowerCase();
-            const docUids = Array.isArray(data.adminUids) ? data.adminUids : [];
-            return (
-              (cleanEmail && docEmail && docEmail === cleanEmail) ||
-              (uid && docUids.includes(uid)) ||
-              (uid && (d.id === uid || data.ownerId === uid || data.userId === uid))
-            );
-          }) || (allChurchesSnap.docs.length === 1 ? allChurchesSnap.docs[0] : null);
+        const foundDoc = allChurchesSnap.docs.find((d) => {
+          const data = d.data();
+          const docEmail = (data.adminEmail || '').trim().toLowerCase();
+          const docUids = Array.isArray(data.adminUids) ? data.adminUids : [];
+          return (
+            (cleanEmail && docEmail && docEmail === cleanEmail) ||
+            (uid && docUids.includes(uid)) ||
+            (uid && (d.id === uid || data.ownerId === uid || data.userId === uid))
+          );
+        }) || null;
 
         if (foundDoc) {
           const data = foundDoc.data();
@@ -1795,4 +1794,159 @@ export async function updateOrganizationAnchors(
     },
     { merge: true }
   );
+}
+
+export async function createAdminOrganization(params: {
+  uid: string;
+  adminEmail: string;
+  adminName: string;
+  adminPhone?: string;
+  churchName: string;
+  branchName: string;
+  churchCode: string;
+  country?: string;
+  state?: string;
+  city?: string;
+  latitude?: number;
+  longitude?: number;
+  departments: string[];
+  policySettings: import('../types').PolicySettings;
+}): Promise<Organization> {
+  const cleanEmail = (params.adminEmail || '').trim().toLowerCase();
+  const cleanCode = params.churchCode.trim().toUpperCase();
+  const orgId = params.uid || `org_${Date.now().toString(36)}`;
+
+  // Ensure organization code is not already taken by another organization
+  const codeSnap = await getDocs(
+    query(collection(db, 'churches'), where('churchCode', '==', cleanCode), limit(1))
+  );
+  if (!codeSnap.empty && codeSnap.docs[0].id !== orgId) {
+    throw new Error(`Organization code "${cleanCode}" is already in use. Please regenerate a new code.`);
+  }
+
+  const orgPayload: Record<string, any> = {
+    churchName: params.churchName.trim(),
+    branchName: params.branchName.trim() || 'Main Campus',
+    churchCode: cleanCode,
+    adminName: params.adminName.trim(),
+    adminEmail: cleanEmail,
+    adminPhone: (params.adminPhone || '').trim(),
+    adminUids: params.uid ? [params.uid] : [],
+    country: params.country || 'Nigeria',
+    state: params.state || '',
+    city: params.city || '',
+    departments: params.departments.length > 0 ? params.departments : ['General Workforce'],
+    beaconConfig: {
+      ssidHint: '',
+      targetBssid: '',
+      verificationMode: 'GEOFENCE_ONLY',
+    },
+    geoFallback: {
+      latitude: Number(params.latitude ?? 0),
+      longitude: Number(params.longitude ?? 0),
+      radiusMeters: 30,
+      isConfigured: false,
+      isCalibrated: false,
+    },
+    policySettings: params.policySettings,
+    isCalibrated: false,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  await setDoc(doc(db, 'churches', orgId), cleanFirestorePayload(orgPayload), { merge: true });
+
+  if (cleanEmail) {
+    await setDoc(
+      doc(db, 'account_roles', cleanEmail),
+      {
+        email: cleanEmail,
+        role: 'ADMIN',
+        churchId: orgId,
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    ).catch(() => {});
+  }
+
+  const createdOrg: Organization = {
+    id: orgId,
+    churchName: orgPayload.churchName,
+    branchName: orgPayload.branchName,
+    churchCode: orgPayload.churchCode,
+    adminName: orgPayload.adminName,
+    adminEmail: orgPayload.adminEmail,
+    adminPhone: orgPayload.adminPhone,
+    adminUids: orgPayload.adminUids,
+    departments: orgPayload.departments,
+    beaconConfig: orgPayload.beaconConfig,
+    geoFallback: orgPayload.geoFallback,
+    policySettings: orgPayload.policySettings,
+    isCalibrated: false,
+  };
+
+  await cacheOrganizationAnchors(createdOrg);
+  return createdOrg;
+}
+
+export async function updateOrganizationSettings(
+  orgId: string,
+  updates: {
+    churchName: string;
+    branchName: string;
+    departments: string[];
+    policySettings: import('../types').PolicySettings;
+  }
+): Promise<void> {
+  const payload = cleanFirestorePayload({
+    churchName: updates.churchName.trim(),
+    branchName: updates.branchName.trim() || 'Main Campus',
+    departments: updates.departments.length > 0 ? updates.departments : ['General Workforce'],
+    policySettings: updates.policySettings,
+    updatedAt: new Date().toISOString(),
+  });
+
+  await setDoc(doc(db, 'churches', orgId), payload, { merge: true });
+}
+
+export async function deleteAdminOrganizationWorkspace(
+  orgId: string,
+  adminEmail?: string
+): Promise<void> {
+  // Clean up members + attendance subcollections and device_bindings
+  try {
+    const [memSnap, attSnap] = await Promise.all([
+      getDocs(collection(db, 'churches', orgId, 'members')),
+      getDocs(collection(db, 'churches', orgId, 'attendance')),
+    ]);
+
+    for (const m of memSnap.docs) {
+      const mData = m.data();
+      if (mData?.boundDeviceId && mData.boundDeviceId !== 'UNBOUND') {
+        await deleteDoc(doc(db, 'device_bindings', mData.boundDeviceId)).catch(() => {});
+      }
+      if (mData?.email) {
+        await deleteDoc(doc(db, 'account_roles', String(mData.email).trim().toLowerCase())).catch(() => {});
+      }
+      await deleteDoc(m.ref).catch(() => {});
+    }
+
+    for (const a of attSnap.docs) {
+      await deleteDoc(a.ref).catch(() => {});
+    }
+  } catch (err) {
+    console.warn('Subcollection cleanup notice:', err);
+  }
+
+  await deleteDoc(doc(db, 'churches', orgId)).catch(() => {});
+
+  if (adminEmail) {
+    await deleteDoc(doc(db, 'account_roles', adminEmail.trim().toLowerCase())).catch(() => {});
+  }
+
+  await AsyncStorage.multiRemove([
+    STORAGE_KEY_ORG,
+    STORAGE_KEY_ANCHORS,
+    STORAGE_KEY_MEMBER,
+  ]).catch(() => {});
 }

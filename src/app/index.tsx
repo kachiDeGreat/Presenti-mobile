@@ -297,7 +297,9 @@ export default function DashboardScreen() {
     if (!user) {
       router.replace("/login");
     } else if (user.isAdmin || isAdmin) {
-      // Administrator stays right here and AdminHub renders!
+      if (!organization) {
+        router.replace("/admin-onboarding" as any);
+      }
     } else if (!organization || !member) {
       router.replace("/onboarding");
     }
@@ -311,6 +313,11 @@ export default function DashboardScreen() {
 
   // Administrator Experience: Mobile Admin Command Center
   if (user.isAdmin || isAdmin) {
+    if (!organization) {
+      return (
+        <LoadingIndicator fullScreen message="Preparing organization setup..." />
+      );
+    }
     return <AdminHub />;
   }
 

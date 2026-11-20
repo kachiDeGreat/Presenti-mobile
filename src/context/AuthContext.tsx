@@ -34,6 +34,9 @@ import {
   enforceDeviceWorkerLock,
   saveDeviceWorkerLock,
   promoteEmailToAdminIfNotActiveWorker,
+  createAdminOrganization,
+  updateOrganizationSettings,
+  deleteAdminOrganizationWorkspace,
 } from '../services/organizationService';
 import {
   sendMobileSignupOtp,
@@ -96,6 +99,27 @@ interface AuthContextType {
     radiusMeters: number;
     verificationMode?: 'HYBRID' | 'GEOFENCE_ONLY';
   }) => Promise<void>;
+  createAdminOrg: (params: {
+    adminName: string;
+    adminPhone?: string;
+    churchName: string;
+    branchName: string;
+    churchCode: string;
+    country?: string;
+    state?: string;
+    city?: string;
+    latitude?: number;
+    longitude?: number;
+    departments: string[];
+    policySettings: import('../types').PolicySettings;
+  }) => Promise<Organization>;
+  updateOrgSettings: (updates: {
+    churchName: string;
+    branchName: string;
+    departments: string[];
+    policySettings: import('../types').PolicySettings;
+  }) => Promise<void>;
+  deleteAdminOrg: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -987,6 +1011,64 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     [organization]
   );
 
+  const createAdminOrg = useCallback(
+    async (params: {
+      adminName: string;
+      adminPhone?: string;
+      churchName: string;
+      branchName: string;
+      churchCode: string;
+      country?: string;
+      state?: string;
+      city?: string;
+      latitude?: number;
+      longitude?: number;
+      departments: string[];
+      policySettings: import('../types').PolicySettings;
+    }): Promise<Organization> => {
+      if (!user) throw new Error('Administrator session required.');
+      const created = await createAdminOrganization({
+        uid: user.uid,
+        adminEmail: user.email,
+        ...params,
+      });
+      setOrganization(created);
+      const anchors = await cacheOrganizationAnchors(created);
+      setCachedAnchors(anchors);
+      return created;
+    },
+    [user]
+  );
+
+  const updateOrgSettings = useCallback(
+    async (updates: {
+      churchName: string;
+      branchName: string;
+      departments: string[];
+      policySettings: import('../types').PolicySettings;
+    }): Promise<void> => {
+      if (!organization?.id) throw new Error('No active organization workspace.');
+      await updateOrganizationSettings(organization.id, updates);
+      const updatedOrg: Organization = {
+        ...organization,
+        churchName: updates.churchName.trim(),
+        branchName: updates.branchName.trim() || 'Main Campus',
+        departments: updates.departments.length > 0 ? updates.departments : ['General Workforce'],
+        policySettings: updates.policySettings,
+      };
+      setOrganization(updatedOrg);
+      await AsyncStorage.setItem(STORAGE_KEY_ORG, JSON.stringify(updatedOrg)).catch(() => {});
+    },
+    [organization]
+  );
+
+  const deleteAdminOrg = useCallback(async (): Promise<void> => {
+    if (!organization?.id) return;
+    await deleteAdminOrganizationWorkspace(organization.id, user?.email);
+    setOrganization(null);
+    setCachedAnchors(null);
+  }, [organization?.id, user?.email]);
+
   return (
     <AuthContext.Provider
       value={{
@@ -1013,6 +1095,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         signOut,
         refreshOrganization,
         updateAnchors,
+        createAdminOrg,
+        updateOrgSettings,
+        deleteAdminOrg,
       }}
     >
       {children}

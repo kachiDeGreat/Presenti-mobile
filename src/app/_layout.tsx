@@ -47,6 +47,7 @@ function RootNavigator() {
         <Stack.Screen name="index" />
         <Stack.Screen name="login" options={{ gestureEnabled: false }} />
         <Stack.Screen name="onboarding" options={{ gestureEnabled: false }} />
+        <Stack.Screen name="admin-onboarding" options={{ gestureEnabled: false }} />
         <Stack.Screen name="calibrate" />
       </Stack>
     </>
