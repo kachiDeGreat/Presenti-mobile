@@ -76,6 +76,7 @@ export default function AdminOnboardingScreen() {
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [submitting, setSubmitting] = useState(false);
+  const [submitStepLabel, setSubmitStepLabel] = useState("Creating workspace...");
 
   // Step 1: Organization & Admin Identity
   const [churchName, setChurchName] = useState("");
@@ -347,7 +348,9 @@ export default function AdminOnboardingScreen() {
     }
 
     setSubmitting(true);
+    setSubmitStepLabel("Creating workspace...");
     try {
+      setSubmitStepLabel("Saving policy & anchors...");
       await createAdminOrg({
         adminName: adminName.trim(),
         adminPhone: adminPhone.trim(),
@@ -915,7 +918,12 @@ export default function AdminOnboardingScreen() {
                   disabled={submitting}
                 >
                   {submitting ? (
-                    <ActivityIndicator size="small" color={C.white} />
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                      <ActivityIndicator size="small" color={C.white} />
+                      <Text style={styles.primaryBtnText} numberOfLines={1}>
+                        {submitStepLabel.toUpperCase()}
+                      </Text>
+                    </View>
                   ) : (
                     <>
                       <Text style={styles.primaryBtnText}>LAUNCH WORKSPACE</Text>

@@ -60,6 +60,7 @@ interface AuthContextType {
   cachedAnchors: CachedAnchors | null;
   deviceId: string;
   isLoading: boolean;
+  authStepLabel: string | null;
   isAdmin: boolean;
   knownAccounts: MobileUser[];
   loginWithEmailPassword: (email: string, password: string) => Promise<AuthResult>;
@@ -138,6 +139,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [deviceId, setDeviceId] = useState<string>('');
   const [knownAccounts, setKnownAccounts] = useState<MobileUser[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [authStepLabel, setAuthStepLabel] = useState<string | null>(null);
 
   // Initialize session on mount
   useEffect(() => {
@@ -326,41 +328,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const cleanEmail = (authUser.email || '').trim().toLowerCase();
       const uid = authUser.uid;
 
-      // 0. Check Admin status + resolve deviceId in parallel (1 round-trip instead of sequential)
-      const [isAdmin, activeDeviceId] = await Promise.all([
-        authUser.isAdmin === true
-          ? Promise.resolve(true)
-          : checkIfUserIsAdmin(cleanEmail, uid),
-        deviceId ? Promise.resolve(deviceId) : getDeviceFingerprint(),
-      ]);
+      try {
+        setAuthStepLabel('Detecting account role...');
+        // 0. Check Admin status + resolve deviceId in parallel (1 round-trip instead of sequential)
+        const [isAdmin, activeDeviceId] = await Promise.all([
+          authUser.isAdmin === true
+            ? Promise.resolve(true)
+            : checkIfUserIsAdmin(cleanEmail, uid),
+          deviceId ? Promise.resolve(deviceId) : getDeviceFingerprint(),
+        ]);
 
-      if (activeDeviceId && !deviceId) {
-        setDeviceId(activeDeviceId);
-      }
-
-      if (isAdmin) {
-        const adminUser: MobileUser = { ...authUser, isAdmin: true };
-        const adminOrg = await getAdminOrganization(cleanEmail, uid);
-
-        AsyncStorage.setItem(STORAGE_KEY_USER, JSON.stringify(adminUser)).catch(() => {});
-        if (adminOrg) {
-          cacheOrganizationAnchors(adminOrg).catch(() => {});
-          setOrganization(adminOrg);
+        if (activeDeviceId && !deviceId) {
+          setDeviceId(activeDeviceId);
         }
-        setMember(null);
-        setUser(adminUser);
 
-        setKnownAccounts((prev) => {
-          const filtered = prev.filter((a) => a.email.toLowerCase() !== adminUser.email.toLowerCase());
-          const updated = [adminUser, ...filtered];
-          AsyncStorage.setItem(STORAGE_KEY_KNOWN_ACCOUNTS, JSON.stringify(updated)).catch(() => {});
-          return updated;
-        });
+        if (isAdmin) {
+          setAuthStepLabel('Loading admin workspace...');
+          const adminUser: MobileUser = { ...authUser, isAdmin: true };
+          const adminOrg = await getAdminOrganization(cleanEmail, uid);
 
-        return { user: adminUser, organization: adminOrg, member: null };
-      }
+          AsyncStorage.setItem(STORAGE_KEY_USER, JSON.stringify(adminUser)).catch(() => {});
+          if (adminOrg) {
+            cacheOrganizationAnchors(adminOrg).catch(() => {});
+            setOrganization(adminOrg);
+          }
+          setMember(null);
+          setUser(adminUser);
 
-      // 1. Run 1-Worker-1-Phone lock + local cache reads + account_roles lookup in parallel!
+          setKnownAccounts((prev) => {
+            const filtered = prev.filter((a) => a.email.toLowerCase() !== adminUser.email.toLowerCase());
+            const updated = [adminUser, ...filtered];
+            AsyncStorage.setItem(STORAGE_KEY_KNOWN_ACCOUNTS, JSON.stringify(updated)).catch(() => {});
+            return updated;
+          });
+
+          return { user: adminUser, organization: adminOrg, member: null };
+        }
+
+        setAuthStepLabel('Checking device binding...');
+        // 1. Run 1-Worker-1-Phone lock + local cache reads + account_roles lookup in parallel!
       let activeOrg = organization;
       let existingMember: ChurchMember | null = null;
       let roleChurchId: string | null = null;
@@ -528,6 +534,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       if (existingMember) {
+        setAuthStepLabel('Syncing profile & biometrics...');
         existingMember = await hydrateMemberWithLocalFaceVault(
           existingMember,
           activeOrg?.id
@@ -547,6 +554,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         organization: activeOrg,
         member: existingMember,
       };
+      } finally {
+        setAuthStepLabel(null);
+      }
     },
     [organization, deviceId]
   );
@@ -623,6 +633,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     profileHint?: Partial<MobileUser>
   ): Promise<AuthResult> => {
     try {
+      setAuthStepLabel('Verifying Google session...');
       const credential = FirebaseAuth.GoogleAuthProvider.credential(idToken);
       const cred = await FirebaseAuth.signInWithCredential(auth, credential);
       const isNewUser = FirebaseAuth.getAdditionalUserInfo(cred)?.isNewUser;
@@ -677,6 +688,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
       return await handleUserAuthenticated(authUser);
     } catch (error) {
+      setAuthStepLabel(null);
       console.warn('Firebase Google Credential Sign-In notice:', error);
       throw error;
     }
@@ -690,6 +702,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const loginWithEmailPassword = async (email: string, password: string): Promise<AuthResult> => {
     const cleanEmail = email.trim().toLowerCase();
     try {
+      setAuthStepLabel('Authenticating account...');
       const cred = await FirebaseAuth.signInWithEmailAndPassword(auth, cleanEmail, password);
       const authUser: MobileUser = {
         uid: cred.user.uid,
@@ -700,6 +713,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // handleUserAuthenticated auto-detects Admin vs Worker role!
       return await handleUserAuthenticated(authUser);
     } catch (error: any) {
+      setAuthStepLabel(null);
       console.error('[Login] Email & Password login failed:', error);
       throw error;
     }
@@ -714,6 +728,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   ): Promise<AuthResult> => {
     const cleanEmail = email.trim().toLowerCase();
     try {
+      setAuthStepLabel('Creating account...');
       const cred = await FirebaseAuth.createUserWithEmailAndPassword(auth, cleanEmail, password);
 
       if (cred.user && displayName.trim()) {
@@ -723,6 +738,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       // Persist role metadata in Firestore
+      setAuthStepLabel('Assigning account role...');
       if (db) {
         if (role === 'ADMIN') {
           await promoteEmailToAdminIfNotActiveWorker({
@@ -851,33 +867,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       throw new Error('Please pair an organization first.');
     }
 
-    const cleanEmail = (user?.email || '').trim().toLowerCase();
-    const isAdminAccount = user?.isAdmin || (await checkIfUserIsAdmin(cleanEmail, user?.uid));
-    if (
-      isAdminAccount ||
-      (organization.adminEmail && cleanEmail && organization.adminEmail.toLowerCase() === cleanEmail) ||
-      (organization.adminUids && user?.uid && organization.adminUids.includes(user.uid)) ||
-      (organization.id && user?.uid && organization.id === user.uid)
-    ) {
-      throw new Error(
-        `This account (${cleanEmail}) is registered as an organization administrator on the web portal and cannot be registered as a workforce member.`
-      );
+    try {
+      setAuthStepLabel('Checking role & device...');
+      const cleanEmail = (user?.email || '').trim().toLowerCase();
+      const isAdminAccount = user?.isAdmin || (await checkIfUserIsAdmin(cleanEmail, user?.uid));
+      if (
+        isAdminAccount ||
+        (organization.adminEmail && cleanEmail && organization.adminEmail.toLowerCase() === cleanEmail) ||
+        (organization.adminUids && user?.uid && organization.adminUids.includes(user.uid)) ||
+        (organization.id && user?.uid && organization.id === user.uid)
+      ) {
+        throw new Error(
+          `This account (${cleanEmail}) is registered as an organization administrator on the web portal and cannot be registered as a workforce member.`
+        );
+      }
+
+      setAuthStepLabel('Uploading biometrics & saving...');
+      const newMember = await registerMember(organization.id, {
+        fullName,
+        phone,
+        email: user?.email,
+        photoURL: user?.photoURL,
+        department,
+        boundDeviceId: deviceId, // Silently bound in background
+        faceEmbedding,
+        facePhotoURL,
+        isFaceEnrolled: Boolean(faceEmbedding && faceEmbedding.length > 0),
+      });
+
+      setMember(newMember);
+      return newMember;
+    } finally {
+      setAuthStepLabel(null);
     }
-
-    const newMember = await registerMember(organization.id, {
-      fullName,
-      phone,
-      email: user?.email,
-      photoURL: user?.photoURL,
-      department,
-      boundDeviceId: deviceId, // Silently bound in background
-      faceEmbedding,
-      facePhotoURL,
-      isFaceEnrolled: Boolean(faceEmbedding && faceEmbedding.length > 0),
-    });
-
-    setMember(newMember);
-    return newMember;
   };
 
   const enrollFace = async (faceEmbedding: number[], facePhotoURL?: string): Promise<void> => {
@@ -1078,6 +1100,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         cachedAnchors,
         deviceId,
         isLoading,
+        authStepLabel,
         isAdmin: Boolean(user?.isAdmin),
         knownAccounts,
         loginWithEmailPassword,

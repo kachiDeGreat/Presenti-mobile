@@ -68,6 +68,7 @@ export default function OnboardingScreen() {
     organization,
     member,
     isAdmin,
+    authStepLabel,
     pairOrganization,
     completeRegistration,
     signOut,
@@ -622,8 +623,8 @@ export default function OnboardingScreen() {
                 {isRegistering ? (
                   <View style={styles.buttonLoaderRow}>
                     <ActivityIndicator color="#FFFFFF" size="small" />
-                    <Text style={styles.primaryButtonText}>
-                      Setting up profile...
+                    <Text style={styles.primaryButtonText} numberOfLines={1}>
+                      {authStepLabel || "Setting up profile..."}
                     </Text>
                   </View>
                 ) : (

@@ -41,6 +41,7 @@ export default function LoginScreen() {
     organization,
     member,
     isAdmin,
+    authStepLabel,
     signInWithGoogle,
     signInWithGoogleCredential,
     loginWithEmailPassword,
@@ -677,7 +678,9 @@ export default function LoginScreen() {
                 {isSubmitting ? (
                   <View style={styles.buttonLoaderRow}>
                     <ActivityIndicator color="#f2f1ee" size="small" />
-                    <Text style={styles.primaryButtonText}>SIGNING IN...</Text>
+                    <Text style={styles.primaryButtonText} numberOfLines={1}>
+                      {(authStepLabel || "SIGNING IN...").toUpperCase()}
+                    </Text>
                   </View>
                 ) : (
                   <Text style={styles.primaryButtonText}>SIGN IN</Text>
@@ -701,7 +704,9 @@ export default function LoginScreen() {
                 {isGoogleLoading ? (
                   <View style={styles.buttonLoaderRow}>
                     <ActivityIndicator color={C.ink} size="small" />
-                    <Text style={styles.googleButtonText}>CONNECTING GOOGLE...</Text>
+                    <Text style={styles.googleButtonText} numberOfLines={1}>
+                      {(authStepLabel || "CONNECTING GOOGLE...").toUpperCase()}
+                    </Text>
                   </View>
                 ) : (
                   <>
@@ -908,7 +913,9 @@ export default function LoginScreen() {
                 {isGoogleLoading ? (
                   <View style={styles.buttonLoaderRow}>
                     <ActivityIndicator color={C.ink} size="small" />
-                    <Text style={styles.googleButtonText}>CONNECTING GOOGLE...</Text>
+                    <Text style={styles.googleButtonText} numberOfLines={1}>
+                      {(authStepLabel || "CONNECTING GOOGLE...").toUpperCase()}
+                    </Text>
                   </View>
                 ) : (
                   <>
@@ -969,7 +976,9 @@ export default function LoginScreen() {
               {isVerifyingOtp && (
                 <View style={styles.autoSubmitRow}>
                   <ActivityIndicator size="small" color="#2d81ff" />
-                  <Text style={styles.autoSubmitText}>Verifying code & preparing account...</Text>
+                  <Text style={styles.autoSubmitText}>
+                    {authStepLabel || "Verifying code & preparing account..."}
+                  </Text>
                 </View>
               )}
 
@@ -984,7 +993,12 @@ export default function LoginScreen() {
                 activeOpacity={0.85}
               >
                 {isVerifyingOtp ? (
-                  <ActivityIndicator color="#f2f1ee" size="small" />
+                  <View style={styles.buttonLoaderRow}>
+                    <ActivityIndicator color="#f2f1ee" size="small" />
+                    <Text style={styles.primaryButtonText} numberOfLines={1}>
+                      {(authStepLabel || "VERIFYING CODE...").toUpperCase()}
+                    </Text>
+                  </View>
                 ) : (
                   <Text style={styles.primaryButtonText}>VERIFY & FINISH</Text>
                 )}
