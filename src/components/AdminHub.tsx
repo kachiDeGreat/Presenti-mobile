@@ -61,7 +61,7 @@ import { TactilePressable } from "./TactilePressable";
 import { AdminAuditsTab } from "./AdminAuditsTab";
 import { AdminManageTab } from "./AdminManageTab";
 import { AccordionCard } from "./AccordionCard";
-import { C, MONO, R, S, T, shadow, ui } from "../constants/premium";
+import { C, MONO, R, S, T, shadow, ui, rf } from "../constants/premium";
 import type { MobileAIContext } from "../services/geminiService";
 import type { ChurchMember } from "../types";
 
@@ -2996,16 +2996,16 @@ const styles = StyleSheet.create({
   },
   kpiLabel: {
     ...T.labelSm,
-    fontSize: 9,
+    fontSize: rf(9),
     color: C.muted,
   },
   kpiValue: {
     ...T.metric,
-    fontSize: 22,
+    fontSize: rf(22),
   },
   kpiSub: {
     ...T.caption,
-    fontSize: 10.5,
+    fontSize: rf(10.5),
   },
   searchRow: {
     flexDirection: "row",
@@ -3456,7 +3456,7 @@ const styles = StyleSheet.create({
   },
   primaryActionBtnText: {
     ...ui.btnPrimaryText,
-    fontSize: 13,
+    fontSize: rf(13),
   },
   btnDisabled: {
     opacity: 0.6,

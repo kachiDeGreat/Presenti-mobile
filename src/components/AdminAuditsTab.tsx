@@ -15,7 +15,7 @@ import * as Clipboard from "expo-clipboard";
 import { addDoc, collection } from "firebase/firestore";
 import { db } from "../config/firebase";
 import { useToast } from "../context/ToastContext";
-import { C, MONO, R, S, T, shadow, ui } from "../constants/premium";
+import { C, MONO, R, S, T, shadow, ui, rf } from "../constants/premium";
 import type { ChurchMember, Organization } from "../types";
 
 export interface AuditAttendanceRecord {
@@ -534,8 +534,8 @@ const styles = StyleSheet.create({
   root: { gap: 12 },
   heroCard: { ...ui.card, padding: 14, gap: 12, ...shadow.card },
   heroTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  tag: { ...T.labelSm, fontSize: 10, color: C.accent },
-  title: { ...T.title, fontSize: 16.5, marginTop: 2 },
+  tag: { ...T.labelSm, fontSize: rf(10), color: C.accent },
+  title: { ...T.title, fontSize: rf(16.5), marginTop: 2 },
   heroBtnRow: { flexDirection: "row", gap: 8 },
   iconActionBtn: {
     width: 36,
@@ -569,9 +569,9 @@ const styles = StyleSheet.create({
   monthLabel: { fontSize: 12, fontWeight: "700", color: C.ink, minWidth: 62, textAlign: "center" },
   kpiRow: { flexDirection: "row", gap: 8 },
   kpiCard: { ...ui.card, flex: 1, padding: 10, ...shadow.card },
-  kpiLabel: { ...T.labelSm, fontSize: 9, color: C.muted },
-  kpiValue: { fontSize: 20, fontWeight: "900", marginTop: 3 },
-  kpiSub: { ...T.caption, fontSize: 10.5, marginTop: 2 },
+  kpiLabel: { ...T.labelSm, fontSize: rf(9), color: C.muted },
+  kpiValue: { fontSize: rf(20), fontWeight: "900", marginTop: 3 },
+  kpiSub: { ...T.caption, fontSize: rf(10.5), marginTop: 2 },
   searchBox: {
     flexDirection: "row",
     alignItems: "center",
@@ -583,7 +583,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     height: 42,
   },
-  searchInput: { flex: 1, fontSize: 12, color: C.ink },
+  searchInput: { flex: 1, fontSize: rf(12), color: C.ink },
   filterChip: {
     paddingHorizontal: 12,
     paddingVertical: 7,

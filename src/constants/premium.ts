@@ -11,7 +11,25 @@
  * a near-imperceptible shadow so they lift off the paper canvas the way Bolt /
  * Uber cards do. Primary CTAs are full-width, 56px tall, 14px radius.
  */
-import { Platform, type TextStyle, type ViewStyle } from "react-native";
+import {
+  Dimensions,
+  PixelRatio,
+  Platform,
+  type TextStyle,
+  type ViewStyle,
+} from "react-native";
+
+const BASE_WIDTH = 390;
+
+/**
+ * Width-responsive font scaler: adapts typography proportionally to any device
+ * screen width while clamping scale between 0.85x and 1.12x for readability.
+ */
+export function rf(size: number): number {
+  const { width } = Dimensions.get("window");
+  const scale = Math.min(1.12, Math.max(0.85, width / BASE_WIDTH));
+  return Math.round(PixelRatio.roundToNearestPixel(size * scale));
+}
 
 export const C = {
   ink: "#142748", // primary text / CTA fill
@@ -98,15 +116,15 @@ export const T: Record<
   | "metric",
   TextStyle
 > = {
-  hero: { fontSize: 40, fontWeight: "800", letterSpacing: -1.4, color: C.ink },
-  display: { fontSize: 28, fontWeight: "800", letterSpacing: -0.8, color: C.ink },
-  title: { fontSize: 20, fontWeight: "700", letterSpacing: -0.3, color: C.ink },
-  heading: { fontSize: 16, fontWeight: "700", letterSpacing: -0.1, color: C.ink },
-  body: { fontSize: 15, fontWeight: "400", lineHeight: 22, color: C.ink2 },
-  bodyStrong: { fontSize: 15, fontWeight: "600", lineHeight: 22, color: C.ink },
-  caption: { fontSize: 13, fontWeight: "400", lineHeight: 18, color: C.muted },
+  hero: { fontSize: rf(40), fontWeight: "800", letterSpacing: -1.4, color: C.ink },
+  display: { fontSize: rf(28), fontWeight: "800", letterSpacing: -0.8, color: C.ink },
+  title: { fontSize: rf(20), fontWeight: "700", letterSpacing: -0.3, color: C.ink },
+  heading: { fontSize: rf(16), fontWeight: "700", letterSpacing: -0.1, color: C.ink },
+  body: { fontSize: rf(15), fontWeight: "400", lineHeight: rf(22), color: C.ink2 },
+  bodyStrong: { fontSize: rf(15), fontWeight: "600", lineHeight: rf(22), color: C.ink },
+  caption: { fontSize: rf(13), fontWeight: "400", lineHeight: rf(18), color: C.muted },
   label: {
-    fontSize: 11,
+    fontSize: rf(11),
     fontWeight: "700",
     letterSpacing: 0.9,
     textTransform: "uppercase",
@@ -114,14 +132,14 @@ export const T: Record<
     color: C.muted,
   },
   labelSm: {
-    fontSize: 10,
+    fontSize: rf(10),
     fontWeight: "700",
     letterSpacing: 0.8,
     textTransform: "uppercase",
     fontFamily: MONO,
     color: C.muted,
   },
-  metric: { fontSize: 30, fontWeight: "800", letterSpacing: -1, color: C.ink },
+  metric: { fontSize: rf(30), fontWeight: "800", letterSpacing: -1, color: C.ink },
 };
 
 /** Reusable building blocks */
@@ -154,7 +172,7 @@ export const ui = {
   } as ViewStyle,
   btnPrimaryText: {
     color: C.white,
-    fontSize: 13,
+    fontSize: rf(13),
     fontWeight: "800",
     letterSpacing: 1,
     textTransform: "uppercase",
@@ -174,7 +192,7 @@ export const ui = {
   } as ViewStyle,
   btnSecondaryText: {
     color: C.ink,
-    fontSize: 12,
+    fontSize: rf(12),
     fontWeight: "800",
     letterSpacing: 0.9,
     textTransform: "uppercase",
@@ -187,7 +205,7 @@ export const ui = {
     borderWidth: 1,
     borderColor: C.line,
     paddingHorizontal: S.md,
-    fontSize: 15,
+    fontSize: rf(15),
     color: C.ink,
   } as TextStyle,
   pill: {
