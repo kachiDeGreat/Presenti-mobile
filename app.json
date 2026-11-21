@@ -7,6 +7,10 @@
     "icon": "./assets/images/icon.png",
     "scheme": "presenti",
     "userInterfaceStyle": "automatic",
+    "androidNavigationBar": {
+      "backgroundColor": "#FFFFFF",
+      "barStyle": "dark-content"
+    },
     "ios": {
       "icon": "./assets/images/icon.png",
       "bundleIdentifier": "com.attendance.mobile",

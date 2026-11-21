@@ -431,12 +431,9 @@ export default function AdminOnboardingScreen() {
               {step === 3 && "Schedule & Arrival Policy"}
             </Text>
             <Text style={styles.subtitle}>
-              {step === 1 &&
-                "Set up your organization workspace and generate your worker pairing code."}
-              {step === 2 &&
-                "Define the departments or teams workers will select during mobile onboarding."}
-              {step === 3 &&
-                "Configure active work days, punctuality cutoffs, and departure rules."}
+              {step === 1 && "Create your workspace and worker pairing code."}
+              {step === 2 && "Add departments for your team."}
+              {step === 3 && "Set work days and arrival cutoffs."}
             </Text>
 
             {/* Progress Bar */}

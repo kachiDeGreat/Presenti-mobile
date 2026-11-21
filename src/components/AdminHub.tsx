@@ -20,7 +20,7 @@ import {
   PanResponder,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { SafeAreaView } from "react-native-safe-area-context";
+import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import {
@@ -105,6 +105,7 @@ const TABS = [
 export const AdminHub: React.FC = () => {
   const { user, organization, refreshOrganization, signOut } = useAuth();
   const toast = useToast();
+  const insets = useSafeAreaInsets();
 
   // Navigation: 5 Web-Parity Tabs on Mobile with Swipeable Pager
   const [activeTab, setActiveTab] = useState<AdminTabKey>("feed");
@@ -1060,7 +1061,7 @@ export const AdminHub: React.FC = () => {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={["top", "bottom"]}>
+    <SafeAreaView style={styles.container} edges={["top"]}>
       {/* ---------------------------------------------------------------- */}
       {/* BOLT / INDRIVE STYLE COMPACT HEADER BAR                          */}
       {/* ---------------------------------------------------------------- */}
@@ -2131,7 +2132,12 @@ export const AdminHub: React.FC = () => {
       {/* ---------------------------------------------------------------- */}
       {/* BOTTOM TAB NAVIGATION (ARTCRAFT CLEAN MINIMAL STYLE)             */}
       {/* ---------------------------------------------------------------- */}
-      <View style={styles.bottomTabBar}>
+      <View
+        style={[
+          styles.bottomTabBar,
+          { paddingBottom: Math.max(insets.bottom, Platform.OS === "ios" ? 20 : 10) },
+        ]}
+      >
         {TABS.map((tab, idx) => {
           const isActive = activeTab === tab.key;
           return (
@@ -2853,12 +2859,10 @@ const styles = StyleSheet.create({
     width: "100%",
     alignItems: "center",
     justifyContent: "space-around",
-    backgroundColor: C.card,
+    backgroundColor: C.white,
     borderTopWidth: 1,
     borderTopColor: C.lineCard,
-    paddingBottom: Platform.OS === "ios" ? 22 : 12,
     paddingTop: 10,
-    ...shadow.sheet,
   },
   bottomTabItem: {
     flex: 1,
@@ -2987,8 +2991,8 @@ const styles = StyleSheet.create({
   kpiCard: {
     flex: 1,
     ...ui.card,
-    padding: 14,
-    gap: 4,
+    padding: 11,
+    gap: 3,
   },
   kpiLabel: {
     ...T.labelSm,
@@ -2997,11 +3001,11 @@ const styles = StyleSheet.create({
   },
   kpiValue: {
     ...T.metric,
-    fontSize: 26,
+    fontSize: 22,
   },
   kpiSub: {
     ...T.caption,
-    fontSize: 11,
+    fontSize: 10.5,
   },
   searchRow: {
     flexDirection: "row",
@@ -3452,6 +3456,7 @@ const styles = StyleSheet.create({
   },
   primaryActionBtnText: {
     ...ui.btnPrimaryText,
+    fontSize: 13,
   },
   btnDisabled: {
     opacity: 0.6,

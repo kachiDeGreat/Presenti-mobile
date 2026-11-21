@@ -113,7 +113,7 @@ export const AdminAuditsTab: React.FC<AdminAuditsTabProps> = ({
     const late = filteredRecords.filter((r) => r.status === "LATE").length;
     const signedOut = filteredRecords.filter((r) => Boolean(r.signedOutAt)).length;
     const uniqueWorkers = new Set(filteredRecords.map((r) => r.memberId)).size;
-    const rate = total > 0 ? Math.round((onTime / total) * 100) : 100;
+    const rate = total > 0 ? Math.round((onTime / total) * 100) : 0;
     return { total, onTime, late, signedOut, uniqueWorkers, rate };
   }, [filteredRecords]);
 
@@ -307,7 +307,7 @@ export const AdminAuditsTab: React.FC<AdminAuditsTabProps> = ({
         <Ionicons name="search-outline" size={16} color={C.muted} />
         <TextInput
           style={styles.searchInput}
-          placeholder="Search worker, department, or YYYY-MM-DD..."
+          placeholder="Search name, dept, or YYYY-MM-DD..."
           placeholderTextColor={C.faint}
           value={searchQuery}
           onChangeText={setSearchQuery}
@@ -534,12 +534,12 @@ const styles = StyleSheet.create({
   root: { gap: 12 },
   heroCard: { ...ui.card, padding: 14, gap: 12, ...shadow.card },
   heroTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
-  tag: { ...T.labelSm, color: C.accent },
-  title: { ...T.title, fontSize: 18, marginTop: 2 },
+  tag: { ...T.labelSm, fontSize: 10, color: C.accent },
+  title: { ...T.title, fontSize: 16.5, marginTop: 2 },
   heroBtnRow: { flexDirection: "row", gap: 8 },
   iconActionBtn: {
-    width: 38,
-    height: 38,
+    width: 36,
+    height: 36,
     borderRadius: R.md,
     backgroundColor: C.cardAlt,
     alignItems: "center",
@@ -552,7 +552,7 @@ const styles = StyleSheet.create({
     borderRadius: R.pill,
     padding: 3,
   },
-  scopeBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: R.pill },
+  scopeBtn: { paddingHorizontal: 11, paddingVertical: 5, borderRadius: R.pill },
   scopeBtnActive: { backgroundColor: C.ink },
   scopeText: { ...T.labelSm, fontSize: 10, color: C.muted },
   scopeTextActive: { color: C.white },
@@ -566,12 +566,12 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   stepBtn: { padding: 4 },
-  monthLabel: { fontSize: 12.5, fontWeight: "700", color: C.ink, minWidth: 66, textAlign: "center" },
+  monthLabel: { fontSize: 12, fontWeight: "700", color: C.ink, minWidth: 62, textAlign: "center" },
   kpiRow: { flexDirection: "row", gap: 8 },
-  kpiCard: { ...ui.card, flex: 1, padding: 12, ...shadow.card },
-  kpiLabel: { ...T.labelSm, fontSize: 9.5, color: C.muted },
-  kpiValue: { fontSize: 22, fontWeight: "900", marginTop: 4 },
-  kpiSub: { ...T.caption, fontSize: 11, marginTop: 2 },
+  kpiCard: { ...ui.card, flex: 1, padding: 10, ...shadow.card },
+  kpiLabel: { ...T.labelSm, fontSize: 9, color: C.muted },
+  kpiValue: { fontSize: 20, fontWeight: "900", marginTop: 3 },
+  kpiSub: { ...T.caption, fontSize: 10.5, marginTop: 2 },
   searchBox: {
     flexDirection: "row",
     alignItems: "center",
@@ -581,9 +581,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: C.lineCard,
     paddingHorizontal: 12,
-    height: 44,
+    height: 42,
   },
-  searchInput: { flex: 1, fontSize: 13.5, color: C.ink },
+  searchInput: { flex: 1, fontSize: 12, color: C.ink },
   filterChip: {
     paddingHorizontal: 12,
     paddingVertical: 7,

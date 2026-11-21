@@ -344,10 +344,8 @@ export default function OnboardingScreen() {
             </Text>
             <Text style={styles.subtitle}>
               {verifiedOrg
-                ? "Select your assigned unit to link your profile to " +
-                  verifiedOrg.churchName +
-                  "."
-                : "Enter the organization code provided by your administrator to pull settings and presence anchors."}
+                ? `Link your profile to ${verifiedOrg.churchName}.`
+                : "Enter your organization pairing code to continue."}
             </Text>
           </View>
 
@@ -701,14 +699,17 @@ const styles = StyleSheet.create({
   },
   title: {
     ...T.display,
-    marginBottom: 8,
+    fontSize: 24,
+    marginBottom: 4,
   },
   subtitle: {
     ...T.body,
+    fontSize: 13.5,
+    lineHeight: 19,
     color: C.ink2,
   },
   stepContainer: {
-    gap: S.md,
+    gap: S.lg,
   },
   fieldGroup: {
     gap: 8,
