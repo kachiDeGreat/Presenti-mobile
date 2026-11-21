@@ -1,7 +1,7 @@
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import React, { useEffect } from 'react';
-import { Platform, UIManager } from 'react-native';
+import { Platform, Text, TextInput, UIManager } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from '../context/AuthContext';
@@ -12,6 +12,16 @@ import { requestAllAppPermissions } from '../services/permissionService';
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
+
+// Prevent extreme OS accessibility font zoom from breaking cards, tabs, and buttons
+(Text as any).defaultProps = {
+  ...((Text as any).defaultProps || {}),
+  maxFontSizeMultiplier: 1.1,
+};
+(TextInput as any).defaultProps = {
+  ...((TextInput as any).defaultProps || {}),
+  maxFontSizeMultiplier: 1.1,
+};
 
 SplashScreen.preventAutoHideAsync();
 

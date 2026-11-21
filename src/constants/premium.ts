@@ -27,8 +27,11 @@ const BASE_WIDTH = 390;
  */
 export function rf(size: number): number {
   const { width } = Dimensions.get("window");
-  const scale = Math.min(1.12, Math.max(0.85, width / BASE_WIDTH));
-  return Math.round(PixelRatio.roundToNearestPixel(size * scale));
+  const widthScale = Math.min(1.12, Math.max(0.85, width / BASE_WIDTH));
+  const osFontScale = PixelRatio.getFontScale();
+  // Cap OS accessibility font zoom impact at 1.08x so cards and buttons never overflow
+  const cappedOsScale = Math.min(osFontScale, 1.08) / Math.max(osFontScale, 1);
+  return Math.round(PixelRatio.roundToNearestPixel(size * widthScale * cappedOsScale));
 }
 
 export const C = {
