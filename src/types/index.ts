@@ -119,8 +119,21 @@ export interface ChurchMember {
   faceEnrolledAt?: string;
   assignedShiftId?: string;
   assignedShiftName?: string;
-  status?: 'ACTIVE' | 'SUSPENDED';
+  status?: 'ACTIVE' | 'SUSPENDED' | 'BLOCKED';
   flagReason?: string;
+  tamperingStrikes?: number;
+}
+
+export interface AdminNotification {
+  id: string;
+  type: 'CLOCK_TAMPERING' | 'SECURITY_ALERT';
+  memberId: string;
+  memberName: string;
+  department?: string;
+  reason: string;
+  strikes?: number;
+  read?: boolean;
+  createdAt: string;
 }
 
 export interface MobileUser {

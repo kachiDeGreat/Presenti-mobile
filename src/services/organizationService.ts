@@ -1155,13 +1155,13 @@ export async function resetMemberDeviceBinding(orgId: string, memberId: string):
 export async function updateMemberStatus(
   orgId: string,
   memberId: string,
-  status: 'ACTIVE' | 'SUSPENDED'
+  status: 'ACTIVE' | 'SUSPENDED' | 'BLOCKED'
 ): Promise<void> {
   try {
     const memberDocRef = doc(db, 'churches', orgId, 'members', memberId);
     await updateDoc(memberDocRef, {
       status,
-      ...(status === 'ACTIVE' ? { flagReason: null } : {}),
+      ...(status === 'ACTIVE' ? { flagReason: null, tamperingStrikes: 0 } : {}),
       statusUpdatedAt: new Date().toISOString(),
     });
   } catch (error) {
@@ -1202,22 +1202,65 @@ export async function verifyNetworkClockIntegrity(): Promise<{
   }
 }
 
-export async function flagAndSuspendForClockTampering(
+export async function recordClockTamperingStrike(
   orgId: string,
-  memberId: string,
+  member: { id: string; fullName?: string; department?: string; tamperingStrikes?: number },
   driftMinutes: number
+): Promise<{ strikes: number; suspended: boolean }> {
+  const memberDocRef = doc(db, 'churches', orgId, 'members', member.id);
+  let currentStrikes = Number(member.tamperingStrikes || 0);
+  try {
+    const snap = await getDoc(memberDocRef);
+    if (snap.exists()) {
+      currentStrikes = Number(snap.data()?.tamperingStrikes || currentStrikes || 0);
+    }
+  } catch {}
+
+  const nextStrikes = currentStrikes + 1;
+  const suspended = nextStrikes >= 3;
+  const reason = `Device clock/date tampering detected (${driftMinutes}m drift from network time — ${nextStrikes}/3 strikes).`;
+
+  try {
+    await updateDoc(memberDocRef, {
+      tamperingStrikes: nextStrikes,
+      flagReason: reason,
+      flaggedAt: new Date().toISOString(),
+      ...(suspended
+        ? {
+            status: 'SUSPENDED',
+            statusUpdatedAt: new Date().toISOString(),
+          }
+        : {}),
+    });
+
+    if (suspended) {
+      await addDoc(collection(db, 'churches', orgId, 'notifications'), {
+        type: 'CLOCK_TAMPERING',
+        memberId: member.id,
+        memberName: member.fullName || 'Worker',
+        department: member.department || 'General',
+        reason,
+        strikes: nextStrikes,
+        read: false,
+        createdAt: new Date().toISOString(),
+      });
+    }
+  } catch (err) {
+    console.warn('Could not record clock tampering strike:', err);
+  }
+
+  return { strikes: nextStrikes, suspended };
+}
+
+export async function markAdminNotificationRead(
+  orgId: string,
+  notificationId: string
 ): Promise<void> {
   try {
-    const memberDocRef = doc(db, 'churches', orgId, 'members', memberId);
-    await updateDoc(memberDocRef, {
-      status: 'SUSPENDED',
-      flagReason: `Device clock tampering detected (${driftMinutes}m drift from network time).`,
-      flaggedAt: new Date().toISOString(),
-      statusUpdatedAt: new Date().toISOString(),
+    await updateDoc(doc(db, 'churches', orgId, 'notifications', notificationId), {
+      read: true,
     });
-  } catch (err) {
-    console.warn('Could not flag clock tampering:', err);
-  }
+  } catch {}
 }
 
 export async function deleteOrganizationMember(orgId: string, memberId: string): Promise<void> {

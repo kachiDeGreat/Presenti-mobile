@@ -30,7 +30,7 @@ import {
   clearTodayPunchRecord,
   fetchTodayMemberAttendance,
   verifyNetworkClockIntegrity,
-  flagAndSuspendForClockTampering,
+  recordClockTamperingStrike,
   loadFaceFromLocalVault,
 } from "../services/organizationService";
 import {
@@ -431,8 +431,16 @@ export default function DashboardScreen() {
     return presence;
   };
 
-  // Clock-in execution: 0) Suspension & clock-tampering check -> 1) Window check -> 2) Location/Wi-Fi check -> 3) AI Face Scan
+  // Clock-in execution: 0) Suspension/Block & 3-strike clock-tampering check -> 1) Window check -> 2) Location/Wi-Fi check -> 3) AI Face Scan
   const handleClockIn = async () => {
+    if (member?.status === "BLOCKED") {
+      toast.error(
+        "Your account has been permanently blocked by your administrator.",
+        { title: "Account Blocked", duration: 6000 },
+      );
+      return;
+    }
+
     if (member?.status === "SUSPENDED") {
       toast.error(
         member.flagReason ||
@@ -444,15 +452,23 @@ export default function DashboardScreen() {
 
     const clockCheck = await verifyNetworkClockIntegrity();
     if (!clockCheck.ok && organization?.id && member?.id) {
-      await flagAndSuspendForClockTampering(
+      const { strikes, suspended } = await recordClockTamperingStrike(
         organization.id,
-        member.id,
+        member,
         clockCheck.driftMinutes || 0,
       );
-      toast.error(
-        "Device clock tampering detected! Your device time does not match network time. This account has been flagged and suspended.",
-        { title: "Account Suspended", duration: 7000 },
-      );
+      if (suspended) {
+        toast.error(
+          "Clock/Date Tampering (3/3): Your account has been suspended and your administrator has been notified.",
+          { title: "Account Suspended", duration: 7000 },
+        );
+      } else {
+        const left = 3 - strikes;
+        toast.warn(
+          `Clock/Date Tampering Warning (${strikes}/3): Your device date or time does not match network time. ${left} attempt${left > 1 ? "s" : ""} left before automatic suspension.`,
+          { title: `Tampering Warning ${strikes}/3`, duration: 6500 },
+        );
+      }
       return;
     }
 

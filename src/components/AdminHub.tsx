@@ -48,6 +48,7 @@ import {
   clearMemberFaceEnrollment,
   resetMemberDeviceBinding,
   updateMemberStatus,
+  markAdminNotificationRead,
   deleteOrganizationMember,
   getCachedOrganization,
   getCachedAnchors,
@@ -63,7 +64,7 @@ import { AdminManageTab } from "./AdminManageTab";
 import { AccordionCard } from "./AccordionCard";
 import { C, MONO, R, S, T, shadow, ui, rf } from "../constants/premium";
 import type { MobileAIContext } from "../services/geminiService";
-import type { ChurchMember } from "../types";
+import type { ChurchMember, AdminNotification } from "../types";
 
 const ADMIN_FACE_TEST_KEY = "@presenti_admin_face_test_v1";
 const ADMIN_FACE_TEST_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -805,6 +806,8 @@ export const AdminHub: React.FC = () => {
   // MODAL 3: ADMIN PROFILE & WEB PORTAL DIALOG
   // ----------------------------------------------------------------------
   const [showAdminProfileModal, setShowAdminProfileModal] = useState(false);
+  const [showNotificationsModal, setShowNotificationsModal] = useState(false);
+  const [notifications, setNotifications] = useState<AdminNotification[]>([]);
   const [showAskPresenti, setShowAskPresenti] = useState(false);
   const [showAdminFaceTestModal, setShowAdminFaceTestModal] = useState(false);
   const [adminTestFaceUri, setAdminTestFaceUri] = useState<string | null>(null);
@@ -921,6 +924,50 @@ export const AdminHub: React.FC = () => {
     const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
   }, [adminTestExpiresAt, toast]);
+
+  // Subscribe to Admin Security Notifications (e.g. 3-strike clock tampering)
+  useEffect(() => {
+    if (!organization?.id || !db) return;
+    const notifRef = collection(db, "churches", organization.id, "notifications");
+    const qNotif = query(notifRef, orderBy("createdAt", "desc"), limit(30));
+    const unsub = onSnapshot(
+      qNotif,
+      (snap) => {
+        const list: AdminNotification[] = [];
+        snap.forEach((d) => {
+          list.push({ id: d.id, ...(d.data() as any) });
+        });
+        setNotifications(list);
+      },
+      (err) => console.warn("Notifications listener notice:", err)
+    );
+    return () => unsub();
+  }, [organization?.id]);
+
+  const unreadNotifCount = useMemo(
+    () => notifications.filter((n) => !n.read).length,
+    [notifications]
+  );
+
+  const handleNotificationMemberAction = async (
+    notif: AdminNotification,
+    nextStatus: "ACTIVE" | "SUSPENDED" | "BLOCKED"
+  ) => {
+    if (!organization?.id) return;
+    try {
+      await updateMemberStatus(organization.id, notif.memberId, nextStatus);
+      await markAdminNotificationRead(organization.id, notif.id);
+      const label =
+        nextStatus === "ACTIVE"
+          ? "unsuspended & unblocked"
+          : nextStatus === "BLOCKED"
+            ? "permanently blocked"
+            : "kept suspended";
+      toast.success(`${notif.memberName} has been ${label}.`);
+    } catch {
+      toast.error("Failed to update worker status.");
+    }
+  };
 
   const handleOpenAdminFaceTest = useCallback(async () => {
     try {
@@ -1095,17 +1142,59 @@ export const AdminHub: React.FC = () => {
           </Text>
         </View>
 
-        <TouchableOpacity
-          style={styles.adminAvatarButton}
-          onPress={() => setShowAdminProfileModal(true)}
-          activeOpacity={0.85}
-        >
-          <View style={styles.adminAvatarCircle}>
-            <Text style={styles.adminAvatarText}>
-              {(user?.displayName?.[0] || user?.email?.[0] || "A").toUpperCase()}
-            </Text>
-          </View>
-        </TouchableOpacity>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+          <TouchableOpacity
+            style={{
+              width: 40,
+              height: 40,
+              borderRadius: 20,
+              backgroundColor: C.card,
+              borderWidth: 1,
+              borderColor: C.lineCard,
+              alignItems: "center",
+              justifyContent: "center",
+              position: "relative",
+            }}
+            onPress={() => setShowNotificationsModal(true)}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="notifications-outline" size={20} color={C.ink} />
+            {unreadNotifCount > 0 && (
+              <View
+                style={{
+                  position: "absolute",
+                  top: -2,
+                  right: -2,
+                  minWidth: 18,
+                  height: 18,
+                  borderRadius: 9,
+                  backgroundColor: C.danger,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  paddingHorizontal: 4,
+                  borderWidth: 1.5,
+                  borderColor: C.white,
+                }}
+              >
+                <Text style={{ color: C.white, fontSize: 10, fontWeight: "800" }}>
+                  {unreadNotifCount > 9 ? "9+" : unreadNotifCount}
+                </Text>
+              </View>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.adminAvatarButton}
+            onPress={() => setShowAdminProfileModal(true)}
+            activeOpacity={0.85}
+          >
+            <View style={styles.adminAvatarCircle}>
+              <Text style={styles.adminAvatarText}>
+                {(user?.displayName?.[0] || user?.email?.[0] || "A").toUpperCase()}
+              </Text>
+            </View>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* ---------------------------------------------------------------- */}
@@ -2581,13 +2670,18 @@ export const AdminHub: React.FC = () => {
                         styles.auditValue,
                         {
                           color:
-                            (selectedWorker as any).status === "SUSPENDED"
+                            selectedWorker.status === "BLOCKED" ||
+                            selectedWorker.status === "SUSPENDED"
                               ? "#d92d20"
                               : "#10b981",
                         },
                       ]}
                     >
-                      {(selectedWorker as any).status === "SUSPENDED" ? "Suspended" : "Active"}
+                      {selectedWorker.status === "BLOCKED"
+                        ? "Blocked"
+                        : selectedWorker.status === "SUSPENDED"
+                          ? "Suspended"
+                          : "Active"}
                     </Text>
                   </View>
                 </View>
@@ -2638,6 +2732,49 @@ export const AdminHub: React.FC = () => {
                       {(selectedWorker as any).status === "SUSPENDED"
                         ? "RE-ACTIVATE WORKER"
                         : "SUSPEND WORKER ACCESS"}
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[styles.workerActionBtn, styles.workerActionBtnDestructive]}
+                    onPress={async () => {
+                      if (!organization?.id) return;
+                      const isBlocked = selectedWorker.status === "BLOCKED";
+                      setIsManagingWorker(true);
+                      try {
+                        await updateMemberStatus(
+                          organization.id,
+                          selectedWorker.id,
+                          isBlocked ? "ACTIVE" : "BLOCKED"
+                        );
+                        toast.success(
+                          isBlocked
+                            ? `${selectedWorker.fullName} unblocked.`
+                            : `${selectedWorker.fullName} blocked permanently.`
+                        );
+                        setSelectedWorker(null);
+                      } catch {
+                        toast.error("Failed to update block status.");
+                      } finally {
+                        setIsManagingWorker(false);
+                      }
+                    }}
+                    disabled={isManagingWorker}
+                  >
+                    <Ionicons
+                      name={selectedWorker.status === "BLOCKED" ? "lock-open-outline" : "lock-closed-outline"}
+                      size={18}
+                      color={selectedWorker.status === "BLOCKED" ? "#10b981" : "#d92d20"}
+                    />
+                    <Text
+                      style={[
+                        styles.workerActionBtnText,
+                        { color: selectedWorker.status === "BLOCKED" ? "#10b981" : "#d92d20" },
+                      ]}
+                    >
+                      {selectedWorker.status === "BLOCKED"
+                        ? "UNBLOCK WORKER"
+                        : "BLOCK WORKER FOR GOOD"}
                     </Text>
                   </TouchableOpacity>
 
@@ -2773,6 +2910,130 @@ export const AdminHub: React.FC = () => {
                 <Text style={styles.adminSignOutBtnText}>SIGN OUT OF ADMIN HUB</Text>
               </TouchableOpacity>
             </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* ---------------------------------------------------------------- */}
+      {/* MODAL 4: ADMIN SECURITY NOTIFICATIONS (CLOCK TAMPERING ALERTS)   */}
+      {/* ---------------------------------------------------------------- */}
+      <Modal
+        visible={showNotificationsModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowNotificationsModal(false)}
+      >
+        <Pressable
+          style={styles.modalBackdrop}
+          onPress={() => setShowNotificationsModal(false)}
+        >
+          <Pressable
+            style={[
+              styles.modalSheetCard,
+              { paddingBottom: Math.max(insets.bottom + 20, Platform.OS === "ios" ? 36 : 28) },
+            ]}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <View style={styles.modalDragHandle} />
+            <View style={styles.modalHeaderRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>Security Notifications</Text>
+                <Text style={styles.modalSubtitle}>
+                  3-strike clock/date tampering & suspension alerts
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => setShowNotificationsModal(false)}
+                style={styles.modalCloseButton}
+              >
+                <Ionicons name="close" size={20} color="#142748" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={{ maxHeight: 420 }} contentContainerStyle={{ gap: 10 }}>
+              {notifications.length === 0 ? (
+                <View style={{ paddingVertical: 28, alignItems: "center", gap: 6 }}>
+                  <Ionicons name="shield-checkmark-outline" size={30} color="#10b981" />
+                  <Text style={{ fontSize: rf(14), fontWeight: "700", color: C.ink }}>
+                    No Security Alerts
+                  </Text>
+                  <Text style={{ fontSize: rf(12), color: C.muted, textAlign: "center" }}>
+                    Clock/date tampering suspensions will appear here in real time.
+                  </Text>
+                </View>
+              ) : (
+                notifications.map((n) => {
+                  const targetMember = members.find((m) => m.id === n.memberId);
+                  const curStatus = targetMember?.status || "SUSPENDED";
+                  return (
+                    <View
+                      key={n.id}
+                      style={{
+                        padding: 12,
+                        borderRadius: R.md,
+                        backgroundColor: n.read ? C.cardAlt : "#fef2f2",
+                        borderWidth: 1,
+                        borderColor: n.read ? C.lineCard : "#fecaca",
+                        gap: 8,
+                      }}
+                    >
+                      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                        <Text style={{ fontSize: rf(13.5), fontWeight: "800", color: C.ink }}>
+                          {n.memberName} ({n.department || "General"})
+                        </Text>
+                        <Text
+                          style={{
+                            fontSize: rf(10),
+                            fontWeight: "800",
+                            color:
+                              curStatus === "ACTIVE"
+                                ? "#10b981"
+                                : "#d92d20",
+                          }}
+                        >
+                          {curStatus}
+                        </Text>
+                      </View>
+                      <Text style={{ fontSize: rf(12), color: C.ink2 }}>{n.reason}</Text>
+                      <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+                        <TouchableOpacity
+                          style={{
+                            paddingHorizontal: 10,
+                            paddingVertical: 7,
+                            borderRadius: R.sm,
+                            backgroundColor: "#ecfdf5",
+                            borderWidth: 1,
+                            borderColor: "#10b981",
+                          }}
+                          onPress={() => handleNotificationMemberAction(n, "ACTIVE")}
+                        >
+                          <Text style={{ fontSize: rf(11), fontWeight: "800", color: "#059669" }}>
+                            {curStatus === "BLOCKED" ? "UNBLOCK" : "UNSUSPEND"}
+                          </Text>
+                        </TouchableOpacity>
+                        {curStatus !== "BLOCKED" && (
+                          <TouchableOpacity
+                            style={{
+                              paddingHorizontal: 10,
+                              paddingVertical: 7,
+                              borderRadius: R.sm,
+                              backgroundColor: "#fef2f2",
+                              borderWidth: 1,
+                              borderColor: "#d92d20",
+                            }}
+                            onPress={() => handleNotificationMemberAction(n, "BLOCKED")}
+                          >
+                            <Text style={{ fontSize: rf(11), fontWeight: "800", color: "#d92d20" }}>
+                              BLOCK FOR GOOD
+                            </Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    </View>
+                  );
+                })
+              )}
+            </ScrollView>
           </Pressable>
         </Pressable>
       </Modal>
