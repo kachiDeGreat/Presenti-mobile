@@ -2362,7 +2362,13 @@ export const AdminHub: React.FC = () => {
           style={styles.modalBackdrop}
           onPress={() => setSelectedPunch(null)}
         >
-          <Pressable style={styles.modalSheetCard} onPress={(e) => e.stopPropagation()}>
+          <Pressable
+            style={[
+              styles.modalSheetCard,
+              { paddingBottom: Math.max(insets.bottom + 20, Platform.OS === "ios" ? 36 : 28) },
+            ]}
+            onPress={(e) => e.stopPropagation()}
+          >
             <View style={styles.modalDragHandle} />
 
             <View style={styles.modalHeaderRow}>
@@ -2486,7 +2492,13 @@ export const AdminHub: React.FC = () => {
           style={styles.modalBackdrop}
           onPress={() => setSelectedWorker(null)}
         >
-          <Pressable style={styles.modalSheetCard} onPress={(e) => e.stopPropagation()}>
+          <Pressable
+            style={[
+              styles.modalSheetCard,
+              { paddingBottom: Math.max(insets.bottom + 20, Platform.OS === "ios" ? 36 : 28) },
+            ]}
+            onPress={(e) => e.stopPropagation()}
+          >
             <View style={styles.modalDragHandle} />
 
             <View style={styles.modalHeaderRow}>
@@ -2649,7 +2661,13 @@ export const AdminHub: React.FC = () => {
           style={styles.modalBackdrop}
           onPress={() => setShowAdminProfileModal(false)}
         >
-          <Pressable style={styles.modalSheetCard} onPress={(e) => e.stopPropagation()}>
+          <Pressable
+            style={[
+              styles.modalSheetCard,
+              { paddingBottom: Math.max(insets.bottom + 20, Platform.OS === "ios" ? 36 : 28) },
+            ]}
+            onPress={(e) => e.stopPropagation()}
+          >
             <View style={styles.modalDragHandle} />
 
             <View style={styles.modalHeaderRow}>
