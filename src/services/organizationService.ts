@@ -362,7 +362,7 @@ export async function enforceDeviceWorkerLock(params: {
         // Rule 1A: Block any OTHER worker account from signing in or creating an account on this bound phone
         if (cleanEmail && resolvedEmail && cleanEmail !== resolvedEmail) {
           throw new Error(
-            `This mobile phone is already bound to ${resolvedFullName} (${resolvedEmail}) under ${resolvedOrgName}. Only one worker account is allowed per phone. Please contact the ${resolvedOrgName} administrator to delete that worker account and release this mobile phone.`
+            'This mobile phone is already bound to another worker account. Only one worker account is allowed per phone.'
           );
         }
 
@@ -411,7 +411,7 @@ export async function enforceDeviceWorkerLock(params: {
               boundDev !== cleanDeviceId
             ) {
               throw new Error(
-                `Your worker account (${cleanEmail}) is already bound to another mobile phone under ${orgName}. Please use your registered phone or contact the ${orgName} administrator to release your device.`
+                'This email is already bound to another mobile phone. Please use your registered phone or contact your administrator to release your device.'
               );
             }
 
@@ -878,7 +878,7 @@ export async function registerMember(
           const boundEmail = (bound.email || '').trim().toLowerCase();
           if (boundEmail && cleanEmail && boundEmail !== cleanEmail) {
             throw new Error(
-              `This mobile phone is already bound to ${bound.fullName || 'another worker'} (${bound.email || 'another account'}) under ${orgName}. Only one worker account is allowed per phone. Please contact the ${orgName} administrator to delete that worker account and release this mobile phone.`
+              'This mobile phone is already bound to another worker account. Only one worker account is allowed per phone.'
             );
           }
         }
@@ -900,7 +900,7 @@ export async function registerMember(
           existingBoundDev !== memberData.boundDeviceId
         ) {
           throw new Error(
-            `Your account is already bound to another registered mobile phone under ${orgName}. Please use your registered phone or contact your administrator to release your device.`
+            'This email is already bound to another mobile phone. Please use your registered phone or contact your administrator to release your device.'
           );
         }
 
@@ -1222,7 +1222,7 @@ export async function findExistingMember(orgId: string, email?: string, deviceId
       const boundEmail = (bound.email || '').trim().toLowerCase();
       if (cleanEmail && boundEmail && boundEmail !== cleanEmail) {
         throw new Error(
-          `This mobile phone is already bound to ${bound.fullName || 'another worker'} (${bound.email || 'another account'}) under ${orgName}. Only one worker account is allowed per phone. Please contact the ${orgName} administrator to delete that worker account and release this mobile phone.`
+          'This mobile phone is already bound to another worker account. Only one worker account is allowed per phone.'
         );
       }
     }
@@ -1236,7 +1236,7 @@ export async function findExistingMember(orgId: string, email?: string, deviceId
       // Verify device binding
       if (boundDev && boundDev !== 'UNBOUND' && deviceId && boundDev !== deviceId) {
         throw new Error(
-          `Your worker account (${cleanEmail}) is already bound to another mobile phone under ${orgName}. You can only sign in from your registered phone. Please contact the ${orgName} administrator to release your previous device.`
+          'This email is already bound to another mobile phone. Please use your registered phone or contact your administrator to release your device.'
         );
       }
 

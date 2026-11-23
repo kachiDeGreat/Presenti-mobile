@@ -486,7 +486,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   await AsyncStorage.removeItem(STORAGE_KEY_USER).catch(() => {});
                   setUser(null);
                   throw new Error(
-                    `Your worker account (${cleanEmail}) is already bound to another mobile phone under ${freshOrg.churchName}. Please use your registered phone or contact your administrator to release your device.`
+                    'This email is already bound to another mobile phone. Please use your registered phone or contact your administrator to release your device.'
                   );
                 }
 
