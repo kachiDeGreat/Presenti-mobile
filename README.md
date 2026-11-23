@@ -143,15 +143,30 @@ sequenceDiagram
 ```text
 MOBILE-APP/src/
 ├── app/            # Expo Router screens (index, login, onboarding, admin-onboarding, calibrate)
-├── components/     # Reusable UI & modals (AdminHub, AccordionCard, FaceScannerModal, AskPresentiChatModal, PresenceMapMobile)
+├── components/     # Reusable UI & modals (AdminHub, AccordionCard, LocationPickerModal, FaceScannerModal, AskPresentiChatModal, PresenceMapMobile)
 ├── config/         # Firebase client initialization (firebase.ts)
-├── constants/      # ArtCraft design tokens, typography, and shadows (premium.ts)
+├── constants/      # ArtCraft design tokens & width-responsive typography (premium.ts)
 ├── context/        # React Context providers (AuthContext, ToastContext)
+├── data/           # Offline cascading Country/State/City-LGA datasets (locationsData.ts)
 ├── hooks/          # Custom React hooks
 ├── services/       # Cloud, AI, GPS, Wi-Fi, and device-binding services
 ├── types/          # Shared TypeScript interfaces
-└── utils/          # Policy evaluation & helper utilities
+└── utils/          # Multi-shift & time-policy evaluation utilities (timePolicy.ts)
 ```
+
+---
+
+## TCC Hackathon 2026 — Pre-Sprint vs. Sprint Breakdown
+
+### Pre-Sprint Foundation (Existing Before Nov 22, 2026)
+- Firebase Auth (Google SSO, Email/Password + OTP) and Cloud Firestore workspace sync.
+- 1-Worker-1-Phone hardware binding (`deviceService.ts`) and pre-scan Wi-Fi BSSID / strict fresh GPS geofencing.
+- Initial Face Scanner (`FaceScannerModal.tsx`), AskPresenti AI chat, and Mobile Admin Hub.
+
+### Sprint Features Built During Nov 22–24, 2026
+- **Multi-Shift Support (`MULTI_SHIFT`):** Morning (`06:00–14:00`), Afternoon (`14:00–22:00`), and overnight-aware Night (`22:00–06:00`) shift configuration in Admin Onboarding & Manage Tab, worker shift selection during onboarding, and shift-aware `evaluateAttendanceWindow` policy evaluation.
+- **Cascading Location Dropdowns (`locationsData.ts`, `LocationPickerModal.tsx`):** Offline searchable Country (including `Other ▾`) → States A–Z (all 36 Nigerian states + FCT) → Cities / LGAs (including Cross River LGAs) in Admin Onboarding.
+- **Width-Responsive Typography & Accessibility Scaling (`rf()` + `maxFontSizeMultiplier`):** Consistent sizing across budget & flagship screens even with large OS font zoom.
 
 ### Building & Running
 
