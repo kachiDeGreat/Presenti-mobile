@@ -1225,7 +1225,7 @@ export async function recordClockTamperingStrike(
 
   const nextStrikes = Math.min(3, currentStrikes + 1);
   const suspended = nextStrikes >= 3;
-  const reason = `Device clock/date tampering detected (${driftMinutes}m drift from network time — ${nextStrikes}/3 strikes).`;
+  const reason = `Clock/date tampering detected (${nextStrikes}/3 strikes).`;
 
   try {
     await updateDoc(memberDocRef, {

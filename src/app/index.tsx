@@ -453,7 +453,7 @@ export default function DashboardScreen() {
       return;
     }
 
-    setClockInStepLabel("Verifying network time...");
+    setClockInStepLabel("Verifying attendance...");
     try {
       const clockCheck = await verifyNetworkClockIntegrity();
       if (!clockCheck.ok && organization?.id && member?.id) {
@@ -465,13 +465,13 @@ export default function DashboardScreen() {
         if (suspended) {
           refreshOrganization().catch(() => {});
           toast.error(
-            "Clock/Date Tampering (3/3): Your account has been suspended and your administrator has been notified.",
+            "Clock/Date Tampering (3/3): You have tampered with your time or date. Your account has been suspended and your administrator has been notified.",
             { title: "Account Suspended", duration: 7000 },
           );
         } else {
           const left = 3 - strikes;
           toast.warn(
-            `Clock/Date Tampering Warning (${strikes}/3): Your device date or time does not match network time. ${left} attempt${left > 1 ? "s" : ""} left before automatic suspension.`,
+            `Clock/Date Tampering Warning (${strikes}/3): You have tampered with your time or date. ${left} attempt${left > 1 ? "s" : ""} left before automatic suspension.`,
             { title: `Tampering Warning ${strikes}/3`, duration: 6500 },
           );
         }
