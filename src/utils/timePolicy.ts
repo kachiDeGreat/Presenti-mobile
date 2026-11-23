@@ -85,10 +85,19 @@ export function evaluateAttendanceWindow(
 
   // Multi-Shift resolution (Morning / Afternoon / Night, including overnight shifts)
   const isMultiShift = policy?.scheduleMode === 'MULTI_SHIFT' && Array.isArray(policy.shifts) && policy.shifts.length > 0;
-  const activeShift = isMultiShift
+  const rawShift = isMultiShift
     ? (policy!.shifts!.find((s) => s.id === assignedShiftId && s.enabled !== false) ||
        policy!.shifts!.find((s) => s.enabled !== false) ||
        policy!.shifts![0])
+    : undefined;
+  const shiftDayOverride = rawShift?.dayOverrides?.[currentDay];
+  const activeShift = rawShift
+    ? {
+        ...rawShift,
+        arrivalCutoff: shiftDayOverride?.arrivalCutoff || rawShift.arrivalCutoff,
+        lateTolerance: shiftDayOverride?.lateTolerance || rawShift.lateTolerance,
+        signOutTime: shiftDayOverride?.signOutTime || rawShift.signOutTime,
+      }
     : undefined;
 
   // Check if a day-specific schedule exists for today (e.g. Sunday vs Wednesday hours)

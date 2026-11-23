@@ -16,6 +16,7 @@ import * as Clipboard from "expo-clipboard";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
 import { C, MONO, R, T, shadow, ui, rf } from "../constants/premium";
+import { ShiftScheduleEditor } from "./ShiftScheduleEditor";
 import type { DaySchedule, ShiftSchedule } from "../types";
 
 const DEFAULT_SHIFTS: ShiftSchedule[] = [
@@ -394,110 +395,11 @@ export const AdminManageTab: React.FC = () => {
         </View>
 
         {scheduleMode === "MULTI_SHIFT" ? (
-          <View style={{ gap: 10 }}>
-            {shifts.map((sh) => {
-              const isOvernight = sh.signOutTime < sh.arrivalCutoff;
-              return (
-                <View
-                  key={sh.id}
-                  style={{
-                    padding: 12,
-                    borderRadius: R.md,
-                    borderWidth: 1,
-                    borderColor: sh.enabled !== false ? C.accent : C.lineCard,
-                    backgroundColor: C.cardAlt,
-                    gap: 8,
-                  }}
-                >
-                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                    <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 8 }}>
-                      <TextInput
-                        style={{
-                          flex: 1,
-                          fontSize: rf(13.5),
-                          fontWeight: "700",
-                          color: C.ink,
-                          borderBottomWidth: 1,
-                          borderBottomColor: C.lineCard,
-                          paddingVertical: 2,
-                        }}
-                        value={sh.name}
-                        onChangeText={(v) => updateShift(sh.id, { name: v })}
-                        placeholder="Shift name"
-                        placeholderTextColor={C.faint}
-                      />
-                      {isOvernight && (
-                        <View style={{ backgroundColor: C.accentSoft, paddingHorizontal: 7, paddingVertical: 2, borderRadius: R.pill }}>
-                          <Text style={{ fontSize: rf(9.5), fontWeight: "700", color: C.accent }}>OVERNIGHT</Text>
-                        </View>
-                      )}
-                    </View>
-                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                      {shifts.length > 1 && (
-                        <TouchableOpacity onPress={() => removeShift(sh.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                          <Ionicons name="trash-outline" size={16} color={C.muted} />
-                        </TouchableOpacity>
-                      )}
-                      <Switch
-                        value={sh.enabled !== false}
-                        onValueChange={(v) => updateShift(sh.id, { enabled: v })}
-                        trackColor={{ false: C.line, true: C.accent }}
-                      />
-                    </View>
-                  </View>
-                  {sh.enabled !== false && (
-                    <View style={{ flexDirection: "row", gap: 8 }}>
-                      <View style={{ flex: 1, gap: 4 }}>
-                        <Text style={styles.label}>OPEN</Text>
-                        <TextInput
-                          style={styles.input}
-                          value={sh.arrivalCutoff}
-                          onChangeText={(v) => updateShift(sh.id, { arrivalCutoff: v })}
-                          placeholder="06:00"
-                        />
-                      </View>
-                      <View style={{ flex: 1, gap: 4 }}>
-                        <Text style={styles.label}>CUTOFF</Text>
-                        <TextInput
-                          style={styles.input}
-                          value={sh.lateTolerance}
-                          onChangeText={(v) => updateShift(sh.id, { lateTolerance: v })}
-                          placeholder="06:30"
-                        />
-                      </View>
-                      <View style={{ flex: 1, gap: 4 }}>
-                        <Text style={styles.label}>SIGN OUT</Text>
-                        <TextInput
-                          style={styles.input}
-                          value={sh.signOutTime}
-                          onChangeText={(v) => updateShift(sh.id, { signOutTime: v })}
-                          placeholder="14:00"
-                        />
-                      </View>
-                    </View>
-                  )}
-                </View>
-              );
-            })}
-            <TouchableOpacity
-              style={{
-                height: 44,
-                borderRadius: R.md,
-                borderWidth: 1,
-                borderColor: C.lineCard,
-                backgroundColor: C.card,
-                flexDirection: "row",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 6,
-              }}
-              onPress={addCustomShift}
-              activeOpacity={0.8}
-            >
-              <Ionicons name="add-circle-outline" size={16} color={C.ink} />
-              <Text style={{ ...T.labelSm, color: C.ink, fontSize: rf(11) }}>ADD ANOTHER SHIFT</Text>
-            </TouchableOpacity>
-          </View>
+          <ShiftScheduleEditor
+            shifts={shifts}
+            serviceDays={serviceDays}
+            onChangeShifts={setShifts}
+          />
         ) : (
           <>
 

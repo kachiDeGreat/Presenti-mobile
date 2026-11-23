@@ -32,6 +32,13 @@ export interface DaySchedule {
   signOutTime?: string; // e.g. "17:00" (Sign-out starts from this time; no close cutoff)
 }
 
+export interface ShiftDayOverride {
+  arrivalCutoff?: string;
+  lateTolerance?: string;
+  signOutTime?: string;
+  enabled?: boolean;
+}
+
 export interface ShiftSchedule {
   id: string; // e.g. 'MORNING' | 'AFTERNOON' | 'NIGHT'
   name: string; // e.g. 'Morning Shift'
@@ -41,6 +48,7 @@ export interface ShiftSchedule {
   allowLateSignIn?: boolean;
   enableSignOut?: boolean;
   enabled?: boolean;
+  dayOverrides?: Record<number, ShiftDayOverride>; // Optional per-day times (0=Sun..6=Sat)
 }
 
 export interface PolicySettings {
