@@ -117,8 +117,8 @@ export async function acquireDeviceCoordinates(
     }
     if (strictFresh && loc.timestamp) {
       const ageMs = Date.now() - loc.timestamp;
-      if (ageMs > 90_000) {
-        // Stale OS-cached location (>90s old) — discard so we force a live fix
+      if (ageMs > 120_000) {
+        // Stale OS-cached location (>120s old) — discard so we force a live fix
         return null;
       }
     }
@@ -131,9 +131,7 @@ export async function acquireDeviceCoordinates(
 
   try {
     const highPromise = Location.getCurrentPositionAsync({
-      accuracy:
-        options?.preferredAccuracy ??
-        (strictFresh ? Location.Accuracy.BestForNavigation : Location.Accuracy.High),
+      accuracy: options?.preferredAccuracy ?? Location.Accuracy.High,
     });
     const timeoutPromise = new Promise<null>((resolve) =>
       setTimeout(() => resolve(null), timeoutMs)
@@ -168,7 +166,7 @@ export async function acquireDeviceCoordinates(
 
       Location.watchPositionAsync(
         {
-          accuracy: Location.Accuracy.High,
+          accuracy: Location.Accuracy.Balanced,
           timeInterval: 500,
           distanceInterval: 0,
         },
