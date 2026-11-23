@@ -1442,11 +1442,11 @@ const styles = StyleSheet.create({
   primaryBtnText: {
     ...T.labelSm,
     color: C.white,
-    fontSize: 12.5,
+    fontSize: rf(11.5),
   },
   secondaryBtn: {
     height: 50,
-    paddingHorizontal: 16,
+    paddingHorizontal: 14,
     borderRadius: R.md,
     backgroundColor: C.cardAlt,
     borderWidth: 1,
@@ -1460,6 +1460,6 @@ const styles = StyleSheet.create({
   secondaryBtnText: {
     ...T.labelSm,
     color: C.ink,
-    fontSize: 12.5,
+    fontSize: rf(11.5),
   },
 });

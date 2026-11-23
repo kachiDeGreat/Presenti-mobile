@@ -3456,7 +3456,7 @@ const styles = StyleSheet.create({
   },
   primaryActionBtnText: {
     ...ui.btnPrimaryText,
-    fontSize: rf(13),
+    fontSize: rf(11.5),
   },
   btnDisabled: {
     opacity: 0.6,
