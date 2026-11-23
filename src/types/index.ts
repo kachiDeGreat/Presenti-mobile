@@ -119,6 +119,8 @@ export interface ChurchMember {
   faceEnrolledAt?: string;
   assignedShiftId?: string;
   assignedShiftName?: string;
+  status?: 'ACTIVE' | 'SUSPENDED';
+  flagReason?: string;
 }
 
 export interface MobileUser {

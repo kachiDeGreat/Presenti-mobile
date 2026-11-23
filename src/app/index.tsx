@@ -29,6 +29,8 @@ import {
   saveTodayPunchRecord,
   clearTodayPunchRecord,
   fetchTodayMemberAttendance,
+  verifyNetworkClockIntegrity,
+  flagAndSuspendForClockTampering,
   loadFaceFromLocalVault,
 } from "../services/organizationService";
 import {
@@ -429,8 +431,31 @@ export default function DashboardScreen() {
     return presence;
   };
 
-  // Clock-in execution: 1) Window check -> 2) Location/Wi-Fi check -> 3) AI Face Scan
+  // Clock-in execution: 0) Suspension & clock-tampering check -> 1) Window check -> 2) Location/Wi-Fi check -> 3) AI Face Scan
   const handleClockIn = async () => {
+    if (member?.status === "SUSPENDED") {
+      toast.error(
+        member.flagReason ||
+          "Your account is currently suspended. Contact your administrator to reactivate.",
+        { title: "Account Suspended", duration: 6000 },
+      );
+      return;
+    }
+
+    const clockCheck = await verifyNetworkClockIntegrity();
+    if (!clockCheck.ok && organization?.id && member?.id) {
+      await flagAndSuspendForClockTampering(
+        organization.id,
+        member.id,
+        clockCheck.driftMinutes || 0,
+      );
+      toast.error(
+        "Device clock tampering detected! Your device time does not match network time. This account has been flagged and suspended.",
+        { title: "Account Suspended", duration: 7000 },
+      );
+      return;
+    }
+
     // 1. Safety check: prevent double punch if already recorded
     if (todayPunch) {
       toast.info(`Already signed in today at ${todayPunch.displayTime}.`);

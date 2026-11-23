@@ -1161,11 +1161,62 @@ export async function updateMemberStatus(
     const memberDocRef = doc(db, 'churches', orgId, 'members', memberId);
     await updateDoc(memberDocRef, {
       status,
+      ...(status === 'ACTIVE' ? { flagReason: null } : {}),
       statusUpdatedAt: new Date().toISOString(),
     });
   } catch (error) {
     console.error('Error updating member status:', error);
     throw error;
+  }
+}
+
+/**
+ * Checks device clock against authoritative HTTP Date header (2.5s timeout).
+ * Flags tampering if device time differs by >3 minutes; skips cleanly when offline.
+ */
+export async function verifyNetworkClockIntegrity(): Promise<{
+  ok: boolean;
+  driftMinutes?: number;
+}> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2500);
+  try {
+    const res = await fetch('https://www.google.com/generate_204', {
+      method: 'HEAD',
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    const dateHdr = res.headers.get('date');
+    if (!dateHdr) return { ok: true };
+    const serverMs = Date.parse(dateHdr);
+    if (Number.isNaN(serverMs)) return { ok: true };
+    const driftMs = Math.abs(Date.now() - serverMs);
+    if (driftMs > 3 * 60 * 1000) {
+      return { ok: false, driftMinutes: Math.round(driftMs / 60_000) };
+    }
+    return { ok: true };
+  } catch {
+    clearTimeout(timer);
+    return { ok: true };
+  }
+}
+
+export async function flagAndSuspendForClockTampering(
+  orgId: string,
+  memberId: string,
+  driftMinutes: number
+): Promise<void> {
+  try {
+    const memberDocRef = doc(db, 'churches', orgId, 'members', memberId);
+    await updateDoc(memberDocRef, {
+      status: 'SUSPENDED',
+      flagReason: `Device clock tampering detected (${driftMinutes}m drift from network time).`,
+      flaggedAt: new Date().toISOString(),
+      statusUpdatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.warn('Could not flag clock tampering:', err);
   }
 }
 
