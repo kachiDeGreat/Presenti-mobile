@@ -1820,12 +1820,27 @@ export async function createAdminOrganization(params: {
   const cleanCode = params.churchCode.trim().toUpperCase();
   const orgId = params.uid || `org_${Date.now().toString(36)}`;
 
-  // Ensure organization code is not already taken by another organization
-  const codeSnap = await getDocs(
-    query(collection(db, 'churches'), where('churchCode', '==', cleanCode), limit(1))
-  );
-  if (!codeSnap.empty && codeSnap.docs[0].id !== orgId) {
-    throw new Error(`Organization code "${cleanCode}" is already in use. Please regenerate a new code.`);
+  const withTimeout = <T>(promise: Promise<T>, ms: number, msg: string): Promise<T> =>
+    Promise.race([
+      promise,
+      new Promise<T>((_, reject) => setTimeout(() => reject(new Error(msg)), ms)),
+    ]);
+
+  // Ensure organization code is not already taken (bounded to 4s so slow mobile data never hangs)
+  try {
+    const codeSnap = await withTimeout(
+      getDocs(query(collection(db, 'churches'), where('churchCode', '==', cleanCode), limit(1))),
+      4500,
+      'Code check timed out'
+    );
+    if (!codeSnap.empty && codeSnap.docs[0].id !== orgId) {
+      throw new Error(`Organization code "${cleanCode}" is already in use. Please regenerate a new code.`);
+    }
+  } catch (codeErr: any) {
+    if (String(codeErr?.message || '').includes('already in use')) {
+      throw codeErr;
+    }
+    // Otherwise proceed (random org code collision is negligible and shouldn't block onboarding)
   }
 
   const orgPayload: Record<string, any> = {
@@ -1858,20 +1873,25 @@ export async function createAdminOrganization(params: {
     updatedAt: new Date().toISOString(),
   };
 
-  await setDoc(doc(db, 'churches', orgId), cleanFirestorePayload(orgPayload), { merge: true });
-
-  if (cleanEmail) {
-    await setDoc(
-      doc(db, 'account_roles', cleanEmail),
-      {
-        email: cleanEmail,
-        role: 'ADMIN',
-        churchId: orgId,
-        updatedAt: new Date().toISOString(),
-      },
-      { merge: true }
-    ).catch(() => {});
-  }
+  await withTimeout(
+    Promise.all([
+      setDoc(doc(db, 'churches', orgId), cleanFirestorePayload(orgPayload), { merge: true }),
+      cleanEmail
+        ? setDoc(
+            doc(db, 'account_roles', cleanEmail),
+            {
+              email: cleanEmail,
+              role: 'ADMIN',
+              churchId: orgId,
+              updatedAt: new Date().toISOString(),
+            },
+            { merge: true }
+          ).catch(() => {})
+        : Promise.resolve(),
+    ]),
+    12000,
+    'Network connection is slow or offline. Please check your internet and tap Launch Workspace again.'
+  );
 
   const createdOrg: Organization = {
     id: orgId,

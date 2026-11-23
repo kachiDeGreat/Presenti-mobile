@@ -146,6 +146,28 @@ export default function AdminOnboardingScreen() {
     );
   };
 
+  const addCustomShift = () => {
+    const idx = shifts.length + 1;
+    setShifts((prev) => [
+      ...prev,
+      {
+        id: `SHIFT_${Date.now().toString(36)}`,
+        name: `Shift ${idx}`,
+        arrivalCutoff: "09:00",
+        lateTolerance: "09:30",
+        signOutTime: "17:00",
+        allowLateSignIn: true,
+        enableSignOut: true,
+        enabled: true,
+      },
+    ]);
+  };
+
+  const removeShift = (shiftId: string) => {
+    if (shifts.length <= 1) return;
+    setShifts((prev) => prev.filter((s) => s.id !== shiftId));
+  };
+
   const draftKey = user?.uid ? `@presenti_admin_onboarding_${user.uid}` : null;
   const draftLoadedRef = useRef(false);
   const hasNavigatedRef = useRef(false);
@@ -851,22 +873,41 @@ export default function AdminOnboardingScreen() {
                           gap: 10,
                         }}
                       >
-                        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
-                          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-                            <Text style={{ fontSize: rf(14), fontWeight: "700", color: C.ink }}>
-                              {sh.name}
-                            </Text>
+                        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                          <View style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 8 }}>
+                            <TextInput
+                              style={{
+                                flex: 1,
+                                fontSize: rf(14),
+                                fontWeight: "700",
+                                color: C.ink,
+                                borderBottomWidth: 1,
+                                borderBottomColor: C.lineCard,
+                                paddingVertical: 2,
+                              }}
+                              value={sh.name}
+                              onChangeText={(v) => updateShift(sh.id, { name: v })}
+                              placeholder="Shift name"
+                              placeholderTextColor={C.faint}
+                            />
                             {isOvernight && (
                               <View style={{ backgroundColor: C.accentSoft, paddingHorizontal: 7, paddingVertical: 2, borderRadius: R.pill }}>
                                 <Text style={{ fontSize: rf(9.5), fontWeight: "700", color: C.accent }}>OVERNIGHT</Text>
                               </View>
                             )}
                           </View>
-                          <Switch
-                            value={sh.enabled !== false}
-                            onValueChange={(v) => updateShift(sh.id, { enabled: v })}
-                            trackColor={{ false: C.line, true: C.accent }}
-                          />
+                          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                            {shifts.length > 1 && (
+                              <TouchableOpacity onPress={() => removeShift(sh.id)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                                <Ionicons name="trash-outline" size={16} color={C.muted} />
+                              </TouchableOpacity>
+                            )}
+                            <Switch
+                              value={sh.enabled !== false}
+                              onValueChange={(v) => updateShift(sh.id, { enabled: v })}
+                              trackColor={{ false: C.line, true: C.accent }}
+                            />
+                          </View>
                         </View>
                         {sh.enabled !== false && (
                           <View style={{ flexDirection: "row", gap: 8 }}>
@@ -902,6 +943,14 @@ export default function AdminOnboardingScreen() {
                       </View>
                     );
                   })}
+                  <TouchableOpacity
+                    style={[styles.secondaryBtn, { marginTop: 2 }]}
+                    onPress={addCustomShift}
+                    activeOpacity={0.8}
+                  >
+                    <Ionicons name="add-circle-outline" size={16} color={C.ink} />
+                    <Text style={styles.secondaryBtnText}>ADD ANOTHER SHIFT</Text>
+                  </TouchableOpacity>
                 </View>
               ) : (
                 <>
