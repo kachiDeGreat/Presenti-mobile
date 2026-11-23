@@ -961,28 +961,6 @@ export default function AdminOnboardingScreen() {
 
               <View style={styles.switchRow}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.switchTitle}>Allow Late Check-In</Text>
-                  <Text style={styles.switchSub}>
-                    Allow arrivals after cutoff (flagged as LATE)
-                  </Text>
-                </View>
-                <Switch
-                  value={
-                    scheduleMode === "UNIFIED"
-                      ? allowLateSignIn
-                      : Boolean(activeDaySched.allowLateSignIn ?? true)
-                  }
-                  onValueChange={(v) =>
-                    scheduleMode === "UNIFIED"
-                      ? setAllowLateSignIn(v)
-                      : updateDaySchedule(activeScheduleDay, { allowLateSignIn: v })
-                  }
-                  trackColor={{ false: C.line, true: C.accent }}
-                />
-              </View>
-
-              <View style={styles.switchRow}>
-                <View style={{ flex: 1 }}>
                   <Text style={styles.switchTitle}>Enable Mandatory Sign-Out</Text>
                   <Text style={styles.switchSub}>
                     Require workers to scan out at departure
@@ -1026,6 +1004,21 @@ export default function AdminOnboardingScreen() {
               )}
                 </>
               )}
+
+              {/* Global Standalone Allow Late Check-In (Applies to Unified, Per Day & Multi-Shift) */}
+              <View style={styles.switchRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.switchTitle}>Allow Late Check-In</Text>
+                  <Text style={styles.switchSub}>
+                    Permit arrivals after cutoff (tagged LATE) across all modes
+                  </Text>
+                </View>
+                <Switch
+                  value={allowLateSignIn}
+                  onValueChange={setAllowLateSignIn}
+                  trackColor={{ false: C.line, true: C.accent }}
+                />
+              </View>
 
               <View style={styles.navRow}>
                 <TouchableOpacity

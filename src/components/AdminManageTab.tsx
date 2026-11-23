@@ -466,26 +466,6 @@ export const AdminManageTab: React.FC = () => {
 
         <View style={styles.switchRow}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.switchTitle}>Allow Late Check-In</Text>
-            <Text style={styles.switchSub}>Flag arrivals after cutoff as LATE</Text>
-          </View>
-          <Switch
-            value={
-              scheduleMode === "UNIFIED"
-                ? allowLateSignIn
-                : Boolean(activeDaySched.allowLateSignIn ?? true)
-            }
-            onValueChange={(v) =>
-              scheduleMode === "UNIFIED"
-                ? setAllowLateSignIn(v)
-                : updateDaySchedule(activeScheduleDay, { allowLateSignIn: v })
-            }
-            trackColor={{ false: C.line, true: C.accent }}
-          />
-        </View>
-
-        <View style={styles.switchRow}>
-          <View style={{ flex: 1 }}>
             <Text style={styles.switchTitle}>Mandatory Sign-Out</Text>
             <Text style={styles.switchSub}>Require workers to scan out at departure</Text>
           </View>
@@ -527,6 +507,21 @@ export const AdminManageTab: React.FC = () => {
         )}
           </>
         )}
+
+        {/* Global Standalone Allow Late Check-In (Applies to Unified, Per-Day & Multi-Shift) */}
+        <View style={styles.switchRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.switchTitle}>Allow Late Check-In</Text>
+            <Text style={styles.switchSub}>
+              Permit arrivals after cutoff (tagged LATE) across all modes
+            </Text>
+          </View>
+          <Switch
+            value={allowLateSignIn}
+            onValueChange={setAllowLateSignIn}
+            trackColor={{ false: C.line, true: C.accent }}
+          />
+        </View>
 
         <TouchableOpacity
           style={styles.saveBtn}

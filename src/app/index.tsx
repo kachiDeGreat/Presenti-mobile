@@ -1056,12 +1056,18 @@ export default function DashboardScreen() {
                 </View>
                 <View style={{ flex: 1, gap: 2 }}>
                   <Text style={styles.punchBtnTitle}>
-                    {windowEval.status === "WINDOW_OPEN_LATE"
-                      ? "CLOCK IN FOR SHIFT (LATE)"
-                      : "CLOCK IN FOR SHIFT"}
+                    {windowEval.activeShiftName
+                      ? windowEval.status === "WINDOW_OPEN_LATE"
+                        ? `CLOCK IN • ${windowEval.activeShiftName.toUpperCase()} (LATE)`
+                        : `CLOCK IN • ${windowEval.activeShiftName.toUpperCase()}`
+                      : windowEval.status === "WINDOW_OPEN_LATE"
+                        ? "CLOCK IN FOR SHIFT (LATE)"
+                        : "CLOCK IN FOR SHIFT"}
                   </Text>
                   <Text style={styles.punchBtnSubtitle}>
-                    Facial Biometrics & Hardware Isolation
+                    {windowEval.activeShiftName
+                      ? `Active Shift: ${windowEval.activeShiftName}`
+                      : "Facial Biometrics & Hardware Isolation"}
                   </Text>
                 </View>
                 <Ionicons name="arrow-forward" size={18} color="rgba(242, 241, 238, 0.7)" />

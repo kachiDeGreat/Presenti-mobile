@@ -32,6 +32,7 @@ export interface WindowEvaluationResult {
   canSignOut: boolean;
   minutesRemaining?: number;
   rejectionReason?: string;
+  activeShiftName?: string;
 }
 
 export function parseTimeToMinutes(timeStr?: string): number | null {
@@ -169,11 +170,8 @@ export function evaluateAttendanceWindow(
   // 3. Time windows (Resolving shift or day-specific schedule if configured)
   const openTime = activeShift?.arrivalCutoff || daySchedule?.arrivalCutoff || policy.arrivalCutoff || '07:00';
   const closeTime = activeShift?.lateTolerance || daySchedule?.lateTolerance || policy.lateTolerance || '07:30';
-  const allowLate = activeShift?.allowLateSignIn !== undefined
-    ? activeShift.allowLateSignIn !== false
-    : daySchedule?.allowLateSignIn !== undefined
-      ? daySchedule.allowLateSignIn !== false
-      : policy.allowLateSignIn !== false;
+  // Global Allow Late Check-In applies uniformly across Unified, Per-Day, and Multi-Shift
+  const allowLate = policy.allowLateSignIn !== false;
 
   const openMinutes = parseTimeToMinutes(openTime) ?? 0;
   let closeMinutes = parseTimeToMinutes(closeTime) ?? 1439;
@@ -205,6 +203,7 @@ export function evaluateAttendanceWindow(
       signOutTimeFormatted,
       canSignOut: false,
       minutesRemaining: diff,
+      activeShiftName: activeShift?.name,
       rejectionReason: `Sign-in window is not yet open. It begins at ${formattedOpen}. Current time is ${currentTime12}.`,
     };
   }
@@ -225,6 +224,7 @@ export function evaluateAttendanceWindow(
       signOutTimeFormatted,
       canSignOut,
       minutesRemaining: remaining,
+      activeShiftName: activeShift?.name,
     };
   }
 
@@ -235,7 +235,7 @@ export function evaluateAttendanceWindow(
       isAllowed: true,
       status: 'WINDOW_OPEN_LATE',
       attendanceStatus: 'LATE',
-      badgeLabel: 'Late Sign-In Active',
+      badgeLabel: activeShift ? `${activeShift.name} (Late)` : 'Late Sign-In Active',
       badgeType: 'warning',
       summary: `Official arrival deadline was ${formattedClose}. Clock-in permitted with LATE tag.`,
       openTimeFormatted: formattedOpen,
@@ -243,6 +243,7 @@ export function evaluateAttendanceWindow(
       enableSignOut,
       signOutTimeFormatted,
       canSignOut,
+      activeShiftName: activeShift?.name,
     };
   }
 
@@ -259,6 +260,7 @@ export function evaluateAttendanceWindow(
     enableSignOut,
     signOutTimeFormatted,
     canSignOut,
+    activeShiftName: activeShift?.name,
     rejectionReason: `The sign-in window closed at ${formattedClose}. Late sign-in is not permitted.`,
   };
 }
