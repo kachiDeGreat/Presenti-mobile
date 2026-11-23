@@ -166,7 +166,7 @@ MOBILE-APP/src/
 ### Sprint Features Built During Nov 22–24, 2026
 - **Multi-Shift Support (`MULTI_SHIFT`):** Morning (`06:00–14:00`), Afternoon (`14:00–22:00`), and overnight-aware Night (`22:00–06:00`) shift configuration in Admin Onboarding & Manage Tab, worker shift selection during onboarding, and shift-aware `evaluateAttendanceWindow` policy evaluation.
 - **Cascading Location Dropdowns (`locationsData.ts`, `LocationPickerModal.tsx`):** Offline searchable Country (including `Other ▾`) → States A–Z (all 36 Nigerian states + FCT) → Cities / LGAs (including Cross River LGAs) in Admin Onboarding.
-- **Width-Responsive Typography & Accessibility Scaling (`rf()` + `maxFontSizeMultiplier`):** Consistent sizing across budget & flagship screens even with large OS font zoom.
+- **Width-Responsive Typography & Accessibility Scaling (`rf()` + `maxFontSizeMultiplier`):** Consistent sizing across budget & flagship screens even with large OS font zoom, with compact button labels that fit cleanly without wrapping.
 
 ### Building & Running
 
