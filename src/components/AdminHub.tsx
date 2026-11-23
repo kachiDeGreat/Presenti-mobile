@@ -48,7 +48,7 @@ import {
   clearMemberFaceEnrollment,
   resetMemberDeviceBinding,
   updateMemberStatus,
-  markAdminNotificationRead,
+  clearMemberAdminNotifications,
   deleteOrganizationMember,
   getCachedOrganization,
   getCachedAnchors,
@@ -808,6 +808,7 @@ export const AdminHub: React.FC = () => {
   const [showAdminProfileModal, setShowAdminProfileModal] = useState(false);
   const [showNotificationsModal, setShowNotificationsModal] = useState(false);
   const [notifications, setNotifications] = useState<AdminNotification[]>([]);
+  const [processingNotifId, setProcessingNotifId] = useState<string | null>(null);
   const [showAskPresenti, setShowAskPresenti] = useState(false);
   const [showAdminFaceTestModal, setShowAdminFaceTestModal] = useState(false);
   const [adminTestFaceUri, setAdminTestFaceUri] = useState<string | null>(null);
@@ -953,10 +954,11 @@ export const AdminHub: React.FC = () => {
     notif: AdminNotification,
     nextStatus: "ACTIVE" | "SUSPENDED" | "BLOCKED"
   ) => {
-    if (!organization?.id) return;
+    if (!organization?.id || processingNotifId) return;
+    setProcessingNotifId(notif.id);
     try {
       await updateMemberStatus(organization.id, notif.memberId, nextStatus);
-      await markAdminNotificationRead(organization.id, notif.id);
+      await clearMemberAdminNotifications(organization.id, notif.memberId, notif.id);
       const label =
         nextStatus === "ACTIVE"
           ? "unsuspended & unblocked"
@@ -964,8 +966,11 @@ export const AdminHub: React.FC = () => {
             ? "permanently blocked"
             : "kept suspended";
       toast.success(`${notif.memberName} has been ${label}.`);
+      setShowNotificationsModal(false);
     } catch {
       toast.error("Failed to update worker status.");
+    } finally {
+      setProcessingNotifId(null);
     }
   };
 
@@ -2998,33 +3003,53 @@ export const AdminHub: React.FC = () => {
                       <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
                         <TouchableOpacity
                           style={{
-                            paddingHorizontal: 10,
-                            paddingVertical: 7,
+                            paddingHorizontal: 12,
+                            paddingVertical: 8,
                             borderRadius: R.sm,
                             backgroundColor: "#ecfdf5",
                             borderWidth: 1,
                             borderColor: "#10b981",
+                            flexDirection: "row",
+                            alignItems: "center",
+                            gap: 6,
+                            opacity: processingNotifId === n.id ? 0.65 : 1,
                           }}
+                          disabled={Boolean(processingNotifId)}
                           onPress={() => handleNotificationMemberAction(n, "ACTIVE")}
                         >
+                          {processingNotifId === n.id && (
+                            <ActivityIndicator size="small" color="#059669" />
+                          )}
                           <Text style={{ fontSize: rf(11), fontWeight: "800", color: "#059669" }}>
-                            {curStatus === "BLOCKED" ? "UNBLOCK" : "UNSUSPEND"}
+                            {processingNotifId === n.id
+                              ? "UPDATING..."
+                              : curStatus === "BLOCKED"
+                                ? "UNBLOCK"
+                                : "UNSUSPEND"}
                           </Text>
                         </TouchableOpacity>
                         {curStatus !== "BLOCKED" && (
                           <TouchableOpacity
                             style={{
-                              paddingHorizontal: 10,
-                              paddingVertical: 7,
+                              paddingHorizontal: 12,
+                              paddingVertical: 8,
                               borderRadius: R.sm,
                               backgroundColor: "#fef2f2",
                               borderWidth: 1,
                               borderColor: "#d92d20",
+                              flexDirection: "row",
+                              alignItems: "center",
+                              gap: 6,
+                              opacity: processingNotifId === n.id ? 0.65 : 1,
                             }}
+                            disabled={Boolean(processingNotifId)}
                             onPress={() => handleNotificationMemberAction(n, "BLOCKED")}
                           >
+                            {processingNotifId === n.id && (
+                              <ActivityIndicator size="small" color="#d92d20" />
+                            )}
                             <Text style={{ fontSize: rf(11), fontWeight: "800", color: "#d92d20" }}>
-                              BLOCK FOR GOOD
+                              {processingNotifId === n.id ? "UPDATING..." : "BLOCK FOR GOOD"}
                             </Text>
                           </TouchableOpacity>
                         )}

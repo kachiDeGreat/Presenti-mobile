@@ -1209,14 +1209,21 @@ export async function recordClockTamperingStrike(
 ): Promise<{ strikes: number; suspended: boolean }> {
   const memberDocRef = doc(db, 'churches', orgId, 'members', member.id);
   let currentStrikes = Number(member.tamperingStrikes || 0);
+  let alreadyRestricted = false;
   try {
     const snap = await getDoc(memberDocRef);
     if (snap.exists()) {
-      currentStrikes = Number(snap.data()?.tamperingStrikes || currentStrikes || 0);
+      const data = snap.data();
+      currentStrikes = Number(data?.tamperingStrikes || currentStrikes || 0);
+      alreadyRestricted = data?.status === 'SUSPENDED' || data?.status === 'BLOCKED';
     }
   } catch {}
 
-  const nextStrikes = currentStrikes + 1;
+  if (alreadyRestricted) {
+    return { strikes: 3, suspended: true };
+  }
+
+  const nextStrikes = Math.min(3, currentStrikes + 1);
   const suspended = nextStrikes >= 3;
   const reason = `Device clock/date tampering detected (${driftMinutes}m drift from network time — ${nextStrikes}/3 strikes).`;
 
@@ -1261,6 +1268,25 @@ export async function markAdminNotificationRead(
       read: true,
     });
   } catch {}
+}
+
+export async function clearMemberAdminNotifications(
+  orgId: string,
+  memberId: string,
+  fallbackNotificationId?: string
+): Promise<void> {
+  try {
+    const q = query(
+      collection(db, 'churches', orgId, 'notifications'),
+      where('memberId', '==', memberId)
+    );
+    const snap = await getDocs(q);
+    await Promise.all(snap.docs.map((d) => deleteDoc(d.ref)));
+  } catch {
+    if (fallbackNotificationId) {
+      await deleteDoc(doc(db, 'churches', orgId, 'notifications', fallbackNotificationId)).catch(() => {});
+    }
+  }
 }
 
 export async function deleteOrganizationMember(orgId: string, memberId: string): Promise<void> {
