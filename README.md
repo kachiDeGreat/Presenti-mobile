@@ -143,7 +143,7 @@ sequenceDiagram
 ```text
 MOBILE-APP/src/
 ├── app/            # Expo Router screens (index, login, onboarding, admin-onboarding, calibrate)
-├── components/     # Reusable UI & modals (AdminHub, AccordionCard, LocationPickerModal, FaceScannerModal, AskPresentiChatModal, PresenceMapMobile)
+├── components/     # Reusable UI & modals (AdminHub, AccordionCard, ShiftScheduleEditor, TimePickerModal, LocationPickerModal, FaceScannerModal, AskPresentiChatModal, PresenceMapMobile)
 ├── config/         # Firebase client initialization (firebase.ts)
 ├── constants/      # ArtCraft design tokens & width-responsive typography (premium.ts)
 ├── context/        # React Context providers (AuthContext, ToastContext)
@@ -164,8 +164,12 @@ MOBILE-APP/src/
 - Initial Face Scanner (`FaceScannerModal.tsx`), AskPresenti AI chat, and Mobile Admin Hub.
 
 ### Sprint Features Built During Nov 22–24, 2026
-- **Multi-Shift Support (`MULTI_SHIFT`):** Morning (`06:00–14:00`), Afternoon (`14:00–22:00`), and overnight-aware Night (`22:00–06:00`) shift configuration in Admin Onboarding & Manage Tab, worker shift selection during onboarding, and shift-aware `evaluateAttendanceWindow` policy evaluation.
+- **Multi-Shift Support (`ShiftScheduleEditor.tsx`, `TimePickerModal.tsx`, `timePolicy.ts`):** Master **Enable Multi-Shift Mode** toggle, editable/addable shifts (Morning, Afternoon, overnight-aware Night, and custom shifts) with tappable 24h/12h time dropdowns, per-day **Vary by Day** overrides, standalone global **Allow Late Check-In**, worker shift selection during onboarding, and shift-specific Clock-In CTAs (`CLOCK IN FOR MORNING SHIFT`).
+- **3-Strike Anti-Clock/Date Tampering & Admin Security Alerts (`index.tsx`, `organizationService.ts`, `AdminHub.tsx`, `AuthContext.tsx`):** Detects device clock/date tampering (`1/3`, `2/3`, `3/3` strike warnings), auto-suspends on the 3rd strike, locks the Clock-In card in real time via Firestore `onSnapshot`, and alerts admins via a header notification bell with confirmation-guarded **Unsuspend / Block for Good / Unblock** actions.
 - **Cascading Location Dropdowns (`locationsData.ts`, `LocationPickerModal.tsx`):** Offline searchable Country (including `Other ▾`) → States A–Z (all 36 Nigerian states + FCT) → Cities / LGAs (including Cross River LGAs) in Admin Onboarding.
+- **Resilience, Security & UX Hardening:**
+  - Multi-model AI vision fallback (`qwen/qwen3.8-27b` → `llama-4-scout-17b-16e-instruct` on Groq with 60s `429` cooldown → `gemini-3.5-flash-lite` / `gemini-flash-lite-latest`) + in-memory `refBase64Cache`.
+  - Privacy-safe device-binding errors (no cross-tenant PII), duplicate/admin-email signup guard before OTP, indoor live `Balanced` GPS fallback, deleted-punch cache clearing, WhatsApp-style keyboard resize/drag-dismiss, and safe-area modal insets.
 - **Width-Responsive Typography & Accessibility Scaling (`rf()` + `maxFontSizeMultiplier`):** Consistent sizing across budget & flagship screens even with large OS font zoom, with compact button labels that fit cleanly without wrapping.
 
 ### Building & Running
@@ -206,3 +210,4 @@ npm run build:preview -- --no-wait
 ## License
 
 Private & Proprietary — Developed for Presenti Workforce Systems.
+
