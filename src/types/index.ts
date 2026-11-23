@@ -32,15 +32,27 @@ export interface DaySchedule {
   signOutTime?: string; // e.g. "17:00" (Sign-out starts from this time; no close cutoff)
 }
 
+export interface ShiftSchedule {
+  id: string; // e.g. 'MORNING' | 'AFTERNOON' | 'NIGHT'
+  name: string; // e.g. 'Morning Shift'
+  arrivalCutoff: string; // e.g. '06:00'
+  lateTolerance: string; // e.g. '06:30'
+  signOutTime: string; // e.g. '14:00' (may be < arrivalCutoff for overnight Night shift)
+  allowLateSignIn?: boolean;
+  enableSignOut?: boolean;
+  enabled?: boolean;
+}
+
 export interface PolicySettings {
   serviceDays?: (number | string)[];
-  scheduleMode?: 'UNIFIED' | 'PER_DAY'; // 'UNIFIED' = same for all active days; 'PER_DAY' = custom per day
+  scheduleMode?: 'UNIFIED' | 'PER_DAY' | 'MULTI_SHIFT';
   arrivalCutoff?: string; // e.g. "07:00" (Default / Unified Window Open Time)
   lateTolerance?: string; // e.g. "07:30" (Default / Unified Window Close Time)
   allowLateSignIn?: boolean; // If true, workers can sign in after close time marked LATE
   enableSignOut?: boolean; // If true, workers can/must sign out
   signOutTime?: string; // e.g. "17:00" (Sign-out starts from this time; no close cutoff)
   daySchedules?: Record<number | string, DaySchedule>; // Custom schedules per day
+  shifts?: ShiftSchedule[]; // Morning / Afternoon / Night shifts when scheduleMode === 'MULTI_SHIFT'
   syncCutoff?: string;    // Deprecated/optional
 }
 
@@ -97,6 +109,8 @@ export interface ChurchMember {
   facePhotoURL?: string;
   isFaceEnrolled?: boolean;
   faceEnrolledAt?: string;
+  assignedShiftId?: string;
+  assignedShiftName?: string;
 }
 
 export interface MobileUser {

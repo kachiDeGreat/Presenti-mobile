@@ -15,8 +15,14 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Clipboard from "expo-clipboard";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
-import { C, MONO, R, T, shadow, ui } from "../constants/premium";
-import type { DaySchedule } from "../types";
+import { C, MONO, R, T, shadow, ui, rf } from "../constants/premium";
+import type { DaySchedule, ShiftSchedule } from "../types";
+
+const DEFAULT_SHIFTS: ShiftSchedule[] = [
+  { id: "MORNING", name: "Morning Shift", arrivalCutoff: "06:00", lateTolerance: "06:30", signOutTime: "14:00", allowLateSignIn: true, enableSignOut: true, enabled: true },
+  { id: "AFTERNOON", name: "Afternoon Shift", arrivalCutoff: "14:00", lateTolerance: "14:30", signOutTime: "22:00", allowLateSignIn: true, enableSignOut: true, enabled: true },
+  { id: "NIGHT", name: "Night Shift", arrivalCutoff: "22:00", lateTolerance: "22:30", signOutTime: "06:00", allowLateSignIn: true, enableSignOut: true, enabled: true },
+];
 
 const WEEK_DAYS = [
   { id: 0, name: "Sun", label: "Sunday" },
@@ -42,8 +48,12 @@ export const AdminManageTab: React.FC = () => {
   const [serviceDays, setServiceDays] = useState<number[]>(
     (organization?.policySettings?.serviceDays || [1, 2, 3, 4, 5]).map((d) => Number(d))
   );
-  const [scheduleMode, setScheduleMode] = useState<"UNIFIED" | "PER_DAY">(
-    organization?.policySettings?.scheduleMode === "PER_DAY" ? "PER_DAY" : "UNIFIED"
+  const [scheduleMode, setScheduleMode] = useState<"UNIFIED" | "PER_DAY" | "MULTI_SHIFT">(
+    organization?.policySettings?.scheduleMode === "MULTI_SHIFT"
+      ? "MULTI_SHIFT"
+      : organization?.policySettings?.scheduleMode === "PER_DAY"
+        ? "PER_DAY"
+        : "UNIFIED"
   );
   const [arrivalCutoff, setArrivalCutoff] = useState(
     organization?.policySettings?.arrivalCutoff || "08:00"
@@ -64,6 +74,15 @@ export const AdminManageTab: React.FC = () => {
     (organization?.policySettings?.daySchedules as Record<number, DaySchedule>) || {}
   );
   const [activeScheduleDay, setActiveScheduleDay] = useState<number>(1);
+  const [shifts, setShifts] = useState<ShiftSchedule[]>(
+    organization?.policySettings?.shifts && organization.policySettings.shifts.length > 0
+      ? organization.policySettings.shifts
+      : DEFAULT_SHIFTS
+  );
+
+  const updateShift = (shiftId: string, patch: Partial<ShiftSchedule>) => {
+    setShifts((prev) => prev.map((s) => (s.id === shiftId ? { ...s, ...patch } : s)));
+  };
 
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -84,7 +103,16 @@ export const AdminManageTab: React.FC = () => {
         setServiceDays(nums);
         setActiveScheduleDay(nums[0]);
       }
-      setScheduleMode(p.scheduleMode === "PER_DAY" ? "PER_DAY" : "UNIFIED");
+      setScheduleMode(
+        p.scheduleMode === "MULTI_SHIFT"
+          ? "MULTI_SHIFT"
+          : p.scheduleMode === "PER_DAY"
+            ? "PER_DAY"
+            : "UNIFIED"
+      );
+      if (Array.isArray(p.shifts) && p.shifts.length > 0) {
+        setShifts(p.shifts);
+      }
       if (p.arrivalCutoff) setArrivalCutoff(p.arrivalCutoff);
       if (p.lateTolerance) setLateTolerance(p.lateTolerance);
       if (typeof p.allowLateSignIn === "boolean") setAllowLateSignIn(p.allowLateSignIn);
@@ -177,6 +205,7 @@ export const AdminManageTab: React.FC = () => {
           enableSignOut,
           signOutTime,
           ...(scheduleMode === "PER_DAY" ? { daySchedules } : {}),
+          ...(scheduleMode === "MULTI_SHIFT" ? { shifts } : {}),
         },
       });
       toast.success("Organization settings saved and synced in real time!");
@@ -317,7 +346,7 @@ export const AdminManageTab: React.FC = () => {
             <Text
               style={[styles.segText, scheduleMode === "UNIFIED" && styles.segTextActive]}
             >
-              Unified Hours
+              Unified
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -327,10 +356,91 @@ export const AdminManageTab: React.FC = () => {
             <Text
               style={[styles.segText, scheduleMode === "PER_DAY" && styles.segTextActive]}
             >
-              Per-Day Custom
+              Per-Day
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.segBtn, scheduleMode === "MULTI_SHIFT" && styles.segBtnActive]}
+            onPress={() => setScheduleMode("MULTI_SHIFT")}
+          >
+            <Text
+              style={[styles.segText, scheduleMode === "MULTI_SHIFT" && styles.segTextActive]}
+            >
+              Multi-Shift
             </Text>
           </TouchableOpacity>
         </View>
+
+        {scheduleMode === "MULTI_SHIFT" ? (
+          <View style={{ gap: 10 }}>
+            {shifts.map((sh) => {
+              const isOvernight = sh.signOutTime < sh.arrivalCutoff;
+              return (
+                <View
+                  key={sh.id}
+                  style={{
+                    padding: 12,
+                    borderRadius: R.md,
+                    borderWidth: 1,
+                    borderColor: sh.enabled !== false ? C.accent : C.lineCard,
+                    backgroundColor: C.cardAlt,
+                    gap: 8,
+                  }}
+                >
+                  <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                    <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                      <Text style={{ fontSize: rf(13.5), fontWeight: "700", color: C.ink }}>
+                        {sh.name}
+                      </Text>
+                      {isOvernight && (
+                        <View style={{ backgroundColor: C.accentSoft, paddingHorizontal: 7, paddingVertical: 2, borderRadius: R.pill }}>
+                          <Text style={{ fontSize: rf(9.5), fontWeight: "700", color: C.accent }}>OVERNIGHT</Text>
+                        </View>
+                      )}
+                    </View>
+                    <Switch
+                      value={sh.enabled !== false}
+                      onValueChange={(v) => updateShift(sh.id, { enabled: v })}
+                      trackColor={{ false: C.line, true: C.accent }}
+                    />
+                  </View>
+                  {sh.enabled !== false && (
+                    <View style={{ flexDirection: "row", gap: 8 }}>
+                      <View style={{ flex: 1, gap: 4 }}>
+                        <Text style={styles.label}>OPEN</Text>
+                        <TextInput
+                          style={styles.input}
+                          value={sh.arrivalCutoff}
+                          onChangeText={(v) => updateShift(sh.id, { arrivalCutoff: v })}
+                          placeholder="06:00"
+                        />
+                      </View>
+                      <View style={{ flex: 1, gap: 4 }}>
+                        <Text style={styles.label}>CUTOFF</Text>
+                        <TextInput
+                          style={styles.input}
+                          value={sh.lateTolerance}
+                          onChangeText={(v) => updateShift(sh.id, { lateTolerance: v })}
+                          placeholder="06:30"
+                        />
+                      </View>
+                      <View style={{ flex: 1, gap: 4 }}>
+                        <Text style={styles.label}>SIGN OUT</Text>
+                        <TextInput
+                          style={styles.input}
+                          value={sh.signOutTime}
+                          onChangeText={(v) => updateShift(sh.id, { signOutTime: v })}
+                          placeholder="14:00"
+                        />
+                      </View>
+                    </View>
+                  )}
+                </View>
+              );
+            })}
+          </View>
+        ) : (
+          <>
 
         {scheduleMode === "PER_DAY" && (
           <ScrollView
@@ -453,6 +563,8 @@ export const AdminManageTab: React.FC = () => {
               placeholder="17:00"
             />
           </View>
+        )}
+          </>
         )}
 
         <TouchableOpacity

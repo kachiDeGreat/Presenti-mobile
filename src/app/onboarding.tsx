@@ -82,6 +82,7 @@ export default function OnboardingScreen() {
   const [fullName, setFullName] = useState(user?.displayName || "");
   const [phoneNumber, setPhoneNumber] = useState("");
   const [selectedDept, setSelectedDept] = useState("");
+  const [selectedShiftId, setSelectedShiftId] = useState("");
   const [capturedFaceUri, setCapturedFaceUri] = useState<string | null>(null);
   const [showFaceEnrollModal, setShowFaceEnrollModal] = useState(false);
   const [isRegistering, setIsRegistering] = useState(false);
@@ -203,12 +204,22 @@ export default function OnboardingScreen() {
     }
   }, [user]);
 
-  // Auto-select first department when org is verified
+  // Auto-select first department & shift when org is verified
   useEffect(() => {
     if (verifiedOrg && verifiedOrg.departments.length > 0 && !selectedDept) {
       setSelectedDept(verifiedOrg.departments[0]);
     }
-  }, [verifiedOrg, selectedDept]);
+    const shifts = verifiedOrg?.policySettings?.shifts;
+    if (
+      verifiedOrg?.policySettings?.scheduleMode === "MULTI_SHIFT" &&
+      Array.isArray(shifts) &&
+      shifts.length > 0 &&
+      !selectedShiftId
+    ) {
+      const firstEnabled = shifts.find((s: any) => s.enabled !== false) || shifts[0];
+      setSelectedShiftId(firstEnabled.id);
+    }
+  }, [verifiedOrg, selectedDept, selectedShiftId]);
 
   // Check initial permissions
   useEffect(() => {
@@ -294,12 +305,16 @@ export default function OnboardingScreen() {
 
     setIsRegistering(true);
     try {
+      const activeShifts = verifiedOrg?.policySettings?.shifts || [];
+      const chosenShift = activeShifts.find((s: any) => s.id === selectedShiftId);
       await completeRegistration(
         fullName,
         phoneNumber,
         selectedDept,
         [1],
-        capturedFaceUri
+        capturedFaceUri,
+        chosenShift?.id,
+        chosenShift?.name
       );
       if (draftKey) {
         AsyncStorage.removeItem(draftKey).catch(() => {});
@@ -501,6 +516,42 @@ export default function OnboardingScreen() {
                   })}
                 </View>
               </View>
+
+              {/* Assigned Shift Selector (if organization runs Morning/Afternoon/Night shifts) */}
+              {verifiedOrg?.policySettings?.scheduleMode === "MULTI_SHIFT" &&
+                Array.isArray(verifiedOrg?.policySettings?.shifts) &&
+                verifiedOrg.policySettings.shifts.length > 0 && (
+                  <View style={styles.fieldGroup}>
+                    <Text style={styles.label}>Assigned Shift *</Text>
+                    <View style={styles.deptChipsContainer}>
+                      {verifiedOrg.policySettings.shifts
+                        .filter((s: any) => s.enabled !== false)
+                        .map((sh: any) => {
+                          const isSelected = selectedShiftId === sh.id;
+                          return (
+                            <TouchableOpacity
+                              key={sh.id}
+                              style={[
+                                styles.deptChip,
+                                isSelected && styles.deptChipSelected,
+                              ]}
+                              onPress={() => setSelectedShiftId(sh.id)}
+                              activeOpacity={0.7}
+                            >
+                              <Text
+                                style={[
+                                  styles.deptChipText,
+                                  isSelected && styles.deptChipTextSelected,
+                                ]}
+                              >
+                                {sh.name} ({sh.arrivalCutoff}–{sh.signOutTime})
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                    </View>
+                  </View>
+                )}
 
               {/* Mandatory AI Biometric Face Registration */}
               <View style={styles.fieldGroup}>

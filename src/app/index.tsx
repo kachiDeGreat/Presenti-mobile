@@ -157,8 +157,9 @@ export default function DashboardScreen() {
       organization?.policySettings,
       currentTime,
       todayPunch,
+      member?.assignedShiftId,
     );
-  }, [organization?.policySettings, currentTime, todayPunch]);
+  }, [organization?.policySettings, currentTime, todayPunch, member?.assignedShiftId]);
 
   // Load existing punch on mount
   useEffect(() => {

@@ -76,28 +76,46 @@ export function formatCurrentTime(date: Date = new Date()): string {
 export function evaluateAttendanceWindow(
   policy?: PolicySettings,
   now: Date = new Date(),
-  todayPunch?: TodayPunchRecord | null
+  todayPunch?: TodayPunchRecord | null,
+  assignedShiftId?: string
 ): WindowEvaluationResult {
   const currentDay = now.getDay();
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
   const currentTime12 = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
+  // Multi-Shift resolution (Morning / Afternoon / Night, including overnight shifts)
+  const isMultiShift = policy?.scheduleMode === 'MULTI_SHIFT' && Array.isArray(policy.shifts) && policy.shifts.length > 0;
+  const activeShift = isMultiShift
+    ? (policy!.shifts!.find((s) => s.id === assignedShiftId && s.enabled !== false) ||
+       policy!.shifts!.find((s) => s.enabled !== false) ||
+       policy!.shifts![0])
+    : undefined;
+
   // Check if a day-specific schedule exists for today (e.g. Sunday vs Wednesday hours)
   const isPerDayMode = policy?.scheduleMode === 'PER_DAY';
-  const daySchedule = (isPerDayMode || policy?.daySchedules?.[currentDay])
+  const daySchedule = (!isMultiShift && (isPerDayMode || policy?.daySchedules?.[currentDay]))
     ? policy?.daySchedules?.[currentDay]
     : undefined;
 
-  const enableSignOut = daySchedule?.enableSignOut !== undefined
-    ? !!daySchedule.enableSignOut
-    : !!policy?.enableSignOut;
-  const signOutTime = daySchedule?.signOutTime || policy?.signOutTime || '17:00';
+  const enableSignOut = activeShift?.enableSignOut !== undefined
+    ? !!activeShift.enableSignOut
+    : daySchedule?.enableSignOut !== undefined
+      ? !!daySchedule.enableSignOut
+      : !!policy?.enableSignOut;
+  const signOutTime = activeShift?.signOutTime || daySchedule?.signOutTime || policy?.signOutTime || '17:00';
   const signOutMinutes = parseTimeToMinutes(signOutTime) ?? 1020;
   const signOutTimeFormatted = format12Hour(signOutTime);
-  const canSignOut = enableSignOut && currentMinutes >= signOutMinutes;
+
+  const rawOpenTime = activeShift?.arrivalCutoff || daySchedule?.arrivalCutoff || policy?.arrivalCutoff || '07:00';
+  const rawOpenMinutes = parseTimeToMinutes(rawOpenTime) ?? 0;
+  const isOvernightShift = Boolean(activeShift && signOutMinutes < rawOpenMinutes);
+
+  const canSignOut = isOvernightShift
+    ? enableSignOut && (currentMinutes >= signOutMinutes && currentMinutes < rawOpenMinutes)
+    : enableSignOut && currentMinutes >= signOutMinutes;
 
   // 1. If no policy configured at all, allow sign-in
-  if (!policy || (!policy.arrivalCutoff && !policy.lateTolerance && !policy.serviceDays?.length && !policy.daySchedules)) {
+  if (!policy || (!policy.arrivalCutoff && !policy.lateTolerance && !policy.serviceDays?.length && !policy.daySchedules && !policy.shifts?.length)) {
     return {
       isAllowed: true,
       status: 'UNRESTRICTED',
@@ -139,29 +157,39 @@ export function evaluateAttendanceWindow(
     }
   }
 
-  // 3. Time windows (Resolving day-specific schedule if configured)
-  const openTime = daySchedule?.arrivalCutoff || policy.arrivalCutoff || '07:00';
-  const closeTime = daySchedule?.lateTolerance || policy.lateTolerance || '07:30';
-  const allowLate = daySchedule?.allowLateSignIn !== undefined
-    ? daySchedule.allowLateSignIn !== false
-    : policy.allowLateSignIn !== false;
+  // 3. Time windows (Resolving shift or day-specific schedule if configured)
+  const openTime = activeShift?.arrivalCutoff || daySchedule?.arrivalCutoff || policy.arrivalCutoff || '07:00';
+  const closeTime = activeShift?.lateTolerance || daySchedule?.lateTolerance || policy.lateTolerance || '07:30';
+  const allowLate = activeShift?.allowLateSignIn !== undefined
+    ? activeShift.allowLateSignIn !== false
+    : daySchedule?.allowLateSignIn !== undefined
+      ? daySchedule.allowLateSignIn !== false
+      : policy.allowLateSignIn !== false;
 
   const openMinutes = parseTimeToMinutes(openTime) ?? 0;
-  const closeMinutes = parseTimeToMinutes(closeTime) ?? 1439;
+  let closeMinutes = parseTimeToMinutes(closeTime) ?? 1439;
+  // Handle overnight shift cutoff & currentMinutes normalization (e.g. 22:00 open -> 06:00 sign-out)
+  if (isOvernightShift && closeMinutes < openMinutes) {
+    closeMinutes += 1440;
+  }
+  const effectiveNowMinutes =
+    isOvernightShift && currentMinutes < signOutMinutes + 120
+      ? currentMinutes + 1440
+      : currentMinutes;
 
   const formattedOpen = format12Hour(openTime);
   const formattedClose = format12Hour(closeTime);
 
   // If before window open
-  if (currentMinutes < openMinutes) {
-    const diff = openMinutes - currentMinutes;
+  if (effectiveNowMinutes < openMinutes) {
+    const diff = openMinutes - effectiveNowMinutes;
     return {
       isAllowed: false,
       status: 'BEFORE_WINDOW',
       attendanceStatus: 'ON_TIME',
-      badgeLabel: `Opens at ${formattedOpen}`,
+      badgeLabel: `${activeShift ? `${activeShift.name}: ` : ''}Opens at ${formattedOpen}`,
       badgeType: 'warning',
-      summary: `Sign-in opens at ${formattedOpen} (in ${diff} min${diff > 1 ? 's' : ''}).`,
+      summary: `${activeShift ? `${activeShift.name} opens` : 'Sign-in opens'} at ${formattedOpen} (in ${diff} min${diff > 1 ? 's' : ''}).`,
       openTimeFormatted: formattedOpen,
       closeTimeFormatted: formattedClose,
       enableSignOut,
@@ -173,13 +201,13 @@ export function evaluateAttendanceWindow(
   }
 
   // Within regular active window (ON TIME)
-  if (currentMinutes <= closeMinutes) {
-    const remaining = closeMinutes - currentMinutes;
+  if (effectiveNowMinutes <= closeMinutes) {
+    const remaining = closeMinutes - effectiveNowMinutes;
     return {
       isAllowed: true,
       status: 'WINDOW_OPEN',
       attendanceStatus: 'ON_TIME',
-      badgeLabel: `Window Open • ${remaining}m left`,
+      badgeLabel: `${activeShift ? `${activeShift.name} • ` : 'Window Open • '}${remaining}m left`,
       badgeType: 'active',
       summary: `Active until ${formattedClose} (${remaining} min${remaining > 1 ? 's' : ''} left).`,
       openTimeFormatted: formattedOpen,

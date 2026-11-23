@@ -86,7 +86,9 @@ interface AuthContextType {
     phone: string,
     department: string,
     faceEmbedding?: number[],
-    facePhotoURL?: string
+    facePhotoURL?: string,
+    assignedShiftId?: string,
+    assignedShiftName?: string
   ) => Promise<ChurchMember>;
   enrollFace: (faceEmbedding: number[], facePhotoURL?: string) => Promise<void>;
   checkAdminStatus: (email?: string, uid?: string) => Promise<boolean>;
@@ -861,7 +863,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     phone: string,
     department: string,
     faceEmbedding?: number[],
-    facePhotoURL?: string
+    facePhotoURL?: string,
+    assignedShiftId?: string,
+    assignedShiftName?: string
   ): Promise<ChurchMember> => {
     if (!organization) {
       throw new Error('Please pair an organization first.');
@@ -893,6 +897,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         faceEmbedding,
         facePhotoURL,
         isFaceEnrolled: Boolean(faceEmbedding && faceEmbedding.length > 0),
+        assignedShiftId,
+        assignedShiftName,
       });
 
       setMember(newMember);

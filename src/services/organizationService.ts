@@ -836,6 +836,8 @@ export async function registerMember(
     faceEmbedding?: number[];
     facePhotoURL?: string;
     isFaceEnrolled?: boolean;
+    assignedShiftId?: string;
+    assignedShiftName?: string;
   }
 ): Promise<ChurchMember> {
   try {
@@ -988,6 +990,8 @@ export async function registerMember(
       photoURL: memberData.photoURL?.trim() || undefined,
       department: memberData.department,
       boundDeviceId: memberData.boundDeviceId,
+      ...(memberData.assignedShiftId ? { assignedShiftId: memberData.assignedShiftId } : {}),
+      ...(memberData.assignedShiftName ? { assignedShiftName: memberData.assignedShiftName } : {}),
       registeredAt: enrolledAt,
       ...(memberData.faceEmbedding && memberData.faceEmbedding.length > 0
         ? {

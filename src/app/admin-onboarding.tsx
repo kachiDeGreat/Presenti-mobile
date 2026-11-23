@@ -18,19 +18,50 @@ import * as Clipboard from "expo-clipboard";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useAuth } from "../context/AuthContext";
 import { useToast } from "../context/ToastContext";
-import { C, MONO, R, S, T, shadow, ui } from "../constants/premium";
-import type { DaySchedule } from "../types";
+import { C, MONO, R, S, T, shadow, ui, rf } from "../constants/premium";
+import { LocationPickerModal } from "../components/LocationPickerModal";
+import {
+  ALL_COUNTRIES_AZ,
+  QUICK_COUNTRIES,
+  getCitiesForState,
+  getStatesForCountry,
+} from "../data/locationsData";
+import type { DaySchedule, ShiftSchedule } from "../types";
 
-const COUNTRIES = [
-  "Nigeria",
-  "Ghana",
-  "Kenya",
-  "South Africa",
-  "United Kingdom",
-  "United States",
-  "Canada",
-  "Other",
+const DEFAULT_SHIFTS: ShiftSchedule[] = [
+  {
+    id: "MORNING",
+    name: "Morning Shift",
+    arrivalCutoff: "06:00",
+    lateTolerance: "06:30",
+    signOutTime: "14:00",
+    allowLateSignIn: true,
+    enableSignOut: true,
+    enabled: true,
+  },
+  {
+    id: "AFTERNOON",
+    name: "Afternoon Shift",
+    arrivalCutoff: "14:00",
+    lateTolerance: "14:30",
+    signOutTime: "22:00",
+    allowLateSignIn: true,
+    enableSignOut: true,
+    enabled: true,
+  },
+  {
+    id: "NIGHT",
+    name: "Night Shift",
+    arrivalCutoff: "22:00",
+    lateTolerance: "22:30",
+    signOutTime: "06:00",
+    allowLateSignIn: true,
+    enableSignOut: true,
+    enabled: true,
+  },
 ];
+
+const COUNTRIES = [...QUICK_COUNTRIES, "Other"];
 
 const DEPARTMENT_PRESETS = [
   "Engineering & Technology",
@@ -87,6 +118,7 @@ export default function AdminOnboardingScreen() {
   const [country, setCountry] = useState("Nigeria");
   const [stateName, setStateName] = useState("");
   const [city, setCity] = useState("");
+  const [pickerTarget, setPickerTarget] = useState<"country" | "state" | "city" | null>(null);
 
   // Step 2: Workforce Units / Departments
   const [departments, setDepartments] = useState<string[]>([
@@ -98,7 +130,7 @@ export default function AdminOnboardingScreen() {
 
   // Step 3: Service Days & Policy
   const [serviceDays, setServiceDays] = useState<number[]>([1, 2, 3, 4, 5]);
-  const [scheduleMode, setScheduleMode] = useState<"UNIFIED" | "PER_DAY">("UNIFIED");
+  const [scheduleMode, setScheduleMode] = useState<"UNIFIED" | "PER_DAY" | "MULTI_SHIFT">("UNIFIED");
   const [arrivalCutoff, setArrivalCutoff] = useState("08:00");
   const [lateTolerance, setLateTolerance] = useState("08:30");
   const [allowLateSignIn, setAllowLateSignIn] = useState(true);
@@ -106,6 +138,13 @@ export default function AdminOnboardingScreen() {
   const [signOutTime, setSignOutTime] = useState("17:00");
   const [daySchedules, setDaySchedules] = useState<Record<number, DaySchedule>>({});
   const [activeScheduleDay, setActiveScheduleDay] = useState<number>(1);
+  const [shifts, setShifts] = useState<ShiftSchedule[]>(DEFAULT_SHIFTS);
+
+  const updateShift = (shiftId: string, patch: Partial<ShiftSchedule>) => {
+    setShifts((prev) =>
+      prev.map((s) => (s.id === shiftId ? { ...s, ...patch } : s))
+    );
+  };
 
   const draftKey = user?.uid ? `@presenti_admin_onboarding_${user.uid}` : null;
   const draftLoadedRef = useRef(false);
@@ -370,6 +409,7 @@ export default function AdminOnboardingScreen() {
           enableSignOut,
           signOutTime,
           ...(scheduleMode === "PER_DAY" ? { daySchedules } : {}),
+          ...(scheduleMode === "MULTI_SHIFT" ? { shifts } : {}),
         },
       });
 
@@ -528,48 +568,87 @@ export default function AdminOnboardingScreen() {
                   showsHorizontalScrollIndicator={false}
                   contentContainerStyle={{ gap: 8 }}
                 >
-                  {COUNTRIES.map((c) => (
-                    <TouchableOpacity
-                      key={c}
-                      style={[
-                        styles.chip,
-                        country === c && styles.chipActive,
-                      ]}
-                      onPress={() => setCountry(c)}
-                    >
-                      <Text
-                        style={[
-                          styles.chipText,
-                          country === c && styles.chipTextActive,
-                        ]}
+                  {COUNTRIES.map((c) => {
+                    const isOtherActive =
+                      c === "Other" && !QUICK_COUNTRIES.includes(country);
+                    const isSelected = c === country || isOtherActive;
+                    return (
+                      <TouchableOpacity
+                        key={c}
+                        style={[styles.chip, isSelected && styles.chipActive]}
+                        onPress={() => {
+                          if (c === "Other") {
+                            setPickerTarget("country");
+                          } else {
+                            setCountry(c);
+                            setStateName("");
+                            setCity("");
+                          }
+                        }}
                       >
-                        {c}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
+                        <Text
+                          style={[
+                            styles.chipText,
+                            isSelected && styles.chipTextActive,
+                          ]}
+                        >
+                          {c === "Other" && isOtherActive ? `${country} ▾` : c === "Other" ? "Other ▾" : c}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </ScrollView>
               </View>
 
               <View style={styles.row2}>
                 <View style={[styles.fieldGroup, { flex: 1 }]}>
                   <Text style={styles.label}>STATE / REGION</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="e.g. Cross River"
-                    placeholderTextColor={C.faint}
-                    value={stateName}
-                    onChangeText={setStateName}
-                  />
+                  <TouchableOpacity
+                    style={[styles.input, { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }]}
+                    onPress={() => setPickerTarget("state")}
+                    activeOpacity={0.75}
+                  >
+                    <Text
+                      style={{
+                        fontSize: rf(14),
+                        color: stateName ? C.ink : C.faint,
+                        fontWeight: stateName ? "600" : "400",
+                        flex: 1,
+                      }}
+                      numberOfLines={1}
+                    >
+                      {stateName || "Select state"}
+                    </Text>
+                    <Ionicons name="chevron-down" size={16} color={C.muted} />
+                  </TouchableOpacity>
                 </View>
                 <View style={[styles.fieldGroup, { flex: 1 }]}>
-                  <Text style={styles.label}>CITY</Text>
-                  <TextInput
-                    style={styles.input}
-                    placeholder="e.g. Calabar"
-                    placeholderTextColor={C.faint}
-                    value={city}
-                    onChangeText={setCity}
-                  />
+                  <Text style={styles.label}>CITY / LGA</Text>
+                  <TouchableOpacity
+                    style={[styles.input, { flexDirection: "row", alignItems: "center", justifyContent: "space-between" }]}
+                    onPress={() => {
+                      if (!stateName && getStatesForCountry(country).length > 0) {
+                        toast.info(`Select a state in ${country} first.`);
+                        setPickerTarget("state");
+                        return;
+                      }
+                      setPickerTarget("city");
+                    }}
+                    activeOpacity={0.75}
+                  >
+                    <Text
+                      style={{
+                        fontSize: rf(14),
+                        color: city ? C.ink : C.faint,
+                        fontWeight: city ? "600" : "400",
+                        flex: 1,
+                      }}
+                      numberOfLines={1}
+                    >
+                      {city || "Select city / LGA"}
+                    </Text>
+                    <Ionicons name="chevron-down" size={16} color={C.muted} />
+                  </TouchableOpacity>
                 </View>
               </View>
 
@@ -715,7 +794,7 @@ export default function AdminOnboardingScreen() {
                         scheduleMode === "UNIFIED" && styles.segmentTextActive,
                       ]}
                     >
-                      Unified Hours
+                      Unified
                     </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
@@ -731,11 +810,101 @@ export default function AdminOnboardingScreen() {
                         scheduleMode === "PER_DAY" && styles.segmentTextActive,
                       ]}
                     >
-                      Custom Per Day
+                      Per Day
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.segmentBtn,
+                      scheduleMode === "MULTI_SHIFT" && styles.segmentBtnActive,
+                    ]}
+                    onPress={() => setScheduleMode("MULTI_SHIFT")}
+                  >
+                    <Text
+                      style={[
+                        styles.segmentText,
+                        scheduleMode === "MULTI_SHIFT" && styles.segmentTextActive,
+                      ]}
+                    >
+                      Multi-Shift
                     </Text>
                   </TouchableOpacity>
                 </View>
               </View>
+
+              {scheduleMode === "MULTI_SHIFT" ? (
+                <View style={{ gap: 10 }}>
+                  <Text style={styles.helperText}>
+                    Workers pick Morning, Afternoon, or Night shift during onboarding.
+                  </Text>
+                  {shifts.map((sh) => {
+                    const isOvernight = sh.signOutTime < sh.arrivalCutoff;
+                    return (
+                      <View
+                        key={sh.id}
+                        style={{
+                          padding: 12,
+                          borderRadius: R.md,
+                          borderWidth: 1,
+                          borderColor: sh.enabled !== false ? C.accent : C.lineCard,
+                          backgroundColor: C.cardAlt,
+                          gap: 10,
+                        }}
+                      >
+                        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
+                          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                            <Text style={{ fontSize: rf(14), fontWeight: "700", color: C.ink }}>
+                              {sh.name}
+                            </Text>
+                            {isOvernight && (
+                              <View style={{ backgroundColor: C.accentSoft, paddingHorizontal: 7, paddingVertical: 2, borderRadius: R.pill }}>
+                                <Text style={{ fontSize: rf(9.5), fontWeight: "700", color: C.accent }}>OVERNIGHT</Text>
+                              </View>
+                            )}
+                          </View>
+                          <Switch
+                            value={sh.enabled !== false}
+                            onValueChange={(v) => updateShift(sh.id, { enabled: v })}
+                            trackColor={{ false: C.line, true: C.accent }}
+                          />
+                        </View>
+                        {sh.enabled !== false && (
+                          <View style={{ flexDirection: "row", gap: 8 }}>
+                            <View style={{ flex: 1, gap: 4 }}>
+                              <Text style={styles.label}>OPEN</Text>
+                              <TextInput
+                                style={styles.input}
+                                value={sh.arrivalCutoff}
+                                onChangeText={(v) => updateShift(sh.id, { arrivalCutoff: v })}
+                                placeholder="06:00"
+                              />
+                            </View>
+                            <View style={{ flex: 1, gap: 4 }}>
+                              <Text style={styles.label}>CUTOFF</Text>
+                              <TextInput
+                                style={styles.input}
+                                value={sh.lateTolerance}
+                                onChangeText={(v) => updateShift(sh.id, { lateTolerance: v })}
+                                placeholder="06:30"
+                              />
+                            </View>
+                            <View style={{ flex: 1, gap: 4 }}>
+                              <Text style={styles.label}>SIGN OUT</Text>
+                              <TextInput
+                                style={styles.input}
+                                value={sh.signOutTime}
+                                onChangeText={(v) => updateShift(sh.id, { signOutTime: v })}
+                                placeholder="14:00"
+                              />
+                            </View>
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
+              ) : (
+                <>
 
               {scheduleMode === "PER_DAY" && (
                 <View style={styles.fieldGroup}>
@@ -895,6 +1064,8 @@ export default function AdminOnboardingScreen() {
                   />
                 </View>
               )}
+                </>
+              )}
 
               <View style={styles.navRow}>
                 <TouchableOpacity
@@ -933,6 +1104,51 @@ export default function AdminOnboardingScreen() {
           )}
         </ScrollView>
       </KeyboardAvoidingView>
+
+      <LocationPickerModal
+        visible={pickerTarget !== null}
+        title={
+          pickerTarget === "country"
+            ? "Select Country"
+            : pickerTarget === "state"
+              ? `Select State in ${country}`
+              : `Select City / LGA in ${stateName || country}`
+        }
+        placeholder={
+          pickerTarget === "country"
+            ? "Search country..."
+            : pickerTarget === "state"
+              ? "Search state A–Z..."
+              : "Search city or LGA..."
+        }
+        options={
+          pickerTarget === "country"
+            ? ALL_COUNTRIES_AZ
+            : pickerTarget === "state"
+              ? getStatesForCountry(country)
+              : getCitiesForState(country, stateName)
+        }
+        selectedValue={
+          pickerTarget === "country"
+            ? country
+            : pickerTarget === "state"
+              ? stateName
+              : city
+        }
+        onSelect={(val) => {
+          if (pickerTarget === "country") {
+            setCountry(val);
+            setStateName("");
+            setCity("");
+          } else if (pickerTarget === "state") {
+            setStateName(val);
+            setCity("");
+          } else if (pickerTarget === "city") {
+            setCity(val);
+          }
+        }}
+        onClose={() => setPickerTarget(null)}
+      />
     </SafeAreaView>
   );
 }
