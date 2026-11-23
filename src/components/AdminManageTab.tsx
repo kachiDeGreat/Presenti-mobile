@@ -361,6 +361,24 @@ export const AdminManageTab: React.FC = () => {
           })}
         </View>
 
+        {/* Master Multi-Shift Toggle */}
+        <View style={styles.switchRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.switchTitle}>Enable Multi-Shift Mode</Text>
+            <Text style={styles.switchSub}>
+              Run Morning, Afternoon, Night or custom shifts
+            </Text>
+          </View>
+          <Switch
+            value={scheduleMode === "MULTI_SHIFT"}
+            onValueChange={(on) =>
+              setScheduleMode(on ? "MULTI_SHIFT" : "UNIFIED")
+            }
+            trackColor={{ false: C.line, true: C.accent }}
+          />
+        </View>
+
+        {scheduleMode !== "MULTI_SHIFT" && (
         <View style={styles.segmentRow}>
           <TouchableOpacity
             style={[styles.segBtn, scheduleMode === "UNIFIED" && styles.segBtnActive]}
@@ -369,7 +387,7 @@ export const AdminManageTab: React.FC = () => {
             <Text
               style={[styles.segText, scheduleMode === "UNIFIED" && styles.segTextActive]}
             >
-              Unified
+              Unified Hours
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
@@ -379,20 +397,11 @@ export const AdminManageTab: React.FC = () => {
             <Text
               style={[styles.segText, scheduleMode === "PER_DAY" && styles.segTextActive]}
             >
-              Per-Day
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.segBtn, scheduleMode === "MULTI_SHIFT" && styles.segBtnActive]}
-            onPress={() => setScheduleMode("MULTI_SHIFT")}
-          >
-            <Text
-              style={[styles.segText, scheduleMode === "MULTI_SHIFT" && styles.segTextActive]}
-            >
-              Multi-Shift
+              Per-Day Custom
             </Text>
           </TouchableOpacity>
         </View>
+        )}
 
         {scheduleMode === "MULTI_SHIFT" ? (
           <ShiftScheduleEditor

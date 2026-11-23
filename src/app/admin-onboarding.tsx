@@ -803,6 +803,24 @@ export default function AdminOnboardingScreen() {
                 </View>
               </View>
 
+              {/* Master Multi-Shift Toggle */}
+              <View style={styles.switchRow}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.switchTitle}>Enable Multi-Shift Mode</Text>
+                  <Text style={styles.switchSub}>
+                    Run Morning, Afternoon, Night or custom shifts
+                  </Text>
+                </View>
+                <Switch
+                  value={scheduleMode === "MULTI_SHIFT"}
+                  onValueChange={(on) =>
+                    setScheduleMode(on ? "MULTI_SHIFT" : "UNIFIED")
+                  }
+                  trackColor={{ false: C.line, true: C.accent }}
+                />
+              </View>
+
+              {scheduleMode !== "MULTI_SHIFT" && (
               <View style={styles.fieldGroup}>
                 <Text style={styles.label}>SCHEDULE MODE</Text>
                 <View style={styles.segmentRow}>
@@ -819,7 +837,7 @@ export default function AdminOnboardingScreen() {
                         scheduleMode === "UNIFIED" && styles.segmentTextActive,
                       ]}
                     >
-                      Unified
+                      Unified Hours
                     </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
@@ -835,27 +853,12 @@ export default function AdminOnboardingScreen() {
                         scheduleMode === "PER_DAY" && styles.segmentTextActive,
                       ]}
                     >
-                      Per Day
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.segmentBtn,
-                      scheduleMode === "MULTI_SHIFT" && styles.segmentBtnActive,
-                    ]}
-                    onPress={() => setScheduleMode("MULTI_SHIFT")}
-                  >
-                    <Text
-                      style={[
-                        styles.segmentText,
-                        scheduleMode === "MULTI_SHIFT" && styles.segmentTextActive,
-                      ]}
-                    >
-                      Multi-Shift
+                      Custom Per Day
                     </Text>
                   </TouchableOpacity>
                 </View>
               </View>
+              )}
 
               {scheduleMode === "MULTI_SHIFT" ? (
                 <ShiftScheduleEditor

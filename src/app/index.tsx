@@ -1058,8 +1058,8 @@ export default function DashboardScreen() {
                   <Text style={styles.punchBtnTitle}>
                     {windowEval.activeShiftName
                       ? windowEval.status === "WINDOW_OPEN_LATE"
-                        ? `CLOCK IN • ${windowEval.activeShiftName.toUpperCase()} (LATE)`
-                        : `CLOCK IN • ${windowEval.activeShiftName.toUpperCase()}`
+                        ? `CLOCK IN FOR ${windowEval.activeShiftName.toUpperCase()} (LATE)`
+                        : `CLOCK IN FOR ${windowEval.activeShiftName.toUpperCase()}`
                       : windowEval.status === "WINDOW_OPEN_LATE"
                         ? "CLOCK IN FOR SHIFT (LATE)"
                         : "CLOCK IN FOR SHIFT"}

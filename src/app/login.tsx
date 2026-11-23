@@ -57,7 +57,8 @@ export default function LoginScreen() {
   const [selectedRole, setSelectedRole] = useState<AccountRole>("WORKER");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
-  const isAnyLoading = isSubmitting || isGoogleLoading;
+  const [isNavigating, setIsNavigating] = useState(false);
+  const isAnyLoading = isSubmitting || isGoogleLoading || isNavigating;
 
   // Form Fields
   const [email, setEmail] = useState("");
@@ -149,6 +150,7 @@ export default function LoginScreen() {
   const navigateAfterAuth = (result: AuthResult) => {
     if (hasNavigatedRef.current) return;
     hasNavigatedRef.current = true;
+    setIsNavigating(true);
 
     if (result.user?.isAdmin || isAdmin) {
       if (result.organization) {
@@ -667,11 +669,11 @@ export default function LoginScreen() {
                 disabled={isAnyLoading}
                 activeOpacity={0.85}
               >
-                {isSubmitting ? (
+                {isSubmitting || isNavigating ? (
                   <View style={styles.buttonLoaderRow}>
                     <ActivityIndicator color="#f2f1ee" size="small" />
                     <Text style={styles.primaryButtonText} numberOfLines={1}>
-                      {(authStepLabel || "SIGNING IN...").toUpperCase()}
+                      {(authStepLabel || (isNavigating ? "OPENING WORKSPACE..." : "SIGNING IN...")).toUpperCase()}
                     </Text>
                   </View>
                 ) : (
@@ -693,11 +695,11 @@ export default function LoginScreen() {
                 disabled={isAnyLoading}
                 activeOpacity={0.85}
               >
-                {isGoogleLoading ? (
+                {isGoogleLoading || isNavigating ? (
                   <View style={styles.buttonLoaderRow}>
                     <ActivityIndicator color={C.ink} size="small" />
                     <Text style={styles.googleButtonText} numberOfLines={1}>
-                      {(authStepLabel || "CONNECTING GOOGLE...").toUpperCase()}
+                      {(authStepLabel || (isNavigating ? "OPENING WORKSPACE..." : "CONNECTING GOOGLE...")).toUpperCase()}
                     </Text>
                   </View>
                 ) : (
