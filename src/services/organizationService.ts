@@ -1472,6 +1472,18 @@ export async function saveTodayPunchRecord(
   }
 }
 
+export async function clearTodayPunchRecord(
+  memberId: string,
+  serviceDate: string
+): Promise<void> {
+  try {
+    const key = `@sanctuary_punch_${memberId}_${serviceDate}`;
+    await AsyncStorage.removeItem(key);
+  } catch (e) {
+    console.warn('Could not clear cached punch:', e);
+  }
+}
+
 export async function fetchTodayMemberAttendance(
   orgId: string,
   memberId: string,

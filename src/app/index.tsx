@@ -27,6 +27,7 @@ import {
   flushPendingAttendanceQueue,
   getTodayPunchRecord,
   saveTodayPunchRecord,
+  clearTodayPunchRecord,
   fetchTodayMemberAttendance,
   loadFaceFromLocalVault,
 } from "../services/organizationService";
@@ -209,6 +210,10 @@ export default function DashboardScreen() {
           };
           setTodayPunch(cloudRecord);
           await saveTodayPunchRecord(cloudRecord);
+        } else if (!cloudDoc && isMounted && local && local.status !== "OFFLINE_CACHED") {
+          // Record was deleted from Firestore (e.g. by Admin) — clear stale local cache
+          setTodayPunch(null);
+          await clearTodayPunchRecord(member.id, todayServiceDate);
         }
       } catch (err) {
         console.warn("Error loading today attendance record:", err);
@@ -280,6 +285,9 @@ export default function DashboardScreen() {
           };
           setTodayPunch(cloudRecord);
           await saveTodayPunchRecord(cloudRecord);
+        } else if (!cloudDoc && todayPunch?.status !== "OFFLINE_CACHED") {
+          setTodayPunch(null);
+          await clearTodayPunchRecord(member.id, todayServiceDate);
         }
       }
       toast.success("Attendance policy & status synchronized.", {
