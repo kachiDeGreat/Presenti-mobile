@@ -12,6 +12,7 @@ import {
   Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Clipboard from "expo-clipboard";
 import { useToast } from "../context/ToastContext";
 import { C, MONO, R, S, T, shadow, ui } from "../constants/premium";
@@ -131,6 +132,7 @@ export const AskPresentiChatModal: React.FC<AskPresentiChatModalProps> = ({
   userId,
 }) => {
   const toast = useToast();
+  const insets = useSafeAreaInsets();
   const [messages, setMessages] = useState<MobileChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -375,7 +377,12 @@ export const AskPresentiChatModal: React.FC<AskPresentiChatModalProps> = ({
           </ScrollView>
 
           {/* Input Bar */}
-          <View style={styles.inputBar}>
+          <View
+            style={[
+              styles.inputBar,
+              { paddingBottom: Math.max(insets.bottom + 12, Platform.OS === "ios" ? 26 : 18) },
+            ]}
+          >
             <TextInput
               style={styles.textInput}
               placeholder="Ask about punches, late arrivals..."
