@@ -950,28 +950,41 @@ export const AdminHub: React.FC = () => {
     [notifications]
   );
 
-  const handleNotificationMemberAction = async (
+  const handleNotificationMemberAction = (
     notif: AdminNotification,
     nextStatus: "ACTIVE" | "SUSPENDED" | "BLOCKED"
   ) => {
     if (!organization?.id || processingNotifId) return;
-    setProcessingNotifId(notif.id);
-    try {
-      await updateMemberStatus(organization.id, notif.memberId, nextStatus);
-      await clearMemberAdminNotifications(organization.id, notif.memberId, notif.id);
-      const label =
-        nextStatus === "ACTIVE"
-          ? "unsuspended & unblocked"
-          : nextStatus === "BLOCKED"
-            ? "permanently blocked"
-            : "kept suspended";
-      toast.success(`${notif.memberName} has been ${label}.`);
-      setShowNotificationsModal(false);
-    } catch {
-      toast.error("Failed to update worker status.");
-    } finally {
-      setProcessingNotifId(null);
-    }
+    const isUnblock = nextStatus === "ACTIVE";
+    const title = isUnblock ? "Unsuspend Worker?" : "Block Worker for Good?";
+    const msg = isUnblock
+      ? `Are you sure you want to unsuspend ${notif.memberName} and reset their tampering strikes?`
+      : `Are you sure you want to permanently block ${notif.memberName} from clocking in?`;
+
+    Alert.alert(title, msg, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: isUnblock ? "Yes, Unsuspend" : "Yes, Block",
+        style: isUnblock ? "default" : "destructive",
+        onPress: async () => {
+          setProcessingNotifId(notif.id);
+          try {
+            await updateMemberStatus(organization.id, notif.memberId, nextStatus);
+            await clearMemberAdminNotifications(organization.id, notif.memberId, notif.id);
+            toast.success(
+              isUnblock
+                ? `${notif.memberName} has been unsuspended.`
+                : `${notif.memberName} has been permanently blocked.`
+            );
+            setShowNotificationsModal(false);
+          } catch {
+            toast.error("Failed to update worker status.");
+          } finally {
+            setProcessingNotifId(null);
+          }
+        },
+      },
+    ]);
   };
 
   const handleOpenAdminFaceTest = useCallback(async () => {
@@ -3000,60 +3013,51 @@ export const AdminHub: React.FC = () => {
                         </Text>
                       </View>
                       <Text style={{ fontSize: rf(12), color: C.ink2 }}>{n.reason}</Text>
-                      <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
-                        <TouchableOpacity
-                          style={{
-                            paddingHorizontal: 12,
-                            paddingVertical: 8,
-                            borderRadius: R.sm,
-                            backgroundColor: "#ecfdf5",
-                            borderWidth: 1,
-                            borderColor: "#10b981",
-                            flexDirection: "row",
-                            alignItems: "center",
-                            gap: 6,
-                            opacity: processingNotifId === n.id ? 0.65 : 1,
-                          }}
-                          disabled={Boolean(processingNotifId)}
-                          onPress={() => handleNotificationMemberAction(n, "ACTIVE")}
-                        >
-                          {processingNotifId === n.id && (
-                            <ActivityIndicator size="small" color="#059669" />
-                          )}
-                          <Text style={{ fontSize: rf(11), fontWeight: "800", color: "#059669" }}>
-                            {processingNotifId === n.id
-                              ? "UPDATING..."
-                              : curStatus === "BLOCKED"
-                                ? "UNBLOCK"
-                                : "UNSUSPEND"}
+                      {processingNotifId === n.id ? (
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingVertical: 6 }}>
+                          <ActivityIndicator size="small" color={C.accent} />
+                          <Text style={{ fontSize: rf(12), fontWeight: "700", color: C.accent }}>
+                            Updating & clearing alert...
                           </Text>
-                        </TouchableOpacity>
-                        {curStatus !== "BLOCKED" && (
+                        </View>
+                      ) : (
+                        <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
                           <TouchableOpacity
                             style={{
                               paddingHorizontal: 12,
                               paddingVertical: 8,
                               borderRadius: R.sm,
-                              backgroundColor: "#fef2f2",
+                              backgroundColor: "#ecfdf5",
                               borderWidth: 1,
-                              borderColor: "#d92d20",
-                              flexDirection: "row",
-                              alignItems: "center",
-                              gap: 6,
-                              opacity: processingNotifId === n.id ? 0.65 : 1,
+                              borderColor: "#10b981",
                             }}
                             disabled={Boolean(processingNotifId)}
-                            onPress={() => handleNotificationMemberAction(n, "BLOCKED")}
+                            onPress={() => handleNotificationMemberAction(n, "ACTIVE")}
                           >
-                            {processingNotifId === n.id && (
-                              <ActivityIndicator size="small" color="#d92d20" />
-                            )}
-                            <Text style={{ fontSize: rf(11), fontWeight: "800", color: "#d92d20" }}>
-                              {processingNotifId === n.id ? "UPDATING..." : "BLOCK FOR GOOD"}
+                            <Text style={{ fontSize: rf(11), fontWeight: "800", color: "#059669" }}>
+                              {curStatus === "BLOCKED" ? "UNBLOCK" : "UNSUSPEND"}
                             </Text>
                           </TouchableOpacity>
-                        )}
-                      </View>
+                          {curStatus !== "BLOCKED" && (
+                            <TouchableOpacity
+                              style={{
+                                paddingHorizontal: 12,
+                                paddingVertical: 8,
+                                borderRadius: R.sm,
+                                backgroundColor: "#fef2f2",
+                                borderWidth: 1,
+                                borderColor: "#d92d20",
+                              }}
+                              disabled={Boolean(processingNotifId)}
+                              onPress={() => handleNotificationMemberAction(n, "BLOCKED")}
+                            >
+                              <Text style={{ fontSize: rf(11), fontWeight: "800", color: "#d92d20" }}>
+                                BLOCK FOR GOOD
+                              </Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                      )}
                     </View>
                   );
                 })
