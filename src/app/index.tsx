@@ -799,16 +799,7 @@ export default function DashboardScreen() {
       >
         {/* Modern Header Bar */}
         <View style={styles.topBar}>
-          <TouchableOpacity
-            style={styles.brandRow}
-            activeOpacity={0.85}
-            delayLongPress={3000}
-            onLongPress={() => {
-              Vibration.vibrate([0, 100, 60, 100]);
-              toast.info("Entering Administrator Calibration Mode...");
-              router.push("/calibrate" as any);
-            }}
-          >
+          <View style={styles.brandRow}>
             <Image
               source={require("../image/app-icon.png")}
               style={styles.brandLogo}
@@ -836,7 +827,7 @@ export default function DashboardScreen() {
                 {organization.churchName}
               </Text>
             </View>
-          </TouchableOpacity>
+          </View>
 
           <View style={styles.topBarRight}>
             {avatarUrl ? (

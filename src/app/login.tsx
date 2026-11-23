@@ -531,21 +531,11 @@ export default function LoginScreen() {
         >
           {/* Header & Logo */}
           <View style={styles.header}>
-            <TouchableOpacity
-              activeOpacity={0.9}
-              delayLongPress={3000}
-              onLongPress={() => {
-                Vibration.vibrate([0, 100, 60, 100]);
-                toast.info("Entering Administrator Calibration Mode...");
-                router.push("/calibrate" as any);
-              }}
-            >
-              <Image
-                source={require("../image/app-icon.png")}
-                style={styles.brandIconImage}
-                resizeMode="contain"
-              />
-            </TouchableOpacity>
+            <Image
+              source={require("../image/app-icon.png")}
+              style={styles.brandIconImage}
+              resizeMode="contain"
+            />
 
             <View style={styles.brandBadge}>
               <View style={styles.brandBadgeDot} />
