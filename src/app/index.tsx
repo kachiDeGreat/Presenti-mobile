@@ -108,6 +108,7 @@ export default function DashboardScreen() {
   );
   const verifiedPresenceRef = React.useRef<PresenceVerificationResult | null>(null);
   const punchCancelledRef = React.useRef(false);
+  const [clockInStepLabel, setClockInStepLabel] = useState<string | null>(null);
 
   // Instant 0ms On-Device Face Vault lookup so verification reads locally without cloud lag
   useEffect(() => {
@@ -433,6 +434,8 @@ export default function DashboardScreen() {
 
   // Clock-in execution: 0) Suspension/Block & 3-strike clock-tampering check -> 1) Window check -> 2) Location/Wi-Fi check -> 3) AI Face Scan
   const handleClockIn = async () => {
+    if (clockInStepLabel || isSyncingToCloud) return;
+
     if (member?.status === "BLOCKED") {
       toast.error(
         "Your account has been permanently blocked by your administrator.",
@@ -450,80 +453,87 @@ export default function DashboardScreen() {
       return;
     }
 
-    const clockCheck = await verifyNetworkClockIntegrity();
-    if (!clockCheck.ok && organization?.id && member?.id) {
-      const { strikes, suspended } = await recordClockTamperingStrike(
-        organization.id,
-        member,
-        clockCheck.driftMinutes || 0,
-      );
-      if (suspended) {
+    setClockInStepLabel("Verifying network time...");
+    try {
+      const clockCheck = await verifyNetworkClockIntegrity();
+      if (!clockCheck.ok && organization?.id && member?.id) {
+        const { strikes, suspended } = await recordClockTamperingStrike(
+          organization.id,
+          member,
+          clockCheck.driftMinutes || 0,
+        );
+        if (suspended) {
+          refreshOrganization().catch(() => {});
+          toast.error(
+            "Clock/Date Tampering (3/3): Your account has been suspended and your administrator has been notified.",
+            { title: "Account Suspended", duration: 7000 },
+          );
+        } else {
+          const left = 3 - strikes;
+          toast.warn(
+            `Clock/Date Tampering Warning (${strikes}/3): Your device date or time does not match network time. ${left} attempt${left > 1 ? "s" : ""} left before automatic suspension.`,
+            { title: `Tampering Warning ${strikes}/3`, duration: 6500 },
+          );
+        }
+        return;
+      }
+
+      // 1. Safety check: prevent double punch if already recorded
+      if (todayPunch) {
+        toast.info(`Already signed in today at ${todayPunch.displayTime}.`);
+        return;
+      }
+
+      // 2. Strict Window Enforcement (Reject late / early / off-schedule attempts)
+      if (!windowEval.isAllowed) {
         toast.error(
-          "Clock/Date Tampering (3/3): Your account has been suspended and your administrator has been notified.",
-          { title: "Account Suspended", duration: 7000 },
+          windowEval.rejectionReason ||
+            "Sign-in window is currently closed. Attendance blocked.",
+          { title: "Sign-In Restricted", duration: 4500 },
         );
-      } else {
-        const left = 3 - strikes;
+        return;
+      }
+
+      // 3. Ensure account has an enrolled face reference from On-Device Vault or profile
+      let activeFaceRef = localFacePhoto || member?.facePhotoURL;
+      if (!activeFaceRef) {
+        const vault = await loadFaceFromLocalVault(
+          member?.email || user?.email,
+          member?.id
+        );
+        if (vault?.facePhotoURL) {
+          activeFaceRef = vault.facePhotoURL;
+          setLocalFacePhoto(vault.facePhotoURL);
+        }
+      }
+
+      if (!activeFaceRef) {
         toast.warn(
-          `Clock/Date Tampering Warning (${strikes}/3): Your device date or time does not match network time. ${left} attempt${left > 1 ? "s" : ""} left before automatic suspension.`,
-          { title: `Tampering Warning ${strikes}/3`, duration: 6500 },
+          "Your Face ID was reset by an administrator or is missing on this device. Complete Face ID enrollment first, then tap Clock In to verify.",
+          { title: "Face ID Enrollment Required", duration: 5000 },
         );
+        setFaceModal({
+          visible: true,
+          mode: "enroll",
+          action: "enrollOnly",
+        });
+        return;
       }
-      return;
-    }
 
-    // 1. Safety check: prevent double punch if already recorded
-    if (todayPunch) {
-      toast.info(`Already signed in today at ${todayPunch.displayTime}.`);
-      return;
-    }
+      // 4. MANDATORY ON-PREMISE LOCATION / WI-FI CHECK BEFORE FACE SCAN
+      setClockInStepLabel("Verifying location...");
+      const presence = await verifyOnPremiseBeforeScan();
+      if (!presence) return;
 
-    // 2. Strict Window Enforcement (Reject late / early / off-schedule attempts)
-    if (!windowEval.isAllowed) {
-      toast.error(
-        windowEval.rejectionReason ||
-          "Sign-in window is currently closed. Attendance blocked.",
-        { title: "Sign-In Restricted", duration: 4500 },
-      );
-      return;
-    }
-
-    // 3. Ensure account has an enrolled face reference from On-Device Vault or profile
-    let activeFaceRef = localFacePhoto || member?.facePhotoURL;
-    if (!activeFaceRef) {
-      const vault = await loadFaceFromLocalVault(
-        member?.email || user?.email,
-        member?.id
-      );
-      if (vault?.facePhotoURL) {
-        activeFaceRef = vault.facePhotoURL;
-        setLocalFacePhoto(vault.facePhotoURL);
-      }
-    }
-
-    if (!activeFaceRef) {
-      toast.warn(
-        "Your Face ID was reset by an administrator or is missing on this device. Complete Face ID enrollment first, then tap Clock In to verify.",
-        { title: "Face ID Enrollment Required", duration: 5000 },
-      );
+      // 5. MANDATORY 1-TO-1 AI FACE VERIFICATION AGAINST ONBOARDING FACE
       setFaceModal({
         visible: true,
-        mode: "enroll",
-        action: "enrollOnly",
+        mode: "verify",
+        action: "clockIn",
       });
-      return;
+    } finally {
+      setClockInStepLabel(null);
     }
-
-    // 4. MANDATORY ON-PREMISE LOCATION / WI-FI CHECK BEFORE FACE SCAN
-    const presence = await verifyOnPremiseBeforeScan();
-    if (!presence) return;
-
-    // 5. MANDATORY 1-TO-1 AI FACE VERIFICATION AGAINST ONBOARDING FACE
-    setFaceModal({
-      visible: true,
-      mode: "verify",
-      action: "clockIn",
-    });
   };
 
   const verifyDeviceBiometricFallback = async (): Promise<{
@@ -1066,6 +1076,20 @@ export default function DashboardScreen() {
               </View>
             )}
           </View>
+        ) : member?.status === "SUSPENDED" || member?.status === "BLOCKED" ? (
+          /* STATE B0: ACCOUNT SUSPENDED OR BLOCKED */
+          <View style={styles.blockedCard}>
+            <Ionicons name="lock-closed" size={32} color="#d92d20" />
+            <Text style={styles.blockedTitle}>
+              {member.status === "BLOCKED" ? "Account Blocked" : "Account Suspended"}
+            </Text>
+            <Text style={styles.blockedSubtitle}>
+              {member.flagReason ||
+                (member.status === "BLOCKED"
+                  ? "Your account has been permanently blocked by your administrator."
+                  : "Your account is currently suspended. Contact your administrator to reactivate.")}
+            </Text>
+          </View>
         ) : !windowEval.isAllowed ? (
           /* STATE B: ATTENDANCE WINDOW CLOSED */
           <View style={styles.blockedCard}>
@@ -1087,16 +1111,18 @@ export default function DashboardScreen() {
             style={[
               styles.primaryPunchBtn,
               windowEval.status === "WINDOW_OPEN_LATE" && styles.punchBtnLate,
-              isSyncingToCloud && styles.punchBtnDisabled,
+              (Boolean(clockInStepLabel) || isSyncingToCloud) && styles.punchBtnDisabled,
             ]}
             rippleColor="rgba(255,255,255,0.18)"
             onPress={handleClockIn}
-            disabled={isSyncingToCloud}
+            disabled={Boolean(clockInStepLabel) || isSyncingToCloud}
           >
-            {isSyncingToCloud ? (
+            {clockInStepLabel || isSyncingToCloud ? (
               <View style={styles.punchBtnLoadingRow}>
                 <ActivityIndicator size="small" color="#f2f1ee" />
-                <Text style={styles.punchBtnTitle}>VERIFYING ON-PREMISE...</Text>
+                <Text style={styles.punchBtnTitle}>
+                  {(clockInStepLabel || "VERIFYING LOCATION...").toUpperCase()}
+                </Text>
               </View>
             ) : (
               <>
