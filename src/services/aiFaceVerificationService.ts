@@ -3,14 +3,16 @@ const GROQ_VISION_MODELS = [
   "meta-llama/llama-4-scout-17b-16e-instruct",
 ];
 
-// Single-request sequential fallback: 1 API call per scan (preserves RPM quota for 30+ concurrent workers)
+// Fast sequential fallback: 2 fastest Gemini models (avoids 5-model waterfall delays)
 const VISION_MODELS = [
   "gemini-3.5-flash-lite",
-  "gemini-3.1-flash-lite",
   "gemini-flash-lite-latest",
-  "gemini-3.7-flash",
-  "gemini-3.8-flash",
 ];
+
+// Local 60s cooldown per Groq model after HTTP 429 so we skip straight to the next fast model in 0ms
+const groqCooldownUntil: Record<string, number> = {};
+// In-memory cache of reference photo base64 so repeat scans don't re-download over HTTPS
+const refBase64Cache = new Map<string, string>();
 
 function getApiKey(): string {
   return (process.env.EXPO_PUBLIC_GEMINI_API_KEY || "").trim();
@@ -43,9 +45,12 @@ async function urlToBase64(urlOrDataUri: string): Promise<string> {
   if (urlOrDataUri.startsWith("data:") || !urlOrDataUri.startsWith("http")) {
     return stripDataUriPrefix(urlOrDataUri);
   }
+  const cached = refBase64Cache.get(urlOrDataUri);
+  if (cached) return cached;
+
   const res = await fetch(urlOrDataUri);
   const blob = await res.blob();
-  return new Promise((resolve, reject) => {
+  const b64 = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onloadend = () => {
       const result = typeof reader.result === "string" ? reader.result : "";
@@ -54,6 +59,10 @@ async function urlToBase64(urlOrDataUri: string): Promise<string> {
     reader.onerror = () => reject(new Error("Could not read reference profile image."));
     reader.readAsDataURL(blob);
   });
+  if (b64) {
+    refBase64Cache.set(urlOrDataUri, b64);
+  }
+  return b64;
 }
 
 async function requestVisionModel<T>(
@@ -126,7 +135,7 @@ async function requestVisionModel<T>(
 async function callGroqVisionJSON<T>(
   prompt: string,
   imagesBase64: string[],
-  timeoutMs: number = 8000
+  timeoutMs: number = 4500
 ): Promise<T | null> {
   const groqKey = getGroqApiKey();
   if (!groqKey) return null;
@@ -139,7 +148,12 @@ async function callGroqVisionJSON<T>(
     })),
   ];
 
+  const now = Date.now();
   for (const groqModel of GROQ_VISION_MODELS) {
+    if (groqCooldownUntil[groqModel] && now < groqCooldownUntil[groqModel]) {
+      continue;
+    }
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -165,6 +179,9 @@ async function callGroqVisionJSON<T>(
       if (!res.ok) {
         const errBody = await res.text().catch(() => "");
         console.warn(`[FaceAI] Groq ${groqModel} HTTP ${res.status}:`, errBody.slice(0, 180));
+        if (res.status === 429) {
+          groqCooldownUntil[groqModel] = Date.now() + 60_000;
+        }
         continue;
       }
 
@@ -206,12 +223,9 @@ async function callVisionJSON<T>(parts: Array<Record<string, unknown>>): Promise
   for (let i = 0; i < VISION_MODELS.length; i++) {
     const model = VISION_MODELS[i];
     try {
-      return await requestVisionModel<T>(model, apiKey, parts, i === 0 ? 12000 : 9000);
+      return await requestVisionModel<T>(model, apiKey, parts, 7000);
     } catch {
-      // Brief pause before falling back so we don't slam the rate limiter
-      if (i < VISION_MODELS.length - 1) {
-        await new Promise((r) => setTimeout(r, 250));
-      }
+      // Immediate failover to next model without artificial delay
     }
   }
 
