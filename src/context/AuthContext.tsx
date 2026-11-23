@@ -791,9 +791,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   ): Promise<SendMobileOtpResult> => {
     const cleanEmail = email.trim().toLowerCase();
     if (purpose === 'SIGNUP') {
-      const isAdminEmail =
-        intendedRole === 'ADMIN' || (await checkIfUserIsAdmin(cleanEmail));
-      if (!isAdminEmail) {
+      const existingIsAdmin = await checkIfUserIsAdmin(cleanEmail);
+      if (existingIsAdmin) {
+        if (intendedRole === 'WORKER') {
+          throw new Error(
+            'This email is already registered as an Administrator. Please Sign In or use a different email for a Worker account.'
+          );
+        }
+        throw new Error(
+          'An Administrator account with this email already exists. Please Sign In instead.'
+        );
+      }
+
+      if (db && cleanEmail) {
+        const roleSnap = await getDoc(doc(db, 'account_roles', cleanEmail)).catch(() => null);
+        if (roleSnap?.exists()) {
+          throw new Error(
+            'An account with this email already exists. Please Sign In instead.'
+          );
+        }
+      }
+
+      if (intendedRole !== 'ADMIN') {
         const activeDeviceId = deviceId || (await getDeviceFingerprint());
         await enforceDeviceWorkerLock({
           deviceId: activeDeviceId,
