@@ -12,6 +12,7 @@ import {
   setDoc,
   doc,
   limit,
+  onSnapshot,
 } from 'firebase/firestore';
 import { auth, db, googleProvider } from '../config/firebase';
 import { getDeviceFingerprint } from '../services/deviceService';
@@ -1115,6 +1116,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setOrganization(null);
     setCachedAnchors(null);
   }, [organization?.id, user?.email]);
+
+  // Real-time listener on the worker's member doc so SUSPENDED / BLOCKED / ACTIVE locks or unlocks instantly
+  useEffect(() => {
+    if (!db || !organization?.id || !member?.id) return;
+    const memberRef = doc(db, 'churches', organization.id, 'members', member.id);
+    const unsub = onSnapshot(
+      memberRef,
+      (snap) => {
+        if (!snap.exists()) return;
+        const data = snap.data() as Partial<ChurchMember>;
+        setMember((prev) => {
+          if (!prev) return prev;
+          const next: ChurchMember = {
+            ...prev,
+            status: data.status || 'ACTIVE',
+            flagReason: data.flagReason ?? undefined,
+            tamperingStrikes: data.tamperingStrikes ?? 0,
+            isFaceEnrolled: data.isFaceEnrolled ?? prev.isFaceEnrolled,
+            assignedShiftId: data.assignedShiftId ?? prev.assignedShiftId,
+            assignedShiftName: data.assignedShiftName ?? prev.assignedShiftName,
+          };
+          AsyncStorage.setItem(STORAGE_KEY_MEMBER, JSON.stringify(next)).catch(() => {});
+          return next;
+        });
+      },
+      (err) => console.warn('Member status listener notice:', err)
+    );
+    return () => unsub();
+  }, [organization?.id, member?.id]);
 
   return (
     <AuthContext.Provider
