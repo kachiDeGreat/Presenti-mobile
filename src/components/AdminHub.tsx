@@ -103,7 +103,7 @@ const TABS = [
 ];
 
 export const AdminHub: React.FC = () => {
-  const { user, organization, refreshOrganization, signOut } = useAuth();
+  const { user, organization, refreshOrganization, updateAnchors, signOut } = useAuth();
   const toast = useToast();
   const insets = useSafeAreaInsets();
 
@@ -358,10 +358,11 @@ export const AdminHub: React.FC = () => {
   const [isScanningWifi, setIsScanningWifi] = useState(false);
   const [isLocatingGps, setIsLocatingGps] = useState(false);
   const [isSavingAnchors, setIsSavingAnchors] = useState(false);
+  const hasEditedAnchorsRef = useRef(false);
 
-  // Sync state if organization updates in background
+  // Sync state if organization updates in background (unless admin has unsaved local edits)
   useEffect(() => {
-    if (organization) {
+    if (organization && !hasEditedAnchorsRef.current) {
       if (organization.beaconConfig?.verificationMode) {
         setCalMode(organization.beaconConfig.verificationMode);
       }
@@ -543,17 +544,27 @@ export const AdminHub: React.FC = () => {
         }
       }
 
-      await updateAnchorsService(targetOrgId, {
-        ssidHint: ssidHint.trim(),
-        targetBssid: targetBssid.trim().toLowerCase(),
-        latitude: activeLat,
-        longitude: activeLng,
-        radiusMeters,
-        verificationMode: calMode,
-      });
-
-      // Synchronize updated anchors with local state & AuthContext
-      await refreshOrganization().catch(() => {});
+      if (targetOrgId === organization?.id) {
+        await updateAnchors({
+          ssidHint: ssidHint.trim(),
+          targetBssid: targetBssid.trim().toLowerCase(),
+          latitude: activeLat,
+          longitude: activeLng,
+          radiusMeters,
+          verificationMode: calMode,
+        });
+      } else {
+        await updateAnchorsService(targetOrgId, {
+          ssidHint: ssidHint.trim(),
+          targetBssid: targetBssid.trim().toLowerCase(),
+          latitude: activeLat,
+          longitude: activeLng,
+          radiusMeters,
+          verificationMode: calMode,
+        });
+        await refreshOrganization().catch(() => {});
+      }
+      hasEditedAnchorsRef.current = false;
 
       Vibration.vibrate([0, 80, 40, 80]);
       toast.success("Presence Anchors calibrated & synced to cloud!");
@@ -2281,6 +2292,7 @@ export const AdminHub: React.FC = () => {
               longitude={longitude}
               radiusMeters={radiusMeters}
               onCoordinatesChange={(lat, lng) => {
+                hasEditedAnchorsRef.current = true;
                 setLatitude(lat);
                 setLongitude(lng);
               }}
