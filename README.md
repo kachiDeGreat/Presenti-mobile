@@ -192,13 +192,6 @@ npm run build:preview -- --no-wait
 
 ---
 
-## Related Repositories
-
-- **Admin Web Portal (React / Vite):** [kachiDeGreat/Presenti-web-admin](https://github.com/kachiDeGreat/Presenti-web-admin)
-- **Live Admin Web Portal:** [https://presenti-admin-web.vercel.app](https://presenti-admin-web.vercel.app)
-
----
-
 ## AI Disclosure
 
 - **Biometric Face Liveness & 1-to-1 Matching:** Uses on-device Google ML Kit (`RNMLKitFaceDetector`) for real-time framing, **Groq Vision (`qwen/qwen3.8-27b`)** as the primary cloud verifier, and **Google Gemini Vision (`gemini-3.5-flash-lite` / `gemini-3.8-flash`)** as an automatic fallback when Groq is rate-limited or unavailable.
